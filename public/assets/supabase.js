@@ -34,9 +34,12 @@ window.Hub = window.Hub || {};
 
     /** Sign out */
     async signOut() {
-      await sb.auth.signOut();
+      // Reset app state FIRST
+      Hub.app._loggedIn = false;
       Hub.state.user = null;
       Hub.state.household_id = null;
+      Hub.state.userRole = null;
+      await sb.auth.signOut();
       Hub.router.showScreen('login');
     },
 
