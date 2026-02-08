@@ -42,7 +42,9 @@ Hub.app = {
       return;
     }
 
-    // ── Auth listener — ANY event with a user triggers _onLogin ──
+    // ── Auth listener ──
+    // ONLY act on INITIAL_SESSION (fires AFTER pkce code exchange)
+    // Skip SIGNED_IN — it fires DURING exchange when JWT isn't ready
     Hub.auth.onAuthChange(async (event, session) => {
       console.log('[Auth] Event:', event, session?.user?.email || 'no-user');
 
@@ -54,14 +56,19 @@ Hub.app = {
         return;
       }
 
-      if (session?.user) {
+      // Skip SIGNED_IN — wait for INITIAL_SESSION
+      if (event === 'SIGNED_IN') {
+        console.log('[Auth] Ignoring SIGNED_IN (waiting for INITIAL_SESSION)');
+        return;
+      }
+
+      if ((event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') && session?.user) {
         this._authHandled = true;
         await this._onLogin(session.user);
         return;
       }
 
-      // No user on this event
-      if (event === 'INITIAL_SESSION') {
+      if (event === 'INITIAL_SESSION' && !session) {
         this._authHandled = true;
         console.log('[Auth] INITIAL_SESSION: no user → login');
         Hub.router.showScreen('login');
