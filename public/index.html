@@ -52,9 +52,21 @@
     <div id="loadingScreen" class="min-h-screen flex items-center justify-center">
       <div class="text-center">
         <div class="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-500 mx-auto mb-4"></div>
-        <p class="text-xl text-gray-400">Loading Home Hub…</p>
+        <p class="text-xl text-gray-400" id="loadingText">Loading Home Hub…</p>
       </div>
     </div>
+    <script>
+      // Instant check: does localStorage have a saved Supabase session?
+      try {
+        const key = Object.keys(localStorage).find(k => k.startsWith('sb-') && k.endsWith('-auth-token'));
+        if (key) {
+          const stored = JSON.parse(localStorage.getItem(key));
+          const email = stored?.user?.email;
+          const el = document.getElementById('loadingText');
+          if (email && el) el.textContent = 'Welcome back, ' + email.split('@')[0] + '! Signing in…';
+        }
+      } catch (e) { /* ignore */ }
+    </script>
 
     <!-- Login Screen -->
     <div id="loginScreen" class="page min-h-screen flex items-center justify-center">
