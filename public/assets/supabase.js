@@ -13,9 +13,19 @@ window.Hub = window.Hub || {};
   const SB_URL = CFG.supabaseUrl || CFG.supabase?.url || '';
   const SB_KEY = CFG.supabaseAnonKey || CFG.supabase?.anonKey || '';
 
-  console.log('[Boot] href:', window.location.href);
-  console.log('[Boot] has ?code=', window.location.search.includes('code='));
-  console.log('[Boot] has #access_token=', window.location.hash.includes('access_token'));
+  const href = window.location.href;
+  const hasCodeInSearch = window.location.search.includes('code=');
+  const hasCodeInHash = window.location.hash.includes('code=');
+  const hasAccessTokenInHash = window.location.hash.includes('access_token');
+
+  console.log('[Boot] href:', href);
+  console.log('[Boot] has ?code= (search):', hasCodeInSearch);
+  console.log('[Boot] has code= in hash:', hasCodeInHash);
+  console.log('[Boot] has #access_token (implicit):', hasAccessTokenInHash);
+
+  if (hasCodeInHash && !hasCodeInSearch) {
+    console.warn('[Boot] PKCE code is in hash (/#/?code=...). Supabase cannot exchange this automatically.');
+  }
 
   const sb = window.supabase.createClient(SB_URL, SB_KEY, {
     auth: {
@@ -44,9 +54,11 @@ window.Hub = window.Hub || {};
   Hub.auth = {
     async signInGoogle() {
       console.log('[Auth] signInGoogle (PKCE)');
+      const redirectTo = window.location.origin + '/';
+      console.log('[Auth] OAuth redirectTo:', redirectTo);
       const { error } = await sb.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo: window.location.origin + '/#/' }
+        options: { redirectTo }
       });
       if (error) console.error('[Auth] OAuth error:', error);
     },
@@ -107,7 +119,14 @@ window.Hub = window.Hub || {};
     },
 
     onAuthChange(cb) {
-      sb.auth.onAuthStateChange((event, session) => cb(event, session));
+      sb.auth.onAuthStateChange((event, session) => {
+        console.log('[Auth] onAuthStateChange:', event, {
+          hasSession: !!session,
+          user: session?.user?.email || null,
+          href: window.location.href
+        });
+        cb(event, session);
+      });
     }
   };
 
