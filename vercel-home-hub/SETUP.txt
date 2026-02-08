@@ -1,0 +1,126 @@
+============================================================
+HOME HUB — VERCEL DEPLOYMENT SETUP
+============================================================
+
+STEP 1: CREATE A GITHUB REPOSITORY
+------------------------------------------------------------
+Option A (GitHub web):
+  1. Go to https://github.com/new
+  2. Name it: home-hub (or whatever you prefer)
+  3. Set to Private, click "Create repository"
+  4. Unzip vercel-home-hub.zip on your computer
+  5. In the repo, click "uploading an existing file"
+  6. Drag-and-drop ALL files/folders from the unzipped directory
+     (public/, api/, vercel.json, etc.)
+  7. Commit
+
+Option B (command line):
+  cd vercel-home-hub
+  git init
+  git add .
+  git commit -m "Home Hub initial"
+  gh repo create home-hub --private --push
+
+STEP 2: IMPORT INTO VERCEL
+------------------------------------------------------------
+  1. Go to https://vercel.com/new
+  2. Click "Import Git Repository"
+  3. Select your home-hub repo
+  4. Framework Preset: "Other" (no framework)
+  5. Root Directory: ./ (leave default)
+  6. Output Directory: public
+  7. Click Deploy
+
+STEP 3: SET ENVIRONMENT VARIABLES
+------------------------------------------------------------
+Go to: Vercel Dashboard → your project → Settings → Environment Variables
+
+REQUIRED:
+  SUPABASE_URL             = https://cmaefwhqoykittrwiobw.supabase.co
+  SUPABASE_ANON_KEY        = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNtYWVmd2hxb3lraXR0cndpb2J3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA1NjM1ODQsImV4cCI6MjA4NjEzOTU4NH0.rUub2PIr60w9InuA1zygE7l0OK6li_Un8WjpdcVg3ko
+
+WEATHER API KEYS (optional — improves accuracy, skip any you don't have):
+  WEATHERBIT_KEY            = (from https://www.weatherbit.io/account/create)
+  TOMORROW_KEY              = (from https://app.tomorrow.io/signup)
+  VISUAL_CROSSING_KEY       = (from https://www.visualcrossing.com/sign-up)
+  PIRATE_WEATHER_KEY        = (from https://pirateweather.net/getting-started)
+
+  Note: Open-Meteo, Weather.gov, and RainViewer are free and keyless.
+  The system works with zero paid keys — they just add more data sources.
+
+IMMICH (optional — for standby photo collage):
+  IMMICH_BASE_URL           = http://your-immich-server:2283
+  IMMICH_SHARED_ALBUM_TOKEN = (your API key or shared link key)
+  IMMICH_ALBUM_ID           = (UUID of the shared album)
+
+After adding env vars, click Redeploy (Deployments tab → three dots → Redeploy).
+
+STEP 4: UPDATE config.js
+------------------------------------------------------------
+Before deploying (or after, then redeploy), edit public/config.js:
+
+  supabaseUrl: 'https://cmaefwhqoykittrwiobw.supabase.co',
+  supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIs...(your key)...',
+
+These are client-side values used by the Supabase JS SDK in the browser.
+The weather API keys stay server-side only (Vercel env vars).
+
+STEP 5: SUPABASE AUTH REDIRECT
+------------------------------------------------------------
+  1. In Supabase Dashboard → Authentication → URL Configuration
+  2. Add your Vercel URL as a Redirect URL:
+       https://your-project.vercel.app
+  3. In Google Cloud Console → OAuth → Authorized redirect URIs:
+       https://cmaefwhqoykittrwiobw.supabase.co/auth/v1/callback
+  4. Make sure Google provider is enabled in Supabase Auth → Providers
+
+STEP 6: ADD YOUR EMAIL TO THE DATABASE
+------------------------------------------------------------
+In Supabase SQL Editor, run (replace with your Google email):
+
+  INSERT INTO households (name) VALUES ('My Home');
+
+  INSERT INTO household_members (household_id, email, role)
+  SELECT id, 'your.email@gmail.com', 'admin'
+  FROM households WHERE name = 'My Home';
+
+  INSERT INTO allowed_emails (household_id, email)
+  SELECT id, 'your.email@gmail.com'
+  FROM households WHERE name = 'My Home';
+
+STEP 7: TEST
+------------------------------------------------------------
+  1. Visit: https://your-project.vercel.app
+     → Should show login screen
+
+  2. Visit: https://your-project.vercel.app/api/health
+     → Should return JSON with service statuses
+
+  3. Visit: https://your-project.vercel.app/api/weather-aggregate?lat=40.029&lon=-82.863
+     → Should return weather data from multiple sources
+
+  4. Sign in with Google → Dashboard should load with weather
+
+  5. Try /standby, /treats, /chores, /settings, /status pages
+
+  6. Refresh on any page → should NOT 404 (SPA routing via vercel.json)
+
+TROUBLESHOOTING
+------------------------------------------------------------
+Problem: API routes return 404
+Fix:     Make sure the /api/ folder is at the project root (not inside /public/).
+         Vercel auto-detects serverless functions in /api/.
+
+Problem: "Access Denied" after login
+Fix:     Your email must be in BOTH household_members AND allowed_emails.
+
+Problem: Weather shows "Unable to load"
+Fix:     Check /api/health. Open-Meteo needs no key and should always work.
+         Add optional weather API keys for more sources.
+
+Problem: Pages 404 on refresh
+Fix:     Ensure vercel.json is at the project root with the SPA rewrite rules.
+
+Problem: CORS errors
+Fix:     The vercel.json headers section adds CORS for /api/* routes.
+         For local dev, use `npx vercel dev` which respects vercel.json.
