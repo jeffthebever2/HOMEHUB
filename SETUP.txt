@@ -70,6 +70,8 @@ STEP 5: SUPABASE AUTH REDIRECT
   1. In Supabase Dashboard → Authentication → URL Configuration
   2. Add your Vercel URL as a Redirect URL:
        https://your-project.vercel.app
+     For this deployment, make sure this is present:
+       https://homehub-mu.vercel.app
   3. In Google Cloud Console → OAuth → Authorized redirect URIs:
        https://cmaefwhqoykittrwiobw.supabase.co/auth/v1/callback
   4. Make sure Google provider is enabled in Supabase Auth → Providers
