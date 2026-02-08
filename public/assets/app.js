@@ -13,107 +13,116 @@ Hub.state = {
 
 Hub.app = {
   _idleTimer: null,
+  _loggedIn: false,
 
   /** Main init — called on DOMContentLoaded */
   async init() {
-    // Wire up buttons
     this._bindUI();
-
-    // Init router
     Hub.router.init();
-
-    // Init Firebase
     Hub.treats.init();
 
-    let authResolved = false;
+    // Single auth listener — guards with _loggedIn flag
+    Hub.auth.onAuthChange(async (event, session) => {
+      console.log('[Auth] Event:', event, session?.user?.email || 'no user');
+      if (session?.user && !this._loggedIn) {
+        await this._onLogin(session.user);
+      } else if (event === 'SIGNED_OUT') {
+        this._loggedIn = false;
+        Hub.state.user = null;
+        Hub.router.showScreen('login');
+      }
+    });
 
-    // Register auth listener — catches OAuth redirect callback
-    try {
-      Hub.auth.onAuthChange(async (event, session) => {
-        try {
-          console.log('[Auth]', event, session?.user?.email || 'no user');
-          if (session?.user) {
-            authResolved = true;
-            await this._onLogin(session.user);
-          } else if (event === 'SIGNED_OUT') {
-            Hub.state.user = null;
-            Hub.router.showScreen('login');
-          }
-        } catch (e) {
-          console.error('[Auth] onAuthChange handler error:', e);
-          if (!authResolved) Hub.router.showScreen('login');
-        }
-      });
-    } catch (e) {
-      console.error('[Auth] Failed to register auth listener:', e);
-    }
-
-    // Fallback: if onAuthStateChange didn't fire, try getSession manually
+    // Fallback: if nothing happened after 2.5s, try getSession manually
     setTimeout(async () => {
-      if (!authResolved && !Hub.state.user) {
-        console.log('[Auth] Timeout — trying getSession fallback');
-        try {
-          const session = await Hub.auth.getSession();
-          if (session?.user) {
-            authResolved = true;
-            await this._onLogin(session.user);
-          } else {
-            console.log('[Auth] No session found, showing login');
-            Hub.router.showScreen('login');
-          }
-        } catch (e) {
-          console.error('[Auth] getSession fallback error:', e);
+      if (this._loggedIn) return;
+      console.log('[Auth] Timeout — trying getSession fallback');
+      try {
+        const session = await Hub.auth.getSession();
+        if (session?.user && !this._loggedIn) {
+          await this._onLogin(session.user);
+        } else if (!this._loggedIn) {
+          console.log('[Auth] No session, showing login');
           Hub.router.showScreen('login');
         }
+      } catch (e) {
+        console.error('[Auth] Fallback error:', e);
+        if (!this._loggedIn) Hub.router.showScreen('login');
       }
-    }, 1500);
+    }, 2500);
 
-    // Idle timer for standby
     this._startIdleTimer();
   },
 
-  /** Handle successful login */
-  _loginInProgress: false,
+  /** Handle successful login — runs ONCE */
   async _onLogin(user) {
-    // Prevent double execution from SIGNED_IN + INITIAL_SESSION
-    if (this._loginInProgress) {
-      console.log('[Auth] Login already in progress, skipping duplicate');
+    if (this._loggedIn) {
+      console.log('[Auth] Already logged in, skipping');
       return;
     }
-    this._loginInProgress = true;
 
     try {
+      console.log('[Auth] Checking access for:', user.email);
       const allowed = await Hub.auth.checkAccess(user);
+
+      // Re-check after await
+      if (this._loggedIn) return;
+
       if (!allowed) {
+        console.log('[Auth] Access DENIED for:', user.email);
         Hub.utils.$('deniedEmail').textContent = user.email;
         Hub.router.showScreen('accessDenied');
-        this._loginInProgress = false;
         return;
       }
 
+      // LOCK immediately
+      this._loggedIn = true;
       Hub.state.user = user;
+      console.log('[Auth] Access GRANTED — showing dashboard');
 
-      // Load user settings (don't let this block login)
+      // Load settings (non-blocking failure)
       try {
         const settings = await Hub.db.loadSettings(user.id);
         Hub.state.settings = settings || {};
       } catch (e) {
-        console.warn('[Auth] Failed to load settings, using defaults:', e);
+        console.warn('[Auth] Settings load failed, using defaults');
         Hub.state.settings = {};
       }
 
-      // Navigate to current hash or dashboard
-      console.log('[Auth] Login complete, showing app');
-      Hub.utils.$('loadingScreen').style.display = 'none';
-      Hub.utils.$('loginScreen')?.classList.remove('active');
-      Hub.utils.$('accessDeniedScreen')?.classList.remove('active');
-      const hash = window.location.hash.replace('#/', '') || 'dashboard';
-      Hub.router._activate(hash);
+      // FORCE show app
+      this._showApp();
     } catch (e) {
       console.error('[Auth] _onLogin error:', e);
-      Hub.router.showScreen('login');
+      if (!this._loggedIn) Hub.router.showScreen('login');
     }
-    this._loginInProgress = false;
+  },
+
+  /** Force the app UI to be visible — bypasses router */
+  _showApp() {
+    // 1. Kill loading spinner
+    const loading = Hub.utils.$('loadingScreen');
+    if (loading) loading.style.display = 'none';
+
+    // 2. Remove active from EVERY .page
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+
+    // 3. Pick the target page
+    const hash = window.location.hash.replace('#/', '').replace('#', '');
+    const page = Hub.router.VALID_PAGES.includes(hash) ? hash : 'dashboard';
+
+    // 4. Activate it
+    const el = Hub.utils.$(page + 'Page');
+    if (el) {
+      el.classList.add('active');
+    } else {
+      Hub.utils.$('dashboardPage').classList.add('active');
+    }
+
+    Hub.router.current = page;
+    console.log('[Auth] Page activated:', page);
+
+    // 5. Run page logic
+    this.onPageEnter(page);
   },
 
   /** Called by router whenever a page is entered */
@@ -144,14 +153,12 @@ Hub.app = {
     }
   },
 
-  /** Load dashboard */
   async _loadDashboard() {
     Hub.ui.updateDashboardDate();
     Hub.chores.loadDashboard();
     this._loadDashboardWeather();
   },
 
-  /** Load dashboard weather */
   async _loadDashboardWeather() {
     try {
       const agg = await Hub.weather.fetchAggregate();
@@ -159,7 +166,6 @@ Hub.app = {
       const normalized = Hub.weather.normalize(agg);
       Hub.weather.renderDashboard(aiSummary, normalized);
 
-      // Handle alerts
       if (aiSummary?.alerts?.active) {
         Hub.ui.showBanner(aiSummary.alerts.banner_text, aiSummary.alerts.severity);
         const shouldPopup = aiSummary.actions?.some(a => a.type === 'show_popup');
@@ -172,7 +178,6 @@ Hub.app = {
     }
   },
 
-  /** Load full weather page */
   async _loadWeatherPage() {
     try {
       const agg = await Hub.weather.fetchAggregate();
@@ -183,7 +188,6 @@ Hub.app = {
     }
   },
 
-  /** Load status page */
   async _loadStatusPage() {
     const el = Hub.utils.$('statusContent');
     if (!el) return;
@@ -223,7 +227,6 @@ Hub.app = {
     }
   },
 
-  /** Load settings form from state */
   _loadSettingsForm() {
     const s = Hub.state.settings || {};
     const cfg = window.HOME_HUB_CONFIG || {};
@@ -239,7 +242,6 @@ Hub.app = {
     Hub.utils.$('settingCalendarUrl').value = s.calendar_url || '';
   },
 
-  /** Save settings to Supabase */
   async _saveSettings() {
     if (!Hub.state.user || !Hub.state.household_id) return;
     const payload = {
@@ -258,7 +260,6 @@ Hub.app = {
     try {
       const saved = await Hub.db.saveSettings(Hub.state.user.id, Hub.state.household_id, payload);
       Hub.state.settings = saved;
-      // Clear weather cache so new location takes effect
       Hub.weather._cache = null;
       Hub.ai._cache = null;
       Hub.ui.toast('Settings saved!');
@@ -268,7 +269,6 @@ Hub.app = {
     }
   },
 
-  /** Use browser geolocation */
   _useCurrentLocation() {
     navigator.geolocation.getCurrentPosition(
       pos => {
@@ -280,7 +280,6 @@ Hub.app = {
     );
   },
 
-  /** Bind all UI event listeners */
   _bindUI() {
     Hub.utils.$('btnGoogleLogin')?.addEventListener('click', () => Hub.auth.signInGoogle());
     Hub.utils.$('btnSignOut')?.addEventListener('click', () => Hub.auth.signOut());
@@ -297,7 +296,6 @@ Hub.app = {
     Hub.utils.$('btnRefreshStatus')?.addEventListener('click', () => Hub.app._loadStatusPage());
   },
 
-  /** Idle timer management */
   _startIdleTimer() {
     this._resetIdleTimer();
     ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'].forEach(ev =>
