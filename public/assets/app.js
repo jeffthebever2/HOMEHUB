@@ -1,307 +1,296 @@
 // ============================================================
-// assets/supabase.js — Supabase auth + DB helpers
+// assets/app.js — Main application init & orchestration (v3)
 //
-// CRITICAL FIX: flowType changed from 'implicit' → 'pkce'
-//   Supabase GoTrue returns ?code= on OAuth callback.
-//   With implicit, the JS client never generates a code_verifier,
-//   so the ?code= is silently ignored → no session → login loop.
-//   With pkce, the client stores a code_verifier, then exchanges
-//   the ?code= for a real session on redirect back.
-//
-// ALSO: added boot diagnostics + "Check Supabase" debug tool
+// - Handles ALL auth events (SIGNED_IN, INITIAL_SESSION, etc.)
+// - _loggedIn guard prevents duplicate execution
+// - #letmein bypass for testing
+// - 3s getSession fallback + 8s hard fallback
 // ============================================================
 window.Hub = window.Hub || {};
 
-(function () {
-  const CFG = window.HOME_HUB_CONFIG || {};
-  const SB_URL = CFG.supabaseUrl || CFG.supabase?.url || '';
-  const SB_KEY = CFG.supabaseAnonKey || CFG.supabase?.anonKey || '';
+Hub.state = {
+  user: null,
+  household_id: null,
+  userRole: null,
+  settings: {}
+};
 
-  // ── Boot diagnostics ──────────────────────────────────────
-  console.log('[Boot] href:', window.location.href);
-  console.log('[Boot] has ?code=', window.location.search.includes('code='));
-  console.log('[Boot] has #access_token=', window.location.hash.includes('access_token'));
-  console.log('[Boot] Supabase URL:', SB_URL ? 'configured' : 'MISSING');
-  console.log('[Boot] Supabase Key:', SB_KEY.length > 20 ? 'present' : 'MISSING');
+Hub.app = {
+  _idleTimer: null,
+  _loggedIn: false,
+  _authHandled: false,
 
-  // ── Create client — PKCE flow (MUST be explicit for JS v2) ─
-  const sb = window.supabase.createClient(SB_URL, SB_KEY, {
-    auth: {
-      flowType: 'pkce',            // ← THE FIX: was 'implicit'
-      detectSessionInUrl: true,     // auto-exchange ?code= on redirect
-      autoRefreshToken: true,
-      persistSession: true
+  async init() {
+    console.log('[App] init()');
+    this._bindUI();
+    Hub.router.init();
+    Hub.treats.init();
+
+    // ── TEST BYPASS: visit /#letmein ──
+    if (window.location.hash === '#letmein') {
+      console.log('[Auth] ⚠ BYPASS MODE');
+      this._loggedIn = true;
+      this._authHandled = true;
+      Hub.state.user = { id: 'test', email: 'bypass@test' };
+      Hub.state.household_id = 'd49c4c5b-1ffd-42db-9b3e-bec70545bf87';
+      Hub.state.userRole = 'admin';
+      Hub.state.settings = {};
+      document.getElementById('loadingScreen').style.display = 'none';
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      document.getElementById('dashboardPage').classList.add('active');
+      console.log('[Auth] ⚠ Dashboard forced via bypass');
+      return;
     }
-  });
 
-  Hub.sb = sb;
+    // ── Auth listener — ANY event with a user triggers _onLogin ──
+    Hub.auth.onAuthChange(async (event, session) => {
+      console.log('[Auth] Event:', event, session?.user?.email || 'no-user');
 
-  // Log session state after client init (non-blocking)
-  (async () => {
-    try {
-      const { data: { session } } = await sb.auth.getSession();
-      console.log('[Boot] getSession →', session ? session.user.email : 'null (no session)');
-      if (session) {
-        console.log('[Boot]   expires_at:', new Date(session.expires_at * 1000).toISOString());
+      if (event === 'SIGNED_OUT') {
+        this._loggedIn = false;
+        this._authHandled = true;
+        Hub.state.user = null;
+        Hub.router.showScreen('login');
+        return;
       }
-    } catch (e) { console.warn('[Boot] getSession error:', e.message); }
-    try {
-      const { data: { user } } = await sb.auth.getUser();
-      console.log('[Boot] getUser →', user ? user.email : 'null');
-    } catch (e) { console.warn('[Boot] getUser error:', e.message); }
-  })();
 
-  // ── Auth helpers ───────────────────────────────────────────
-  Hub.auth = {
-    async signInGoogle() {
-      console.log('[Auth] Starting Google OAuth (PKCE)…');
-      const redirectTo = window.location.origin + '/#/';
-      console.log('[Auth] redirectTo:', redirectTo);
-      const { error } = await sb.auth.signInWithOAuth({
-        provider: 'google',
-        options: { redirectTo }
-      });
-      if (error) console.error('[Auth] signInWithOAuth error:', error);
-    },
+      if (session?.user) {
+        this._authHandled = true;
+        await this._onLogin(session.user);
+        return;
+      }
 
-    async signOut() {
-      Hub.app._loggedIn = false;
-      Hub.state.user = null;
-      Hub.state.household_id = null;
-      Hub.state.userRole = null;
-      await sb.auth.signOut();
-      Hub.router.showScreen('login');
-    },
+      // No user on this event
+      if (event === 'INITIAL_SESSION') {
+        this._authHandled = true;
+        console.log('[Auth] INITIAL_SESSION: no user → login');
+        Hub.router.showScreen('login');
+      }
+    });
 
-    async getSession() {
+    // Fallback 1: 3s — try getSession manually
+    setTimeout(async () => {
+      if (this._loggedIn || this._authHandled) return;
+      console.log('[Auth] 3s fallback — getSession()');
       try {
-        const { data: { session } } = await sb.auth.getSession();
-        return session;
+        const session = await Hub.auth.getSession();
+        console.log('[Auth] 3s fallback session:', session?.user?.email || 'none');
+        if (session?.user && !this._loggedIn) {
+          await this._onLogin(session.user);
+        } else if (!this._loggedIn) {
+          Hub.router.showScreen('login');
+        }
       } catch (e) {
-        console.warn('[Auth] getSession error:', e.message);
-        return null;
+        console.error('[Auth] 3s fallback error:', e);
+        if (!this._loggedIn) Hub.router.showScreen('login');
       }
-    },
+    }, 3000);
 
-    async checkAccess(user) {
+    // Fallback 2: 8s — absolute safety net
+    setTimeout(() => {
+      if (!this._loggedIn) {
+        const el = document.getElementById('loadingScreen');
+        if (el && el.style.display !== 'none') {
+          console.warn('[Auth] 8s HARD fallback → login');
+          Hub.router.showScreen('login');
+        }
+      }
+    }, 8000);
+
+    this._startIdleTimer();
+  },
+
+  async _onLogin(user) {
+    if (this._loggedIn) {
+      console.log('[Auth] Already logged in, skip');
+      return;
+    }
+
+    try {
+      console.log('[Auth] _onLogin:', user.email);
+      const allowed = await Hub.auth.checkAccess(user);
+      console.log('[Auth] checkAccess →', allowed);
+
+      if (this._loggedIn) return;
+
+      if (!allowed) {
+        console.warn('[Auth] DENIED:', user.email);
+        Hub.utils.$('deniedEmail').textContent = user.email;
+        Hub.router.showScreen('accessDenied');
+        return;
+      }
+
+      this._loggedIn = true;
+      Hub.state.user = user;
+
       try {
-        console.log('[Auth] checkAccess: querying household_members for', user.email);
-        const t0 = Date.now();
-        const { data, error } = await sb.from('household_members')
-          .select('household_id, role')
-          .eq('email', user.email)
-          .limit(1)
-          .maybeSingle();
-        console.log('[Auth] household_members (' + (Date.now() - t0) + 'ms):',
-          JSON.stringify({ data, err: error?.message }));
-        if (error || !data) return false;
-
-        const t1 = Date.now();
-        const { data: ae, error: aeErr } = await sb.from('allowed_emails')
-          .select('id')
-          .eq('email', user.email)
-          .limit(1)
-          .maybeSingle();
-        console.log('[Auth] allowed_emails (' + (Date.now() - t1) + 'ms):',
-          JSON.stringify({ ae, err: aeErr?.message }));
-        if (aeErr || !ae) return false;
-
-        Hub.state.household_id = data.household_id;
-        Hub.state.userRole = data.role;
-        console.log('[Auth] ✓ Access granted — household:', data.household_id, 'role:', data.role);
-        return true;
+        const s = await Hub.db.loadSettings(user.id);
+        Hub.state.settings = s || {};
       } catch (e) {
-        console.error('[Auth] checkAccess exception:', e);
-        return false;
+        console.warn('[Auth] Settings fail:', e.message);
+        Hub.state.settings = {};
       }
-    },
 
-    onAuthChange(cb) {
-      sb.auth.onAuthStateChange((event, session) => cb(event, session));
+      console.log('[Auth] ✓ Showing app');
+      this._showApp();
+    } catch (e) {
+      console.error('[Auth] _onLogin error:', e);
+      if (!this._loggedIn) Hub.router.showScreen('login');
     }
-  };
+  },
 
-  // ── Debug tool — "Check Supabase" button ───────────────────
-  Hub.debug = {
-    async checkSupabase() {
-      const out = [];
-      const log = (msg) => { out.push(msg); console.log('[Debug]', msg); };
-      const el = document.getElementById('debugOutput');
-      if (el) { el.style.display = 'block'; el.textContent = 'Running diagnostics…\n'; }
+  _showApp() {
+    document.getElementById('loadingScreen').style.display = 'none';
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
 
-      log('══════ Supabase Diagnostics ══════');
-      log('URL: ' + (SB_URL || '⚠ MISSING'));
-      log('Key: ' + (SB_KEY.length > 20 ? '✓ present (' + SB_KEY.substring(0, 20) + '…)' : '⚠ MISSING'));
-      log('Page: ' + window.location.href);
-      log('Has ?code=: ' + window.location.search.includes('code='));
-      log('Has #access_token=: ' + window.location.hash.includes('access_token'));
-      log('');
+    const hash = window.location.hash.replace('#/', '').replace('#', '');
+    const page = Hub.router.VALID_PAGES.includes(hash) ? hash : 'dashboard';
+    const el = Hub.utils.$(page + 'Page');
+    if (el) el.classList.add('active');
+    else document.getElementById('dashboardPage').classList.add('active');
 
-      // 1. getSession
-      try {
-        log('── getSession() ──');
-        const { data: { session }, error } = await sb.auth.getSession();
-        if (error) { log('⚠ Error: ' + error.message); }
-        else if (session) {
-          log('✓ Session EXISTS');
-          log('  Email: ' + session.user.email);
-          log('  User ID: ' + session.user.id);
-          log('  Provider: ' + (session.user.app_metadata?.provider || '?'));
-          log('  Expires: ' + new Date(session.expires_at * 1000).toLocaleString());
-          log('  Token (first 40): ' + session.access_token.substring(0, 40) + '…');
-        } else {
-          log('✗ No session — NOT logged in');
-          log('  (This is the bug — OAuth redirect did not create a session)');
-        }
-      } catch (e) { log('⚠ Exception: ' + e.message); }
-      log('');
+    Hub.router.current = page;
+    console.log('[Auth] Page:', page);
+    this.onPageEnter(page);
+  },
 
-      // 2. getUser (server-side token validation)
-      try {
-        log('── getUser() ──');
-        const { data: { user }, error } = await sb.auth.getUser();
-        if (error) { log('⚠ Error: ' + error.message); }
-        else if (user) { log('✓ Server confirmed: ' + user.email); }
-        else { log('✗ Server returned null user'); }
-      } catch (e) { log('⚠ Exception: ' + e.message); }
-      log('');
-
-      // 3. DB query — household_members
-      try {
-        log('── DB: household_members ──');
-        const t = Date.now();
-        const { data, error } = await sb.from('household_members')
-          .select('household_id, email, role')
-          .limit(5);
-        log('  Response in ' + (Date.now() - t) + 'ms');
-        if (error) {
-          log('✗ Error: ' + error.message + ' [code: ' + (error.code || '?') + ']');
-          if (error.message.includes('permission denied')) {
-            log('  → RLS is blocking. You need a valid session first.');
-          }
-        } else {
-          log('✓ Returned ' + (data?.length || 0) + ' rows');
-          if (data) data.forEach(r => log('  ' + JSON.stringify(r)));
-        }
-      } catch (e) { log('⚠ Exception: ' + e.message); }
-      log('');
-
-      // 4. DB query — allowed_emails
-      try {
-        log('── DB: allowed_emails ──');
-        const t = Date.now();
-        const { data, error } = await sb.from('allowed_emails')
-          .select('email')
-          .limit(5);
-        log('  Response in ' + (Date.now() - t) + 'ms');
-        if (error) { log('✗ Error: ' + error.message); }
-        else {
-          log('✓ Returned ' + (data?.length || 0) + ' rows');
-          if (data) data.forEach(r => log('  ' + JSON.stringify(r)));
-        }
-      } catch (e) { log('⚠ Exception: ' + e.message); }
-      log('');
-
-      // 5. Server-side diagnostics
-      try {
-        log('── Server: /api/supabase-check ──');
-        const session = (await sb.auth.getSession()).data?.session;
-        if (session) {
-          const resp = await fetch('/api/supabase-check', {
-            headers: { 'Authorization': 'Bearer ' + session.access_token }
-          });
-          const json = await resp.json();
-          log('  HTTP ' + resp.status);
-          log('  ' + JSON.stringify(json, null, 2));
-        } else {
-          log('  Skipped — no session token available');
-        }
-      } catch (e) { log('⚠ Fetch error: ' + e.message); }
-
-      log('');
-      log('══════ End Diagnostics ══════');
-      if (el) el.textContent = out.join('\n');
-      return out;
+  onPageEnter(page) {
+    this._resetIdleTimer();
+    switch (page) {
+      case 'dashboard': this._loadDashboard(); break;
+      case 'weather':   this._loadWeatherPage(); break;
+      case 'chores':    Hub.chores.load(); break;
+      case 'treats':    Hub.treats.loadDogs(); break;
+      case 'standby':   Hub.standby.start(); break;
+      case 'settings':  this._loadSettingsForm(); break;
+      case 'status':    this._loadStatusPage(); break;
     }
-  };
+  },
 
-  // ── DB helpers ─────────────────────────────────────────────
-  Hub.db = {
-    async loadSettings(userId) {
-      const { data } = await sb.from('user_settings')
-        .select('*').eq('user_id', userId).maybeSingle();
-      return data;
-    },
+  async _loadDashboard() {
+    Hub.ui.updateDashboardDate();
+    Hub.chores.loadDashboard();
+    this._loadDashboardWeather();
+  },
 
-    async saveSettings(userId, householdId, settings) {
-      const payload = {
-        user_id: userId, household_id: householdId,
-        location_name: settings.location_name,
-        location_lat: settings.location_lat,
-        location_lon: settings.location_lon,
-        standby_timeout_min: settings.standby_timeout_min,
-        quiet_hours_start: settings.quiet_hours_start,
-        quiet_hours_end: settings.quiet_hours_end,
-        immich_base_url: settings.immich_base_url,
-        immich_api_key: settings.immich_api_key,
-        immich_album_id: settings.immich_album_id,
-        calendar_url: settings.calendar_url,
-        updated_at: new Date().toISOString()
-      };
-      const { data, error } = await sb.from('user_settings')
-        .upsert(payload, { onConflict: 'user_id' }).select().single();
-      if (error) throw error;
-      return data;
-    },
+  async _loadDashboardWeather() {
+    try {
+      const agg = await Hub.weather.fetchAggregate();
+      const aiSummary = await Hub.ai.getSummary(agg);
+      const normalized = Hub.weather.normalize(agg);
+      Hub.weather.renderDashboard(aiSummary, normalized);
+      if (aiSummary?.alerts?.active) {
+        Hub.ui.showBanner(aiSummary.alerts.banner_text, aiSummary.alerts.severity);
+        if (aiSummary.actions?.some(a => a.type === 'show_popup')) Hub.ui.showAlertPopup(aiSummary.alerts);
+      } else { Hub.ui.hideBanner(); }
+    } catch (e) { console.error('Dashboard weather error:', e); }
+  },
 
-    async loadChores(householdId) {
-      const { data, error } = await sb.from('chores')
-        .select('*').eq('household_id', householdId)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      return data || [];
-    },
-
-    async addChore(chore) {
-      const { data, error } = await sb.from('chores').insert(chore).select().single();
-      if (error) throw error;
-      return data;
-    },
-
-    async updateChore(id, updates) {
-      const { error } = await sb.from('chores').update(updates).eq('id', id);
-      if (error) throw error;
-    },
-
-    async deleteChore(id) {
-      const { error } = await sb.from('chores').delete().eq('id', id);
-      if (error) throw error;
-    },
-
-    async logChoreCompletion(choreId, householdId, userId, notes) {
-      const { error } = await sb.from('chore_logs').insert({
-        chore_id: choreId, household_id: householdId,
-        completed_by: userId, notes
-      });
-      if (error) throw error;
-    },
-
-    async markAlertSeen(userId, alertId, severity) {
-      await sb.from('seen_alerts').upsert(
-        { user_id: userId, alert_id: alertId, severity, seen_at: new Date().toISOString() },
-        { onConflict: 'user_id,alert_id' }
-      );
-    },
-
-    async isAlertSeen(userId, alertId) {
-      const { data } = await sb.from('seen_alerts')
-        .select('id').eq('user_id', userId).eq('alert_id', alertId).maybeSingle();
-      return !!data;
-    },
-
-    async logSystem(source, service, status, message, latencyMs) {
-      await sb.from('system_logs')
-        .insert({ source, service, status, message, latency_ms: latencyMs }).select();
+  async _loadWeatherPage() {
+    try {
+      const agg = await Hub.weather.fetchAggregate();
+      const aiSummary = await Hub.ai.getSummary(agg);
+      Hub.weather.renderWeatherPage(aiSummary, agg);
+    } catch (e) {
+      Hub.utils.$('weatherContent').innerHTML = '<p class="text-yellow-400">Error loading weather data.</p>';
     }
-  };
-})();
+  },
+
+  async _loadStatusPage() {
+    const el = Hub.utils.$('statusContent');
+    if (!el) return;
+    el.innerHTML = '<p class="text-gray-400">Checking services…</p>';
+    const base = Hub.utils.apiBase();
+    const checks = [
+      { name: 'Supabase', key: 'supabase' },
+      { name: 'Weather Aggregate', key: 'weather' },
+      { name: 'AI Summary', key: 'ai' },
+      { name: 'Immich Album', key: 'immich' }
+    ];
+    try {
+      const resp = await fetch(`${base}/api/health`);
+      const data = resp.ok ? await resp.json() : {};
+      const svcData = data.services || data;
+      el.innerHTML = '<div class="space-y-4">' + checks.map(c => {
+        const svc = svcData[c.key]; const ok = svc?.status === 'ok'; const cls = ok ? 'green' : 'red';
+        return `<div class="card flex items-center justify-between"><div class="flex items-center gap-3"><span class="status-dot ${cls}"></span><span class="font-medium">${Hub.utils.esc(c.name)}</span></div><div class="text-right"><span class="text-sm ${ok ? 'text-green-400' : 'text-red-400'}">${ok ? 'OK' : svc?.error || 'Error'}</span>${svc?.latency_ms ? `<span class="text-xs text-gray-500 ml-2">${svc.latency_ms}ms</span>` : ''}</div></div>`;
+      }).join('') + '</div>' + `<p class="text-xs text-gray-500 mt-4">Last checked: ${new Date().toLocaleTimeString()}</p>`;
+    } catch (e) { el.innerHTML = '<div class="card"><p class="text-red-400">Unable to reach health endpoint</p></div>'; }
+  },
+
+  _loadSettingsForm() {
+    const s = Hub.state.settings || {}; const cfg = window.HOME_HUB_CONFIG || {};
+    Hub.utils.$('settingLocationName').value = s.location_name || cfg.defaultLocation?.name || '';
+    Hub.utils.$('settingLat').value          = s.location_lat  || cfg.defaultLocation?.lat || '';
+    Hub.utils.$('settingLon').value          = s.location_lon  || cfg.defaultLocation?.lon || '';
+    Hub.utils.$('settingImmichUrl').value    = s.immich_base_url || cfg.immichBaseUrl || '';
+    Hub.utils.$('settingImmichKey').value    = s.immich_api_key  || cfg.immichSharedAlbumKeyOrToken || '';
+    Hub.utils.$('settingImmichAlbum').value  = s.immich_album_id || '';
+    Hub.utils.$('settingIdleTimeout').value  = s.standby_timeout_min || 10;
+    Hub.utils.$('settingQuietStart').value   = s.quiet_hours_start || '22:00';
+    Hub.utils.$('settingQuietEnd').value     = s.quiet_hours_end   || '07:00';
+    Hub.utils.$('settingCalendarUrl').value  = s.calendar_url || '';
+  },
+
+  async _saveSettings() {
+    if (!Hub.state.user || !Hub.state.household_id) return;
+    const payload = {
+      location_name: Hub.utils.$('settingLocationName').value.trim(),
+      location_lat: parseFloat(Hub.utils.$('settingLat').value) || 40.029059,
+      location_lon: parseFloat(Hub.utils.$('settingLon').value) || -82.863462,
+      standby_timeout_min: parseInt(Hub.utils.$('settingIdleTimeout').value) || 10,
+      quiet_hours_start: Hub.utils.$('settingQuietStart').value || '22:00',
+      quiet_hours_end: Hub.utils.$('settingQuietEnd').value || '07:00',
+      immich_base_url: Hub.utils.$('settingImmichUrl').value.trim(),
+      immich_api_key: Hub.utils.$('settingImmichKey').value.trim(),
+      immich_album_id: Hub.utils.$('settingImmichAlbum').value.trim(),
+      calendar_url: Hub.utils.$('settingCalendarUrl').value.trim()
+    };
+    try {
+      const saved = await Hub.db.saveSettings(Hub.state.user.id, Hub.state.household_id, payload);
+      Hub.state.settings = saved; Hub.weather._cache = null; Hub.ai._cache = null;
+      Hub.ui.toast('Settings saved!'); Hub.router.go('dashboard');
+    } catch (e) { Hub.ui.toast('Save failed: ' + e.message, 'error'); }
+  },
+
+  _useCurrentLocation() {
+    navigator.geolocation.getCurrentPosition(
+      pos => { Hub.utils.$('settingLat').value = pos.coords.latitude.toFixed(6); Hub.utils.$('settingLon').value = pos.coords.longitude.toFixed(6); Hub.ui.toast('Location updated'); },
+      () => Hub.ui.toast('Location access denied', 'error')
+    );
+  },
+
+  _bindUI() {
+    Hub.utils.$('btnGoogleLogin')?.addEventListener('click', () => Hub.auth.signInGoogle());
+    Hub.utils.$('btnCheckSupabase')?.addEventListener('click', () => Hub.debug.checkSupabase());
+    Hub.utils.$('btnSignOut')?.addEventListener('click', () => Hub.auth.signOut());
+    Hub.utils.$('btnSignOutDenied')?.addEventListener('click', () => Hub.auth.signOut());
+    Hub.utils.$('btnDismissAlert')?.addEventListener('click', () => Hub.ui.dismissAlert());
+    Hub.utils.$('btnAddChore')?.addEventListener('click', () => Hub.chores.showAdd());
+    Hub.utils.$('btnSaveChore')?.addEventListener('click', () => Hub.chores.add());
+    Hub.utils.$('btnAddTreat')?.addEventListener('click', () => Hub.treats.showAddTreat());
+    Hub.utils.$('btnSaveTreat')?.addEventListener('click', () => Hub.treats.logTreat());
+    Hub.utils.$('btnAddDog')?.addEventListener('click', () => Hub.treats.showAddDog());
+    Hub.utils.$('btnSaveDog')?.addEventListener('click', () => Hub.treats.addDog());
+    Hub.utils.$('btnSaveSettings')?.addEventListener('click', () => Hub.app._saveSettings());
+    Hub.utils.$('btnUseLocation')?.addEventListener('click', () => Hub.app._useCurrentLocation());
+    Hub.utils.$('btnRefreshStatus')?.addEventListener('click', () => Hub.app._loadStatusPage());
+  },
+
+  _startIdleTimer() {
+    this._resetIdleTimer();
+    ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'].forEach(ev =>
+      window.addEventListener(ev, () => this._resetIdleTimer())
+    );
+  },
+
+  _resetIdleTimer() {
+    if (this._idleTimer) clearTimeout(this._idleTimer);
+    const timeout = ((Hub.state.settings?.standby_timeout_min) || 10) * 60 * 1000;
+    this._idleTimer = setTimeout(() => {
+      if (Hub.router.current !== 'standby' && Hub.state.user) Hub.router.go('standby');
+    }, timeout);
+  }
+};
+
+window.addEventListener('DOMContentLoaded', () => Hub.app.init());
