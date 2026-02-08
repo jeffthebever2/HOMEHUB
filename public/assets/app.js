@@ -3,7 +3,6 @@
 // ============================================================
 window.Hub = window.Hub || {};
 
-// Global state
 Hub.state = {
   user: null,
   household_id: null,
@@ -15,17 +14,23 @@ Hub.app = {
   _idleTimer: null,
   _loggedIn: false,
 
-  /** Main init — called on DOMContentLoaded */
   async init() {
     this._bindUI();
     Hub.router.init();
     Hub.treats.init();
 
-    // Single auth listener — guards with _loggedIn flag
+    // ONE auth listener. Only act on INITIAL_SESSION (client fully ready)
+    // and SIGNED_OUT. Ignore SIGNED_IN — JWT isn't ready yet.
     Hub.auth.onAuthChange(async (event, session) => {
       console.log('[Auth] Event:', event, session?.user?.email || 'no user');
-      if (session?.user && !this._loggedIn) {
-        await this._onLogin(session.user);
+
+      if (event === 'INITIAL_SESSION') {
+        if (session?.user) {
+          await this._onLogin(session.user);
+        } else {
+          console.log('[Auth] No session on init, showing login');
+          Hub.router.showScreen('login');
+        }
       } else if (event === 'SIGNED_OUT') {
         this._loggedIn = false;
         Hub.state.user = null;
@@ -33,54 +38,40 @@ Hub.app = {
       }
     });
 
-    // Fallback: if nothing happened after 2.5s, try getSession manually
-    setTimeout(async () => {
-      if (this._loggedIn) return;
-      console.log('[Auth] Timeout — trying getSession fallback');
-      try {
-        const session = await Hub.auth.getSession();
-        if (session?.user && !this._loggedIn) {
-          await this._onLogin(session.user);
-        } else if (!this._loggedIn) {
-          console.log('[Auth] No session, showing login');
+    // Safety net: if INITIAL_SESSION never fires (shouldn't happen), show login after 5s
+    setTimeout(() => {
+      if (!this._loggedIn && !Hub.state.user) {
+        const loading = Hub.utils.$('loadingScreen');
+        if (loading && loading.style.display !== 'none') {
+          console.log('[Auth] Safety timeout — showing login');
           Hub.router.showScreen('login');
         }
-      } catch (e) {
-        console.error('[Auth] Fallback error:', e);
-        if (!this._loggedIn) Hub.router.showScreen('login');
       }
-    }, 2500);
+    }, 5000);
 
     this._startIdleTimer();
   },
 
-  /** Handle successful login — runs ONCE */
   async _onLogin(user) {
-    if (this._loggedIn) {
-      console.log('[Auth] Already logged in, skipping');
-      return;
-    }
+    if (this._loggedIn) return;
 
     try {
       console.log('[Auth] Checking access for:', user.email);
       const allowed = await Hub.auth.checkAccess(user);
+      console.log('[Auth] Access result:', allowed);
 
-      // Re-check after await
-      if (this._loggedIn) return;
+      if (this._loggedIn) return; // guard after await
 
       if (!allowed) {
-        console.log('[Auth] Access DENIED for:', user.email);
         Hub.utils.$('deniedEmail').textContent = user.email;
         Hub.router.showScreen('accessDenied');
         return;
       }
 
-      // LOCK immediately
       this._loggedIn = true;
       Hub.state.user = user;
-      console.log('[Auth] Access GRANTED — showing dashboard');
 
-      // Load settings (non-blocking failure)
+      // Load settings (non-blocking)
       try {
         const settings = await Hub.db.loadSettings(user.id);
         Hub.state.settings = settings || {};
@@ -89,67 +80,39 @@ Hub.app = {
         Hub.state.settings = {};
       }
 
-      // FORCE show app
+      console.log('[Auth] SUCCESS — showing app');
       this._showApp();
     } catch (e) {
       console.error('[Auth] _onLogin error:', e);
-      if (!this._loggedIn) Hub.router.showScreen('login');
+      Hub.router.showScreen('login');
     }
   },
 
-  /** Force the app UI to be visible — bypasses router */
   _showApp() {
-    // 1. Kill loading spinner
-    const loading = Hub.utils.$('loadingScreen');
-    if (loading) loading.style.display = 'none';
-
-    // 2. Remove active from EVERY .page
+    Hub.utils.$('loadingScreen').style.display = 'none';
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
 
-    // 3. Pick the target page
     const hash = window.location.hash.replace('#/', '').replace('#', '');
     const page = Hub.router.VALID_PAGES.includes(hash) ? hash : 'dashboard';
-
-    // 4. Activate it
     const el = Hub.utils.$(page + 'Page');
-    if (el) {
-      el.classList.add('active');
-    } else {
-      Hub.utils.$('dashboardPage').classList.add('active');
-    }
+    if (el) el.classList.add('active');
+    else Hub.utils.$('dashboardPage').classList.add('active');
 
     Hub.router.current = page;
     console.log('[Auth] Page activated:', page);
-
-    // 5. Run page logic
     this.onPageEnter(page);
   },
 
-  /** Called by router whenever a page is entered */
   onPageEnter(page) {
     this._resetIdleTimer();
     switch (page) {
-      case 'dashboard':
-        this._loadDashboard();
-        break;
-      case 'weather':
-        this._loadWeatherPage();
-        break;
-      case 'chores':
-        Hub.chores.load();
-        break;
-      case 'treats':
-        Hub.treats.loadDogs();
-        break;
-      case 'standby':
-        Hub.standby.start();
-        break;
-      case 'settings':
-        this._loadSettingsForm();
-        break;
-      case 'status':
-        this._loadStatusPage();
-        break;
+      case 'dashboard': this._loadDashboard(); break;
+      case 'weather': this._loadWeatherPage(); break;
+      case 'chores': Hub.chores.load(); break;
+      case 'treats': Hub.treats.loadDogs(); break;
+      case 'standby': Hub.standby.start(); break;
+      case 'settings': this._loadSettingsForm(); break;
+      case 'status': this._loadStatusPage(); break;
     }
   },
 
@@ -314,5 +277,4 @@ Hub.app = {
   }
 };
 
-// Boot
 window.addEventListener('DOMContentLoaded', () => Hub.app.init());
