@@ -73,24 +73,47 @@ Hub.app = {
   },
 
   /** Handle successful login */
+  _loginInProgress: false,
   async _onLogin(user) {
-    const allowed = await Hub.auth.checkAccess(user);
-    if (!allowed) {
-      Hub.utils.$('deniedEmail').textContent = user.email;
-      Hub.router.showScreen('accessDenied');
+    // Prevent double execution from SIGNED_IN + INITIAL_SESSION
+    if (this._loginInProgress) {
+      console.log('[Auth] Login already in progress, skipping duplicate');
       return;
     }
+    this._loginInProgress = true;
 
-    Hub.state.user = user;
+    try {
+      const allowed = await Hub.auth.checkAccess(user);
+      if (!allowed) {
+        Hub.utils.$('deniedEmail').textContent = user.email;
+        Hub.router.showScreen('accessDenied');
+        this._loginInProgress = false;
+        return;
+      }
 
-    // Load user settings
-    const settings = await Hub.db.loadSettings(user.id);
-    Hub.state.settings = settings || {};
+      Hub.state.user = user;
 
-    // Navigate to current hash or dashboard
-    Hub.utils.$('loadingScreen').style.display = 'none';
-    const hash = window.location.hash.replace('#/', '') || 'dashboard';
-    Hub.router._activate(hash);
+      // Load user settings (don't let this block login)
+      try {
+        const settings = await Hub.db.loadSettings(user.id);
+        Hub.state.settings = settings || {};
+      } catch (e) {
+        console.warn('[Auth] Failed to load settings, using defaults:', e);
+        Hub.state.settings = {};
+      }
+
+      // Navigate to current hash or dashboard
+      console.log('[Auth] Login complete, showing app');
+      Hub.utils.$('loadingScreen').style.display = 'none';
+      Hub.utils.$('loginScreen')?.classList.remove('active');
+      Hub.utils.$('accessDeniedScreen')?.classList.remove('active');
+      const hash = window.location.hash.replace('#/', '') || 'dashboard';
+      Hub.router._activate(hash);
+    } catch (e) {
+      console.error('[Auth] _onLogin error:', e);
+      Hub.router.showScreen('login');
+    }
+    this._loginInProgress = false;
   },
 
   /** Called by router whenever a page is entered */
