@@ -466,6 +466,12 @@ Hub.app = {
       const saved = await Hub.db.saveSettings(Hub.state.user.id, Hub.state.household_id, payload);
       Hub.state.settings = saved; 
       
+      // ALSO save to localStorage as backup
+      if (selectedCalendars.length > 0) {
+        localStorage.setItem('selected_calendars', JSON.stringify(selectedCalendars));
+        console.log('[App] Saved to localStorage backup:', selectedCalendars);
+      }
+      
       // Clear caches so new settings take effect immediately
       Hub.weather._cache = null; 
       Hub.ai._cache = null;

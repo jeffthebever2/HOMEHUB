@@ -12,22 +12,76 @@ Hub.immich = {
   _hardcodedConfig: {
     immichUrl: 'http://192.168.7.248:2283',
     immichKey: 'LH6mLNi6tO8whoeiRkgkQkDjK7hmCUsAba02l7iazNI',
-    albumId: 'b10c6f7a-a412-4d4f-9ce4-f5c330fdacb3'
+    useWholeLibrary: true // Set to true to use ALL photos, false to use specific album
   },
 
-  /** Fetch images from the backend proxy or use hardcoded configuration */
+  /** Fetch images from Immich - either whole library or specific album */
   async fetchImages() {
     const s = Hub.state.settings || {};
     
-    // Use hardcoded config first, fallback to settings, then to Picsum placeholders
+    // Use hardcoded config first, fallback to settings
     const immichUrl = this._hardcodedConfig.immichUrl || s.immich_base_url || '';
     const immichKey = this._hardcodedConfig.immichKey || s.immich_api_key || '';
-    const albumId = this._hardcodedConfig.albumId || s.immich_album_id || '';
+    const useWholeLibrary = this._hardcodedConfig.useWholeLibrary !== undefined 
+      ? this._hardcodedConfig.useWholeLibrary 
+      : false;
 
-    // Try to fetch from Immich API
-    if (immichUrl && immichKey && albumId) {
+    if (!immichUrl || !immichKey) {
+      console.log('[Immich] No configuration, using placeholders');
+      return this._usePlaceholders();
+    }
+
+    // FETCH ALL PHOTOS FROM LIBRARY
+    if (useWholeLibrary) {
       try {
-        console.log('[Immich] Fetching from hardcoded config:', immichUrl);
+        console.log('[Immich] Fetching ALL photos from library:', immichUrl);
+        
+        // Get all assets from Immich
+        const response = await fetch(`${immichUrl}/api/assets`, {
+          headers: {
+            'x-api-key': immichKey,
+            'Accept': 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          console.error('[Immich] Assets API failed:', response.status, response.statusText);
+          return this._usePlaceholders();
+        }
+
+        const assets = await response.json();
+        console.log('[Immich] Received', assets.length, 'total assets from library');
+
+        // Filter to only images (not videos)
+        const imageAssets = assets.filter(asset => 
+          asset.type === 'IMAGE' && !asset.isTrashed
+        );
+        
+        console.log('[Immich] Filtered to', imageAssets.length, 'images (excluding videos and trash)');
+
+        // Build image URLs
+        this._images = imageAssets.map(asset => 
+          `${immichUrl}/api/assets/${asset.id}/thumbnail?size=preview`
+        );
+
+        if (this._images.length > 0) {
+          console.log('[Immich] ✓ Loaded', this._images.length, 'photos from your ENTIRE LIBRARY');
+          return this._images;
+        } else {
+          console.warn('[Immich] No images found in library');
+          return this._usePlaceholders();
+        }
+      } catch (e) {
+        console.error('[Immich] Error fetching library:', e);
+        return this._usePlaceholders();
+      }
+    }
+
+    // FETCH FROM SPECIFIC ALBUM (if useWholeLibrary is false)
+    const albumId = this._hardcodedConfig.albumId || s.immich_album_id || '';
+    if (albumId) {
+      try {
+        console.log('[Immich] Fetching from album:', albumId);
         const base = Hub.utils.apiBase();
         const resp = await fetch(`${base}/api/immich-album?baseUrl=${encodeURIComponent(immichUrl)}&key=${encodeURIComponent(immichKey)}&albumId=${encodeURIComponent(albumId)}`);
         
@@ -35,19 +89,24 @@ Hub.immich = {
           const data = await resp.json();
           this._images = data.images || [];
           if (this._images.length > 0) {
-            console.log('[Immich] ✓ Loaded', this._images.length, 'photos from your Immich album');
+            console.log('[Immich] ✓ Loaded', this._images.length, 'photos from album');
             return this._images;
           }
         } else {
-          console.warn('[Immich] API returned error:', resp.status);
+          console.warn('[Immich] Album API failed:', resp.status);
         }
       } catch (e) {
-        console.error('[Immich] Error fetching from API:', e);
+        console.error('[Immich] Error fetching album:', e);
       }
     }
 
-    // Fallback: Use Picsum placeholder images
-    console.log('[Immich] Using placeholder images (Immich unavailable)');
+    // Fallback to placeholders
+    return this._usePlaceholders();
+  },
+
+  /** Use placeholder images */
+  _usePlaceholders() {
+    console.log('[Immich] Using placeholder images');
     this._images = [
       'https://picsum.photos/seed/family1/1200/800',
       'https://picsum.photos/seed/family2/1200/800',

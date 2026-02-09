@@ -92,12 +92,25 @@ Hub.calendar = {
 
       const accessToken = session.provider_token;
 
-      // Get selected calendar IDs from settings (or use 'primary' as default)
+      // Get selected calendar IDs with localStorage backup
       const settings = Hub.state?.settings || {};
-      let calendarIds = settings.selected_calendars || ['primary'];
+      let calendarIds = settings.selected_calendars || null;
       
-      // Ensure it's an array
-      if (!Array.isArray(calendarIds)) {
+      // If not in settings, try localStorage
+      if (!calendarIds || !Array.isArray(calendarIds) || calendarIds.length === 0) {
+        const stored = localStorage.getItem('selected_calendars');
+        if (stored) {
+          try {
+            calendarIds = JSON.parse(stored);
+            console.log('[Calendar] Loaded from localStorage:', calendarIds);
+          } catch (e) {
+            console.warn('[Calendar] Failed to parse localStorage:', e);
+          }
+        }
+      }
+      
+      // Final fallback to primary
+      if (!calendarIds || !Array.isArray(calendarIds) || calendarIds.length === 0) {
         calendarIds = ['primary'];
       }
 
