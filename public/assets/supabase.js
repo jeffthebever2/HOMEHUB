@@ -187,11 +187,17 @@ window.Hub = window.Hub || {};
         location_lon: settings.location_lon, standby_timeout_min: settings.standby_timeout_min,
         quiet_hours_start: settings.quiet_hours_start, quiet_hours_end: settings.quiet_hours_end,
         immich_base_url: settings.immich_base_url, immich_api_key: settings.immich_api_key,
-        immich_album_id: settings.immich_album_id, calendar_url: settings.calendar_url,
+        immich_album_id: settings.immich_album_id,
+        selected_calendars: settings.selected_calendars || ['primary'], // ADDED: Calendar selection
         updated_at: new Date().toISOString()
       };
+      console.log('[DB] Saving settings with selected_calendars:', payload.selected_calendars);
       const { data, error } = await timed(sb.from('user_settings').upsert(payload, { onConflict: 'user_id' }).select().single());
-      if (error) throw error;
+      if (error) {
+        console.error('[DB] Error saving settings:', error);
+        throw error;
+      }
+      console.log('[DB] Settings saved successfully:', data);
       return data;
     },
     async loadChores(householdId) {
