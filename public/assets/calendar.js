@@ -186,13 +186,24 @@ Hub.calendar = {
     const events = await this.getUpcomingEvents(5);
 
     if (events.error) {
+      // Check if it's a simple re-auth issue
+      const needsReauth = events.error.includes('sign out') || events.error.includes('sign in');
+      
       widget.innerHTML = `
-        <div class="text-yellow-400">
-          <p class="text-sm mb-2">📅 Calendar Not Connected</p>
-          <p class="text-xs text-gray-400">${Hub.utils.esc(events.error)}</p>
-          <button onclick="Hub.calendar.showSetupInstructions()" class="text-xs text-blue-400 hover:text-blue-300 mt-2">
-            How to connect
-          </button>
+        <div class="bg-blue-900 bg-opacity-30 rounded-lg p-4 text-center">
+          <p class="text-2xl mb-2">📅</p>
+          <p class="text-sm font-medium mb-2">Calendar Not Connected</p>
+          <p class="text-xs text-gray-400 mb-3">${Hub.utils.esc(events.error)}</p>
+          ${needsReauth ? `
+            <button onclick="Hub.auth.signOut()" class="btn btn-primary text-xs">
+              Sign Out & Reconnect
+            </button>
+            <p class="text-xs text-gray-500 mt-2">You'll need to grant calendar access when signing back in</p>
+          ` : `
+            <button onclick="Hub.calendar.showSetupInstructions()" class="text-xs text-blue-400 hover:text-blue-300">
+              How to connect
+            </button>
+          `}
         </div>
       `;
       return;
@@ -270,12 +281,14 @@ Hub.calendar = {
    */
   showSetupInstructions() {
     alert(
-      'To connect Google Calendar:\n\n' +
-      '1. Go to Google Cloud Console\n' +
-      '2. Enable Google Calendar API\n' +
-      '3. Add calendar scopes to Supabase OAuth\n' +
-      '4. Sign out and sign back in\n\n' +
-      'See GOOGLE_CALENDAR_API_GUIDE.md for details.'
+      '📅 Google Calendar Setup:\n\n' +
+      'Calendar permissions are now requested automatically!\n\n' +
+      'If you\'re seeing this message:\n\n' +
+      '1. Sign out of Home Hub\n' +
+      '2. Sign back in with Google\n' +
+      '3. Click "Allow" when Google asks for calendar access\n\n' +
+      'Note: Admin may need to enable Calendar API in Google Cloud Console first.\n\n' +
+      'After signing in, your calendar will appear here automatically!'
     );
   },
 

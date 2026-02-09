@@ -43,10 +43,13 @@ window.Hub = window.Hub || {};
 
   Hub.auth = {
     async signInGoogle() {
-      console.log('[Auth] signInGoogle (PKCE)');
+      console.log('[Auth] signInGoogle (PKCE) with Calendar scopes');
       const { error } = await sb.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo: window.location.origin + '/#/' }
+        options: {
+          redirectTo: window.location.origin + '/#/',
+          scopes: 'email profile https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events'
+        }
       });
       if (error) console.error('[Auth] OAuth error:', error);
     },
