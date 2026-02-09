@@ -20,14 +20,19 @@ Hub.calendar = {
    */
   async getCalendarList() {
     try {
+      console.log('[Calendar] Getting calendar list...');
+      
       const { data: { session } } = await Hub.sb.auth.getSession();
       if (!session?.provider_token) {
-        return { error: 'Not authenticated' };
+        console.error('[Calendar] No provider token found');
+        return { error: 'Not authenticated. Please sign out and sign in again to grant calendar access.' };
       }
+
+      console.log('[Calendar] Session found, provider_token exists:', !!session.provider_token);
 
       const url = 'https://www.googleapis.com/calendar/v3/users/me/calendarList';
       
-      console.log('[Calendar] Fetching calendar list...');
+      console.log('[Calendar] Fetching from:', url);
       const response = await fetch(url, {
         headers: {
           'Authorization': `Bearer ${session.provider_token}`,
@@ -35,17 +40,28 @@ Hub.calendar = {
         }
       });
 
+      console.log('[Calendar] Response status:', response.status);
+
       if (!response.ok) {
-        throw new Error(`Calendar list error: ${response.status}`);
+        const errorText = await response.text();
+        console.error('[Calendar] Error response:', errorText);
+        
+        if (response.status === 401) {
+          return { error: 'Calendar access expired. Please sign out and sign in again.' };
+        }
+        if (response.status === 403) {
+          return { error: 'Calendar API access denied. Make sure Calendar API is enabled in Google Cloud Console and you granted calendar permissions when signing in.' };
+        }
+        throw new Error(`Calendar list error: ${response.status} - ${errorText}`);
       }
 
       const data = await response.json();
-      console.log('[Calendar] Found', data.items?.length || 0, 'calendars');
+      console.log('[Calendar] Found', data.items?.length || 0, 'calendars:', data.items?.map(c => c.summary));
       
       return data.items || [];
     } catch (error) {
       console.error('[Calendar] Error fetching calendar list:', error);
-      return { error: error.message };
+      return { error: `Failed to load calendars: ${error.message}` };
     }
   },
 
@@ -85,7 +101,11 @@ Hub.calendar = {
         calendarIds = ['primary'];
       }
 
-      console.log('[Calendar] Fetching events from', calendarIds.length, 'calendars');
+      console.log('[Calendar] ===== FETCHING EVENTS =====');
+      console.log('[Calendar] Settings object:', settings);
+      console.log('[Calendar] Selected calendars from settings:', calendarIds);
+      console.log('[Calendar] Will fetch from', calendarIds.length, 'calendar(s)');
+      calendarIds.forEach((id, i) => console.log(`[Calendar]   ${i + 1}. ${id}`));
 
       // Fetch events from each selected calendar
       const timeMin = new Date().toISOString();
@@ -123,6 +143,8 @@ Hub.calendar = {
             calendarId: calendarId // Tag each event with its calendar ID
           }));
           
+          console.log(`[Calendar] Fetched ${events.length} events from calendar: ${calendarId}`);
+          
           allEvents.push(...events);
         } catch (err) {
           console.error(`[Calendar] Error fetching events from ${calendarId}:`, err);
@@ -144,7 +166,16 @@ Hub.calendar = {
       this._cache = limitedEvents;
       this._cacheTime = now;
       
-      console.log('[Calendar] Fetched', limitedEvents.length, 'events total');
+      console.log('[Calendar] ===== FETCH COMPLETE =====');
+      console.log(`[Calendar] Total events fetched: ${limitedEvents.length}`);
+      const calendarCounts = {};
+      limitedEvents.forEach(e => {
+        const cal = e.calendarId || 'unknown';
+        calendarCounts[cal] = (calendarCounts[cal] || 0) + 1;
+      });
+      console.log('[Calendar] Events by calendar:', calendarCounts);
+      console.log('[Calendar] ==========================');
+      
       return this._cache;
 
     } catch (error) {

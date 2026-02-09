@@ -342,8 +342,12 @@ Hub.app = {
   async _fetchAndDisplayCalendars() {
     const container = Hub.utils.$('calendarCheckboxes');
     const btn = Hub.utils.$('btnLoadCalendars');
-    if (!container) return;
+    if (!container) {
+      console.error('[App] Calendar container not found');
+      return;
+    }
 
+    console.log('[App] Fetching calendars...');
     btn.disabled = true;
     btn.textContent = 'Loading...';
     container.innerHTML = '<p class="text-gray-400 text-sm animate-pulse">Fetching your calendars...</p>';
@@ -352,22 +356,57 @@ Hub.app = {
     btn.disabled = false;
     btn.textContent = 'Reload Calendars';
 
+    console.log('[App] Calendar fetch result:', calendars);
+
     if (calendars.error) {
-      container.innerHTML = `<p class="text-red-400 text-sm">${Hub.utils.esc(calendars.error)}</p>`;
+      console.error('[App] Calendar fetch error:', calendars.error);
+      container.innerHTML = `
+        <div class="text-red-400 text-sm">
+          <p class="font-semibold mb-2">⚠️ Error loading calendars</p>
+          <p class="text-xs mb-3">${Hub.utils.esc(calendars.error)}</p>
+          <div class="bg-red-900 bg-opacity-20 p-3 rounded text-xs space-y-2">
+            <p><strong>Troubleshooting:</strong></p>
+            <ul class="list-disc pl-4 space-y-1">
+              <li>Make sure you signed in with calendar permissions</li>
+              <li>Try signing out and back in</li>
+              <li>Check browser console (F12) for detailed errors</li>
+              <li>Verify Calendar API is enabled in Google Cloud</li>
+            </ul>
+            <button onclick="Hub.auth.signOut()" class="btn btn-sm btn-secondary mt-2">
+              Sign Out & Reconnect
+            </button>
+          </div>
+        </div>
+      `;
+      Hub.ui.toast('Failed to load calendars', 'error');
       return;
     }
 
     if (!calendars || calendars.length === 0) {
-      container.innerHTML = '<p class="text-gray-400 text-sm">No calendars found</p>';
+      container.innerHTML = `
+        <div class="text-gray-400 text-sm">
+          <p class="mb-2">No calendars found</p>
+          <p class="text-xs">This might mean:</p>
+          <ul class="list-disc pl-4 text-xs space-y-1 mt-2">
+            <li>You don't have any Google Calendars</li>
+            <li>Calendar permissions weren't granted</li>
+          </ul>
+          <button onclick="Hub.auth.signOut()" class="btn btn-sm btn-secondary mt-2">
+            Sign Out & Reconnect
+          </button>
+        </div>
+      `;
       return;
     }
 
     const savedCalendars = Hub.state?.settings?.selected_calendars || ['primary'];
+    console.log('[App] Saved calendars:', savedCalendars);
+    console.log('[App] Available calendars:', calendars.map(c => c.id));
     
     // Create checkboxes for each calendar
     container.innerHTML = calendars.map((cal, idx) => {
       const isChecked = savedCalendars.includes(cal.id);
-      const colorStyle = cal.backgroundColor ? `background-color: ${cal.backgroundColor}` : '';
+      const colorStyle = cal.backgroundColor ? `background-color: ${cal.backgroundColor}` : 'background-color: #3b82f6';
       
       return `
         <label class="flex items-center gap-3 p-2 rounded hover:bg-gray-700 cursor-pointer">
@@ -381,12 +420,14 @@ Hub.app = {
           <div class="flex-1 min-w-0">
             <p class="font-medium text-sm truncate">${Hub.utils.esc(cal.summary || 'Untitled')}</p>
             ${cal.description ? `<p class="text-xs text-gray-400 truncate">${Hub.utils.esc(cal.description)}</p>` : ''}
+            <p class="text-xs text-gray-500 mt-1">ID: ${Hub.utils.esc(cal.id)}</p>
           </div>
         </label>
       `;
     }).join('');
 
-    Hub.ui.toast('Calendars loaded! Select which ones to show', 'success');
+    Hub.ui.toast(`Loaded ${calendars.length} calendars! Select which ones to show`, 'success');
+    console.log('[App] Calendar checkboxes rendered');
   },
 
   async _saveSettings() {
@@ -412,8 +453,19 @@ Hub.app = {
     };
     try {
       const saved = await Hub.db.saveSettings(Hub.state.user.id, Hub.state.household_id, payload);
-      Hub.state.settings = saved; Hub.weather._cache = null; Hub.ai._cache = null;
-      Hub.ui.toast('Settings saved!'); Hub.router.go('dashboard');
+      Hub.state.settings = saved; 
+      
+      // Clear caches so new settings take effect immediately
+      Hub.weather._cache = null; 
+      Hub.ai._cache = null;
+      Hub.calendar._cache = null; // Clear calendar cache!
+      
+      console.log('[App] Settings saved, calendars selected:', saved.selected_calendars);
+      
+      Hub.ui.toast('Settings saved! Refreshing calendar...', 'success'); 
+      
+      // Refresh dashboard to show new calendar selection
+      Hub.router.go('dashboard');
     } catch (e) { Hub.ui.toast('Save failed: ' + e.message, 'error'); }
   },
 
