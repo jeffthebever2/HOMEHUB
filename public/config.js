@@ -26,8 +26,8 @@ window.HOME_HUB_CONFIG = {
   },
 
   // === IMMICH (Optional — for standby photo collage) ===
-  immichBaseUrl: '',                    // e.g. http://192.168.1.100:2283
-  immichSharedAlbumKeyOrToken: '',      // shared link key or API token
+  immichBaseUrl: 'http://192.168.7.248:2283/',                    // e.g. http://192.168.1.100:2283
+  immichSharedAlbumKeyOrToken: 'KPDKz148H4k8jWYez7Q4fa8sYZNGvcKk3K9sONoU5Og',      // shared link key or API token
 
   // === API BASE (leave empty for same-origin Cloudflare Pages Functions) ===
   apiBase: ''
