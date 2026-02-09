@@ -8,33 +8,46 @@ Hub.immich = {
   _currentPhotoIndex: 0,
   _photoRotateInterval: null,
 
-  /** Fetch images from the backend proxy or use hardcoded fallback */
+  // HARDCODED IMMICH CONFIGURATION
+  _hardcodedConfig: {
+    immichUrl: 'http://192.168.7.248:2283',
+    immichKey: 'LH6mLNi6tO8whoeiRkgkQkDjK7hmCUsAba02l7iazNI',
+    albumId: 'b10c6f7a-a412-4d4f-9ce4-f5c330fdacb3'
+  },
+
+  /** Fetch images from the backend proxy or use hardcoded configuration */
   async fetchImages() {
     const s = Hub.state.settings || {};
-    const immichUrl = s.immich_base_url || '';
-    const immichKey = s.immich_api_key || '';
-    const albumId = s.immich_album_id || '';
+    
+    // Use hardcoded config first, fallback to settings, then to Picsum placeholders
+    const immichUrl = this._hardcodedConfig.immichUrl || s.immich_base_url || '';
+    const immichKey = this._hardcodedConfig.immichKey || s.immich_api_key || '';
+    const albumId = this._hardcodedConfig.albumId || s.immich_album_id || '';
 
-    // If settings are configured, try to fetch from Immich
+    // Try to fetch from Immich API
     if (immichUrl && immichKey && albumId) {
       try {
+        console.log('[Immich] Fetching from hardcoded config:', immichUrl);
         const base = Hub.utils.apiBase();
         const resp = await fetch(`${base}/api/immich-album?baseUrl=${encodeURIComponent(immichUrl)}&key=${encodeURIComponent(immichKey)}&albumId=${encodeURIComponent(albumId)}`);
+        
         if (resp.ok) {
           const data = await resp.json();
           this._images = data.images || [];
           if (this._images.length > 0) {
-            console.log('[Immich] Loaded', this._images.length, 'photos from album');
+            console.log('[Immich] ✓ Loaded', this._images.length, 'photos from your Immich album');
             return this._images;
           }
+        } else {
+          console.warn('[Immich] API returned error:', resp.status);
         }
       } catch (e) {
         console.error('[Immich] Error fetching from API:', e);
       }
     }
 
-    // Hardcoded fallback: Use Picsum placeholder images
-    console.log('[Immich] Using hardcoded placeholder images');
+    // Fallback: Use Picsum placeholder images
+    console.log('[Immich] Using placeholder images (Immich unavailable)');
     this._images = [
       'https://picsum.photos/seed/family1/1200/800',
       'https://picsum.photos/seed/family2/1200/800',
@@ -50,6 +63,7 @@ Hub.immich = {
 
   /** Refresh photos (reload from API) */
   async refreshPhotos() {
+    console.log('[Immich] Refreshing photos...');
     this._images = [];
     await this.fetchImages();
     await this.renderDashboardWidget();
