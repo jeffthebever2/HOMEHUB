@@ -44,6 +44,15 @@
     .progress-bar { height: 1rem; background: #374151; border-radius: 9999px; overflow: hidden; }
     .progress-fill { height: 100%; border-radius: 9999px; transition: width .4s; }
     select.input { appearance: auto; }
+    
+    /* Standby photo transitions */
+    #standbyCurrentPhoto { transition: opacity 0.5s ease-in-out; }
+    
+    /* Responsive utilities */
+    @media (max-width: 640px) {
+      .card { padding: 1rem; margin-bottom: 1rem; }
+      .standby-clock { font-size: 4rem !important; }
+    }
   </style>
 </head>
 <body>
@@ -110,88 +119,144 @@
 
     <!-- ========== DASHBOARD ========== -->
     <div id="dashboardPage" class="page">
-      <div class="max-w-7xl mx-auto p-4 md:p-6">
-        <header class="mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div class="max-w-7xl mx-auto p-3 sm:p-4 md:p-6">
+        <!-- Header -->
+        <header class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <h1 class="text-4xl md:text-5xl font-bold">🏠 Home Hub</h1>
-            <p class="text-gray-400 mt-1" id="dashboardDate"></p>
+            <h1 class="text-3xl sm:text-4xl md:text-5xl font-bold">🏠 Home Hub</h1>
+            <p class="text-gray-400 mt-1 text-sm" id="dashboardDate"></p>
             <p class="text-blue-400 text-sm mt-1" id="dashboardGreeting"></p>
           </div>
-          <div class="flex flex-wrap gap-3">
-            <button onclick="Hub.router.go('standby')" class="btn btn-secondary">🖥 Standby</button>
-            <button onclick="Hub.router.go('status')" class="btn btn-secondary">📊 Status</button>
-            <button onclick="Hub.router.go('settings')" class="btn btn-secondary">⚙️ Settings</button>
-            <button id="btnSignOut" class="btn btn-secondary">Sign Out</button>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="Hub.router.go('standby')" class="btn btn-secondary text-sm py-2 px-3">🖥 Standby</button>
+            <button onclick="Hub.router.go('status')" class="btn btn-secondary text-sm py-2 px-3">📊 Status</button>
+            <button onclick="Hub.router.go('settings')" class="btn btn-secondary text-sm py-2 px-3">⚙️ Settings</button>
+            <button id="btnSignOut" class="btn btn-secondary text-sm py-2 px-3">Sign Out</button>
           </div>
         </header>
 
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <!-- Weather Card -->
-          <div class="card lg:col-span-2">
-            <div class="flex items-center justify-between mb-4">
-              <h2 class="text-2xl font-bold">🌤️ Weather</h2>
-              <button onclick="Hub.router.go('weather')" class="text-blue-400 hover:text-blue-300 text-sm">Full Forecast →</button>
+        <!-- Main Grid - Responsive -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          
+          <!-- Calendar Widget - Full width on mobile, 2 cols on larger -->
+          <div class="card md:col-span-2 lg:col-span-2">
+            <div id="calendarWidget">
+              <p class="text-gray-400 text-sm">Loading calendar...</p>
             </div>
-            <div id="dashboardWeather"><p class="text-gray-400">Loading weather…</p></div>
           </div>
 
-          <!-- Quick Links -->
+          <!-- Dog Treat Status Widget -->
           <div class="card">
-            <h2 class="text-2xl font-bold mb-4">Quick Access</h2>
-            <div class="space-y-3">
-              <div onclick="Hub.router.go('weather')" class="bg-gray-800 hover:bg-gray-700 rounded-lg p-4 cursor-pointer transition">
-                <div class="flex items-center gap-3"><span class="text-3xl">🌤️</span><div><p class="font-medium">Weather Center</p><p class="text-sm text-gray-400">Detailed forecast</p></div></div>
-              </div>
-              <div onclick="Hub.router.go('chores')" class="bg-gray-800 hover:bg-gray-700 rounded-lg p-4 cursor-pointer transition">
-                <div class="flex items-center gap-3"><span class="text-3xl">✅</span><div><p class="font-medium">Chores</p><p class="text-sm text-gray-400">Manage tasks</p></div></div>
-              </div>
-              <div onclick="Hub.router.go('treats')" class="bg-gray-800 hover:bg-gray-700 rounded-lg p-4 cursor-pointer transition">
-                <div class="flex items-center gap-3"><span class="text-3xl">🐕</span><div><p class="font-medium">Dog Treats</p><p class="text-sm text-gray-400">Track calories</p></div></div>
-              </div>
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-bold text-lg">🐕 Dog Status</h3>
+              <button onclick="Hub.router.go('treats')" class="text-blue-400 hover:text-blue-300 text-xs">
+                Details →
+              </button>
+            </div>
+            <div id="dogStatusWidget">
+              <p class="text-gray-400 text-sm">Loading...</p>
+            </div>
+          </div>
+
+          <!-- Weather Card - Full width on small, 2 cols on md -->
+          <div class="card md:col-span-2">
+            <div class="flex items-center justify-between mb-3">
+              <h2 class="text-xl font-bold">🌤️ Weather</h2>
+              <button onclick="Hub.router.go('weather')" class="text-blue-400 hover:text-blue-300 text-sm">
+                Full Forecast →
+              </button>
+            </div>
+            <div id="dashboardWeather">
+              <p class="text-gray-400 text-sm">Loading weather…</p>
             </div>
           </div>
 
           <!-- Chores Preview -->
           <div class="card">
-            <div class="flex items-center justify-between mb-4">
-              <h2 class="text-xl font-bold">Today's Chores</h2>
-              <button onclick="Hub.router.go('chores')" class="text-blue-400 hover:text-blue-300 text-sm">View All</button>
+            <div class="flex items-center justify-between mb-3">
+              <h2 class="text-lg font-bold">Today's Chores</h2>
+              <button onclick="Hub.router.go('chores')" class="text-blue-400 hover:text-blue-300 text-sm">
+                View All →
+              </button>
             </div>
-            <div id="dashboardChores"><p class="text-gray-400 text-sm">No pending chores</p></div>
+            <div id="dashboardChores">
+              <p class="text-gray-400 text-sm">No pending chores</p>
+            </div>
           </div>
 
-          <!-- Calendar Widget -->
-          <div class="card lg:col-span-2">
-            <h2 class="text-2xl font-bold mb-4">📅 Calendar</h2>
-            <div id="calendarWidget" class="bg-gray-800 rounded-lg p-6 text-center">
-              <p class="text-gray-400">Calendar integration — set a Google Calendar URL in Settings</p>
+          <!-- Immich Photos Widget - Full width on small, spans appropriately on larger -->
+          <div class="card md:col-span-2 lg:col-span-3">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-bold text-lg">📸 Family Photos</h3>
+              <button onclick="Hub.immich.refreshPhotos()" class="text-blue-400 hover:text-blue-300 text-xs">
+                Refresh
+              </button>
+            </div>
+            <div id="immichDashboardWidget" class="min-h-[200px]">
+              <p class="text-gray-400 text-sm text-center py-8">Loading photos...</p>
             </div>
           </div>
+
         </div>
       </div>
     </div>
 
     <!-- ========== STANDBY ========== -->
-    <div id="standbyPage" class="page min-h-screen bg-black text-white relative cursor-pointer">
-      <div id="standbyPhotos" class="absolute inset-0 opacity-30"></div>
-      <div class="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent"></div>
-      <div class="relative z-10 flex flex-col justify-between min-h-screen p-8" id="standbyContent">
-        <div class="text-center">
-          <div id="standbyClock" class="standby-clock text-8xl md:text-9xl font-bold tracking-tight"></div>
-          <div id="standbyDate" class="text-2xl md:text-3xl text-gray-400 mt-4"></div>
-        </div>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div class="bg-black/50 backdrop-blur rounded-xl p-6">
-            <h3 class="text-xl font-bold mb-3">Weather</h3>
-            <div id="standbyWeather"><p class="text-gray-400 text-sm">Loading…</p></div>
-          </div>
-          <div class="bg-black/50 backdrop-blur rounded-xl p-6">
-            <h3 class="text-xl font-bold mb-3">Upcoming</h3>
-            <div id="standbyCalendar"><p class="text-gray-400 text-sm">No events scheduled</p></div>
-          </div>
-        </div>
+    <div id="standbyPage" class="page min-h-screen bg-black text-white relative overflow-hidden cursor-pointer">
+      <!-- Full screen photo background - rotating -->
+      <div id="standbyPhotoBackground" class="absolute inset-0 transition-opacity duration-1000">
+        <img id="standbyCurrentPhoto" class="w-full h-full object-cover" alt="" />
       </div>
-      <div class="absolute bottom-4 left-1/2 transform -translate-x-1/2 text-gray-600 text-sm z-10">Touch anywhere to wake</div>
+      
+      <!-- Dark overlay for readability -->
+      <div class="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-black/30"></div>
+      
+      <!-- Content overlay - responsive -->
+      <div class="relative z-10 min-h-screen p-4 sm:p-6 md:p-8 flex flex-col" id="standbyContent">
+        
+        <!-- Top: Date and Time - centered -->
+        <div class="flex-1 flex flex-col items-center justify-center text-center">
+          <!-- Clock -->
+          <div id="standbyClock" class="text-6xl sm:text-7xl md:text-8xl lg:text-9xl font-bold tracking-tight mb-2 md:mb-4"></div>
+          <!-- Date -->
+          <div id="standbyDate" class="text-lg sm:text-xl md:text-2xl text-gray-300 font-light"></div>
+        </div>
+
+        <!-- Bottom: Info Cards - compact and responsive -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 max-w-6xl mx-auto w-full">
+          
+          <!-- Calendar Events - compact -->
+          <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10">
+            <h3 class="text-sm font-semibold mb-2 text-blue-400">📅 Upcoming Events</h3>
+            <div id="standbyCalendar" class="space-y-2 text-xs sm:text-sm max-h-32 overflow-hidden">
+              <p class="text-gray-400">Loading...</p>
+            </div>
+          </div>
+
+          <!-- Due Chores - compact -->
+          <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10">
+            <h3 class="text-sm font-semibold mb-2 text-green-400">✅ Chores Due</h3>
+            <div id="standbyChores" class="space-y-2 text-xs sm:text-sm max-h-32 overflow-hidden">
+              <p class="text-gray-400">Loading...</p>
+            </div>
+          </div>
+
+          <!-- Weather - compact -->
+          <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10 sm:col-span-2 lg:col-span-1">
+            <h3 class="text-sm font-semibold mb-2 text-yellow-400">🌤️ Weather</h3>
+            <div id="standbyWeather" class="text-xs sm:text-sm">
+              <p class="text-gray-400">Loading...</p>
+            </div>
+          </div>
+          
+        </div>
+
+        <!-- Tap to wake hint - always at very bottom -->
+        <div class="text-center mt-4 sm:mt-6">
+          <p class="text-gray-500 text-xs">Tap anywhere to wake</p>
+        </div>
+
+      </div>
     </div>
 
     <!-- ========== WEATHER ========== -->

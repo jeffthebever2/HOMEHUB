@@ -290,7 +290,7 @@ Hub.calendar = {
 
     widget.innerHTML = '<div class="animate-pulse text-gray-400 text-sm">Loading calendar...</div>';
 
-    const events = await this.getUpcomingEvents(5);
+    const events = await this.getUpcomingEvents(15); // Get more events for better organization
 
     if (events.error) {
       // Check if it's a simple re-auth issue
@@ -328,41 +328,118 @@ Hub.calendar = {
       return;
     }
 
-    // Render events
-    const html = events.map(event => {
+    // Organize events by time period
+    const now = new Date();
+    const todayEvents = [];
+    const tomorrowEvents = [];
+    const upcomingEvents = [];
+
+    events.forEach(event => {
       const start = event.start.dateTime || event.start.date;
       const startDate = new Date(start);
-      const isToday = this._isToday(startDate);
-      const isTomorrow = this._isTomorrow(startDate);
       
-      let dateLabel;
-      if (isToday) dateLabel = 'Today';
-      else if (isTomorrow) dateLabel = 'Tomorrow';
-      else dateLabel = startDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      if (this._isToday(startDate)) {
+        todayEvents.push(event);
+      } else if (this._isTomorrow(startDate)) {
+        tomorrowEvents.push(event);
+      } else {
+        upcomingEvents.push(event);
+      }
+    });
 
+    // Helper function to render an event
+    const renderEvent = (event, showDate = false) => {
+      const start = event.start.dateTime || event.start.date;
+      const startDate = new Date(start);
       const timeLabel = event.start.dateTime 
         ? startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
         : 'All day';
+      
+      const dateLabel = showDate 
+        ? startDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+        : '';
 
       return `
-        <div class="flex items-start gap-3 py-2 border-b border-gray-700 last:border-0">
-          <div class="text-xs text-gray-400 w-20 flex-shrink-0 pt-1">
-            ${Hub.utils.esc(dateLabel)}
+        <div class="flex items-center gap-3 py-2 px-3 rounded hover:bg-gray-700 transition-colors">
+          <div class="text-xs font-medium text-blue-400 w-16 flex-shrink-0">
+            ${Hub.utils.esc(timeLabel)}
           </div>
           <div class="flex-1 min-w-0">
             <div class="font-medium text-sm truncate">${Hub.utils.esc(event.summary || 'Untitled')}</div>
-            <div class="text-xs text-gray-400">${Hub.utils.esc(timeLabel)}</div>
+            ${showDate ? `<div class="text-xs text-gray-500">${Hub.utils.esc(dateLabel)}</div>` : ''}
           </div>
         </div>
       `;
-    }).join('');
+    };
+
+    // Build HTML sections
+    let sectionsHtml = '';
+
+    // TODAY section
+    if (todayEvents.length > 0) {
+      sectionsHtml += `
+        <div class="mb-4">
+          <div class="flex items-center gap-2 mb-2">
+            <div class="w-1 h-4 bg-green-500 rounded"></div>
+            <h4 class="font-semibold text-sm text-green-400">Today</h4>
+            <span class="text-xs text-gray-500">${todayEvents.length} event${todayEvents.length !== 1 ? 's' : ''}</span>
+          </div>
+          <div class="space-y-1">
+            ${todayEvents.map(e => renderEvent(e, false)).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // TOMORROW section
+    if (tomorrowEvents.length > 0) {
+      sectionsHtml += `
+        <div class="mb-4">
+          <div class="flex items-center gap-2 mb-2">
+            <div class="w-1 h-4 bg-blue-500 rounded"></div>
+            <h4 class="font-semibold text-sm text-blue-400">Tomorrow</h4>
+            <span class="text-xs text-gray-500">${tomorrowEvents.length} event${tomorrowEvents.length !== 1 ? 's' : ''}</span>
+          </div>
+          <div class="space-y-1">
+            ${tomorrowEvents.map(e => renderEvent(e, false)).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // COMING UP section (limit to 5 to save space)
+    if (upcomingEvents.length > 0) {
+      const limitedUpcoming = upcomingEvents.slice(0, 5);
+      sectionsHtml += `
+        <div>
+          <div class="flex items-center gap-2 mb-2">
+            <div class="w-1 h-4 bg-gray-500 rounded"></div>
+            <h4 class="font-semibold text-sm text-gray-400">Coming Up</h4>
+            <span class="text-xs text-gray-500">${limitedUpcoming.length}${upcomingEvents.length > 5 ? '+' : ''} event${limitedUpcoming.length !== 1 ? 's' : ''}</span>
+          </div>
+          <div class="space-y-1">
+            ${limitedUpcoming.map(e => renderEvent(e, true)).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // Show message if no events today/tomorrow but have upcoming
+    if (todayEvents.length === 0 && tomorrowEvents.length === 0 && upcomingEvents.length > 0) {
+      sectionsHtml = `
+        <div class="bg-gray-800 bg-opacity-50 rounded-lg p-3 mb-4 text-center">
+          <p class="text-sm text-gray-400">✨ Nothing today or tomorrow</p>
+          <p class="text-xs text-gray-500 mt-1">Your next event is coming up</p>
+        </div>
+      ` + sectionsHtml;
+    }
 
     widget.innerHTML = `
-      <div class="space-y-1">
-        <div class="flex items-center justify-between mb-3">
-          <h3 class="font-semibold">📅 Upcoming Events</h3>
-          <div class="space-x-2">
-            <button onclick="Hub.calendar.createQuickEvent()" class="text-xs text-green-400 hover:text-green-300">
+      <div>
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-bold text-lg">📅 Calendar</h3>
+          <div class="flex gap-2">
+            <button onclick="Hub.calendar.createQuickEvent()" class="text-xs text-green-400 hover:text-green-300 font-medium">
               + Add
             </button>
             <button onclick="Hub.calendar.refreshCalendar()" class="text-xs text-blue-400 hover:text-blue-300">
@@ -370,7 +447,7 @@ Hub.calendar = {
             </button>
           </div>
         </div>
-        ${html}
+        ${sectionsHtml}
       </div>
     `;
   },

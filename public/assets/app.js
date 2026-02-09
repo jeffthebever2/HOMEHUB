@@ -259,9 +259,20 @@ Hub.app = {
     Hub.ui.updateDashboardGreeting();
     Hub.chores.loadDashboard();
     this._loadDashboardWeather();
+    
     // Load calendar widget
     if (Hub.calendar && typeof Hub.calendar.renderDashboard === 'function') {
       Hub.calendar.renderDashboard().catch(e => console.warn('[Dashboard] Calendar error:', e));
+    }
+    
+    // Load dog status widget
+    if (Hub.treats && typeof Hub.treats.renderDashboardWidget === 'function') {
+      Hub.treats.renderDashboardWidget().catch(e => console.warn('[Dashboard] Dog status error:', e));
+    }
+    
+    // Load Immich photos widget
+    if (Hub.immich && typeof Hub.immich.renderDashboardWidget === 'function') {
+      Hub.immich.renderDashboardWidget().catch(e => console.warn('[Dashboard] Photos error:', e));
     }
   },
 

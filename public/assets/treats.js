@@ -184,5 +184,75 @@ Hub.treats = {
   showAddTreat() {
     if (!this.selectedDogId) return Hub.ui.toast('Select a dog first', 'error');
     Hub.ui.openModal('addTreatModal');
+  },
+
+  /** Render dog status widget for dashboard */
+  async renderDashboardWidget() {
+    const el = Hub.utils.$('dogStatusWidget');
+    if (!el) return;
+
+    if (!this.firebaseDb) {
+      this.init();
+      if (!this.firebaseDb) {
+        el.innerHTML = '<p class="text-gray-400 text-sm">Firebase not configured</p>';
+        return;
+      }
+    }
+
+    try {
+      // Load dogs
+      const snapshot = await this.firebaseDb.ref('dogs').once('value');
+      this.dogs = snapshot.val() || {};
+      const dogIds = Object.keys(this.dogs);
+
+      if (dogIds.length === 0) {
+        el.innerHTML = '<p class="text-gray-400 text-sm">No dogs tracked yet</p>';
+        return;
+      }
+
+      // Get status for each dog
+      const statuses = await Promise.all(dogIds.map(async (dogId) => {
+        const dog = this.dogs[dogId];
+        const treatsSnapshot = await this.firebaseDb.ref(`treats/${dogId}`).once('value');
+        const allTreats = treatsSnapshot.val() || {};
+        const todayStart = Hub.utils.todayStart();
+
+        // Calculate today's calories
+        const todayTreats = Object.entries(allTreats)
+          .filter(([_, t]) => t.timestamp >= todayStart);
+        const totalCal = todayTreats.reduce((s, [_, t]) => s + (t.calories || 0), 0);
+        const limit = dog.dailyCalorieLimit || 1000;
+        const percent = Math.round((totalCal / limit) * 100);
+        const isOnTrack = percent <= 100;
+
+        return { dog, totalCal, limit, percent, isOnTrack };
+      }));
+
+      // Render status for all dogs
+      el.innerHTML = statuses.map(({ dog, totalCal, limit, percent, isOnTrack }) => {
+        const statusColor = isOnTrack ? 'text-green-400' : 'text-red-400';
+        const statusIcon = isOnTrack ? '✓' : '⚠️';
+        const statusText = isOnTrack ? 'On Track' : 'Over Limit';
+        const barColor = isOnTrack ? 'bg-green-500' : 'bg-red-500';
+        const barWidth = Math.min(percent, 100);
+
+        return `
+          <div class="mb-3 last:mb-0">
+            <div class="flex items-center justify-between mb-1">
+              <span class="font-medium text-sm">${Hub.utils.esc(dog.name)}</span>
+              <span class="${statusColor} text-xs font-semibold">${statusIcon} ${statusText}</span>
+            </div>
+            <div class="bg-gray-700 rounded-full h-2 overflow-hidden mb-1">
+              <div class="${barColor} h-full transition-all duration-500" style="width: ${barWidth}%"></div>
+            </div>
+            <p class="text-xs text-gray-400">${totalCal} / ${limit} cal (${percent}%)</p>
+          </div>
+        `;
+      }).join('');
+
+    } catch (e) {
+      console.error('[Treats] Error rendering dashboard widget:', e);
+      el.innerHTML = '<p class="text-gray-400 text-sm">Error loading dog status</p>';
+    }
   }
 };
