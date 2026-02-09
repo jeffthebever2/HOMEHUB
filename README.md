@@ -1,94 +1,57 @@
-# 🏠 Home Hub
+# 🏠 Home Hub - Family Command Center
 
-Family command center dashboard deployed on **Vercel** with serverless API functions.
+A unified dashboard for your household with weather, chores, dog treat tracking, and more.
 
-## Features
+## ✨ Features
 
-- **Weather Dashboard** — 6 APIs aggregated (Open-Meteo, Weather.gov, Weatherbit, Tomorrow.io, Visual Crossing, Pirate Weather) + RainViewer radar
-- **AI Weather Interpreter** — GenAI summarizes multi-source data into a structured briefing
-- **Weather Alerts** — NWS alerts with banner + popup notifications (quiet hours support)
-- **Dog Treat Tracker** — Firebase RTDB calorie tracker with real-time sync
-- **Chores** — Household task management via Supabase
-- **Standby Mode** — Ambient display with clock, weather, and Immich photo collage
-- **System Status** — Health check page for all backend services
+- 🔐 **Secure Google Login** - Family authentication via Supabase
+- 🌤️ **Smart Weather** - Multi-source weather with AI summaries
+- ✅ **Chores Management** - Create, assign, and track household tasks
+- 🐕 **Dog Treat Tracker** - Monitor your pets' calorie intake
+- 📅 **Calendar Integration** - Google Calendar embed support
+- 🖼️ **Photo Slideshow** - Immich integration for standby mode
+- ⚙️ **Personal Settings** - Location, quiet hours, and more
 
-## Architecture
+## 🚀 Quick Start
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | Static HTML + vanilla JS (SPA with hash routing) |
-| Backend | Vercel Serverless Functions (`/api/*`) |
-| Auth | Supabase Auth (Google OAuth) |
-| Database | Supabase PostgreSQL with Row Level Security |
-| Dog Data | Firebase Realtime Database |
-| AI | GenAI Chat Completion API (MaaS_4.1) |
+1. **Deploy to Vercel**: Push to GitHub, Vercel auto-deploys
+2. **Configure Supabase**: Run `database-setup.sql` in SQL Editor
+3. **Add Family**: Insert emails into database tables
+4. **Share URL**: Family signs in with Google
 
-## Project Structure
+## 📚 Documentation
 
-```
-/
-├── public/              Static frontend (served by Vercel)
-│   ├── index.html       Main SPA shell
-│   ├── config.js        Client-side config (Supabase URL, Firebase, etc.)
-│   └── assets/          JS modules
-│       ├── app.js       Main orchestration
-│       ├── router.js    SPA router (hash + pathname)
-│       ├── supabase.js  Auth & DB helpers
-│       ├── weather.js   Weather display
-│       ├── ai.js        AI summary frontend
-│       ├── treats.js    Dog treat tracker (Firebase)
-│       ├── chores.js    Chores (Supabase)
-│       ├── standby.js   Standby/ambient mode
-│       ├── immich.js    Photo integration
-│       ├── ui.js        Modals, toasts, alerts
-│       └── utils.js     Shared utilities
-├── api/                 Vercel Serverless Functions
-│   ├── health.js        GET  /api/health
-│   ├── weather-aggregate.js  GET  /api/weather-aggregate?lat=&lon=
-│   ├── weather-alerts.js     GET  /api/weather-alerts?lat=&lon=
-│   ├── weather-ai.js         POST /api/weather-ai
-│   └── immich-album.js       GET  /api/immich-album
-├── vercel.json          SPA routing + CORS headers
-├── database-setup.sql   Supabase schema + RLS policies
-├── SETUP.txt            Deployment instructions
-└── README.md            This file
-```
+- **PRODUCTION_SETUP_GUIDE.md** - Complete setup instructions
+- **QUICK_CHECKLIST.md** - Quick deployment reference
+- **database-setup.sql** - Database schema and setup
 
-## API Endpoints
+## 🔧 Configuration
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/health` | Service health check |
-| GET | `/api/weather-aggregate?lat=&lon=` | Multi-source weather data |
-| GET | `/api/weather-alerts?lat=&lon=` | NWS active alerts |
-| POST | `/api/weather-ai` | AI weather interpretation |
-| GET | `/api/immich-album` | Immich photo URLs |
+Edit `public/config.js` with your credentials:
+- Supabase URL & Key (required)
+- Firebase config (required for dog treats)
+- Default location (already set to Gahanna, OH)
 
-## Environment Variables
+## 🔑 Required Services
 
-Set these in Vercel Dashboard → Settings → Environment Variables:
+✅ **Already Configured:**
+- Supabase - Authentication & database
+- Firebase - Dog treat tracker
+- Location - Gahanna, Ohio
 
-**Required:**
-- `SUPABASE_URL` — Supabase project URL
-- `SUPABASE_ANON_KEY` — Supabase anon/public key
+⚙️ **Optional Enhancements:**
+- Weather API keys (add to Vercel env vars)
+- Google Calendar embed URL (add in app settings)
+- Immich photo server (add in app settings)
 
-**Weather (optional, adds more data sources):**
-- `WEATHERBIT_KEY`
-- `TOMORROW_KEY`
-- `VISUAL_CROSSING_KEY`
-- `PIRATE_WEATHER_KEY`
+## 🐛 Troubleshooting
 
-**Immich (optional):**
-- `IMMICH_BASE_URL`
-- `IMMICH_SHARED_ALBUM_TOKEN`
-- `IMMICH_ALBUM_ID`
+**Can't Login?** → Email must be in BOTH database tables  
+**Weather Not Loading?** → Check location in Settings  
+**Chores Not Saving?** → Verify Supabase RLS policies enabled
 
-## Quick Start
+See PRODUCTION_SETUP_GUIDE.md for detailed help.
 
-1. Push this repo to GitHub
-2. Import into Vercel (Framework: Other, Output: `public`)
-3. Add environment variables
-4. Set up Supabase (run `database-setup.sql`, enable Google auth)
-5. Visit your Vercel URL and sign in
+---
 
-See `SETUP.txt` for detailed instructions.
+**Version**: 1.0 | **Deployed**: https://homehub-mu.vercel.app
