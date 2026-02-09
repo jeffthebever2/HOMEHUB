@@ -1,0 +1,341 @@
+// ============================================================
+// assets/supabase.js — Supabase auth + DB helpers  (v3)
+//
+// KEY CHANGES:
+//   - flowType: 'pkce' (server uses PKCE)
+//   - AbortController timeout on ALL DB queries (6s)
+//   - Boot diagnostics + debug tool
+// ============================================================
+window.Hub = window.Hub || {};
+
+(function () {
+  const CFG = window.HOME_HUB_CONFIG || {};
+  const SB_URL = CFG.supabaseUrl || CFG.supabase?.url || '';
+  const SB_KEY = CFG.supabaseAnonKey || CFG.supabase?.anonKey || '';
+
+  console.log('[Boot] href:', window.location.href);
+  console.log('[Boot] has ?code=', window.location.search.includes('code='));
+  console.log('[Boot] has #access_token=', window.location.hash.includes('access_token'));
+
+  const sb = window.supabase.createClient(SB_URL, SB_KEY, {
+    auth: {
+      flowType: 'pkce',
+      detectSessionInUrl: true,
+      autoRefreshToken: true,
+      persistSession: true
+    }
+  });
+
+  Hub.sb = sb;
+
+  // ── OAuth redirect bootstrap (PKCE) ────────────────────────
+  // On Google OAuth redirect, Supabase returns with ?code=... (PKCE).
+  // If the app shows the login screen too early and clears the URL,
+  // Supabase may never exchange the code → no session → login loop.
+  //
+  // We explicitly exchange the code here, ASAP, before the router/app
+  // can touch the URL.
+  const _params = new URLSearchParams(window.location.search);
+  const _oauthCode = _params.get('code');
+  const _oauthError = _params.get('error') || _params.get('error_code');
+  const _oauthErrorDesc = _params.get('error_description');
+
+  Hub.oauth = {
+    returnedFromOAuth: Boolean(_oauthCode || _oauthError),
+    hasCode: Boolean(_oauthCode),
+    hasError: Boolean(_oauthError),
+    error: _oauthError || null,
+    error_description: _oauthErrorDesc ? decodeURIComponent(_oauthErrorDesc) : null,
+    exchangeAttempted: false,
+    exchangeOk: false,
+    exchangeError: null
+  };
+
+  Hub.oauth.promise = (async () => {
+    try {
+      if (_oauthError) {
+        Hub.oauth.exchangeAttempted = true;
+        Hub.oauth.exchangeOk = false;
+        Hub.oauth.exchangeError = `${_oauthError}${Hub.oauth.error_description ? ': ' + Hub.oauth.error_description : ''}`;
+        console.error('[OAuth] Error on redirect:', Hub.oauth.exchangeError);
+        return;
+      }
+
+      if (_oauthCode) {
+        Hub.oauth.exchangeAttempted = true;
+        console.log('[OAuth] Exchanging code for session…');
+        const { data, error } = await sb.auth.exchangeCodeForSession(_oauthCode);
+        if (error) {
+          Hub.oauth.exchangeOk = false;
+          Hub.oauth.exchangeError = error.message || String(error);
+          console.error('[OAuth] exchangeCodeForSession error:', error);
+          return;
+        }
+        Hub.oauth.exchangeOk = true;
+        console.log('[OAuth] ✓ Session established for:', data?.user?.email || '(unknown)');
+        return;
+      }
+    } catch (e) {
+      Hub.oauth.exchangeAttempted = true;
+      Hub.oauth.exchangeOk = false;
+      Hub.oauth.exchangeError = e.message || String(e);
+      console.error('[OAuth] exchange exception:', e);
+    } finally {
+      // Clean OAuth params from URL (but keep any other params + hash)
+      // Avoids re-processing on refresh.
+      try {
+        const url = new URL(window.location.href);
+        ['code', 'state', 'error', 'error_description', 'error_code', 'iss'].forEach(k => url.searchParams.delete(k));
+        const clean = url.pathname + (url.search ? url.search : '') + (url.hash || '');
+        window.history.replaceState({}, document.title, clean);
+        console.log('[OAuth] URL cleaned');
+      } catch (e) {
+        // ignore
+      }
+    }
+  })();
+
+  // Boot: log session state (non-blocking)
+  sb.auth.getSession().then(({ data, error }) => {
+    if (error) {
+      console.warn('[Boot] getSession error:', error.message);
+    } else if (data.session) {
+      console.log('[Boot] session:', data.session.user.email);
+      const expiresAt = new Date(data.session.expires_at * 1000);
+      const now = new Date();
+      console.log('[Boot] session expires:', expiresAt.toLocaleString());
+      console.log('[Boot] session valid for:', Math.round((expiresAt - now) / 1000 / 60), 'minutes');
+    } else {
+      console.log('[Boot] session: none');
+    }
+  }).catch(e => console.warn('[Boot] getSession exception:', e.message));
+
+  // ── Helper: DB query with 6s timeout ──
+  function timed(queryBuilder) {
+    return Promise.race([
+      queryBuilder,
+      new Promise((_, rej) => setTimeout(() => rej(new Error('DB query timeout (6s)')), 6000))
+    ]);
+  }
+
+  Hub.auth = {
+    async signInGoogle() {
+      console.log('[Auth] signInGoogle (PKCE)');
+      const { error } = await sb.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: window.location.origin}
+      });
+      if (error) console.error('[Auth] OAuth error:', error);
+    },
+
+    async signOut() {
+      console.log('[Auth] signOut()');
+      Hub.app._loggedIn = false;
+      Hub.app._loginInProgress = false;
+      Hub.app._authHandled = false;
+      Hub.state.user = null;
+      Hub.state.household_id = null;
+      Hub.state.userRole = null;
+      await sb.auth.signOut();
+      Hub.router.showScreen('login');
+    },
+
+    async getSession() {
+      try {
+        const { data: { session } } = await sb.auth.getSession();
+        return session;
+      } catch (e) {
+        console.warn('[Auth] getSession err:', e.message);
+        return null;
+      }
+    },
+
+    async checkAccess(user) {
+      try {
+        console.log('[Auth] checkAccess:', user.email);
+
+        const t0 = Date.now();
+        let data, error;
+        try {
+          const result = await timed(
+            sb.from('household_members')
+              .select('household_id, role')
+              .eq('email', user.email)
+              .limit(1)
+              .maybeSingle()
+          );
+          data = result.data;
+          error = result.error;
+        } catch (timeoutErr) {
+          console.error('[Auth] household_members TIMEOUT:', timeoutErr.message);
+          throw new Error('Database timeout - please check your connection and try again');
+        }
+        
+        console.log('[Auth] household_members (' + (Date.now() - t0) + 'ms):', JSON.stringify({ data, err: error?.message }));
+        
+        if (error) {
+          console.error('[Auth] household_members query error:', error);
+          throw new Error('Database error: ' + error.message);
+        }
+        
+        if (!data) {
+          console.warn('[Auth] No household_members record found for:', user.email);
+          return false; // User not authorized
+        }
+
+        const t1 = Date.now();
+        let ae, aeErr;
+        try {
+          const result = await timed(
+            sb.from('allowed_emails')
+              .select('id')
+              .eq('email', user.email)
+              .limit(1)
+              .maybeSingle()
+          );
+          ae = result.data;
+          aeErr = result.error;
+        } catch (timeoutErr) {
+          console.error('[Auth] allowed_emails TIMEOUT:', timeoutErr.message);
+          throw new Error('Database timeout - please check your connection and try again');
+        }
+        
+        console.log('[Auth] allowed_emails (' + (Date.now() - t1) + 'ms):', JSON.stringify({ ae, err: aeErr?.message }));
+        
+        if (aeErr) {
+          console.error('[Auth] allowed_emails query error:', aeErr);
+          throw new Error('Database error: ' + aeErr.message);
+        }
+        
+        if (!ae) {
+          console.warn('[Auth] No allowed_emails record found for:', user.email);
+          return false; // User not authorized
+        }
+
+        Hub.state.household_id = data.household_id;
+        Hub.state.userRole = data.role;
+        console.log('[Auth] ✓ Granted — household:', data.household_id, 'role:', data.role);
+        return true;
+      } catch (e) {
+        console.error('[Auth] checkAccess error:', e.message, e);
+        // Re-throw the error so _onLogin can handle it properly
+        throw e;
+      }
+    },
+
+    onAuthChange(cb) {
+      sb.auth.onAuthStateChange((event, session) => cb(event, session));
+    }
+  };
+
+  // ── Debug tool ─────────────────────────────────────────────
+  Hub.debug = {
+    async checkSupabase() {
+      const out = [];
+      const log = (m) => { out.push(m); console.log('[Debug]', m); };
+      const el = document.getElementById('debugOutput');
+      if (el) { el.style.display = 'block'; el.textContent = 'Running…\n'; }
+
+      log('═══ Supabase Diagnostics ═══');
+      log('URL: ' + (SB_URL || 'MISSING'));
+      log('Key: ' + (SB_KEY.length > 20 ? 'yes' : 'MISSING'));
+      log('Page: ' + window.location.href);
+      log('');
+
+      try {
+        const { data: { session }, error } = await sb.auth.getSession();
+        if (error) log('getSession error: ' + error.message);
+        else if (session) {
+          log('✓ Session: ' + session.user.email);
+          log('  ID: ' + session.user.id);
+          log('  Expires: ' + new Date(session.expires_at * 1000).toLocaleString());
+        } else log('✗ No session');
+      } catch (e) { log('getSession exception: ' + e.message); }
+      log('');
+
+      try {
+        const { data: { user }, error } = await sb.auth.getUser();
+        if (error) log('getUser error: ' + error.message);
+        else if (user) log('✓ getUser: ' + user.email);
+        else log('✗ getUser: null');
+      } catch (e) { log('getUser exception: ' + e.message); }
+      log('');
+
+      try {
+        log('DB: household_members…');
+        const t = Date.now();
+        const { data, error } = await timed(sb.from('household_members').select('household_id, email, role').limit(5));
+        log('  ' + (Date.now() - t) + 'ms');
+        if (error) log('✗ ' + error.message);
+        else log('✓ ' + JSON.stringify(data));
+      } catch (e) { log('✗ ' + e.message); }
+      log('');
+
+      try {
+        log('DB: allowed_emails…');
+        const t = Date.now();
+        const { data, error } = await timed(sb.from('allowed_emails').select('email').limit(5));
+        log('  ' + (Date.now() - t) + 'ms');
+        if (error) log('✗ ' + error.message);
+        else log('✓ ' + JSON.stringify(data));
+      } catch (e) { log('✗ ' + e.message); }
+
+      if (el) el.textContent = out.join('\n');
+      return out;
+    }
+  };
+
+  // ── DB helpers (all with timeout) ──────────────────────────
+  Hub.db = {
+    async loadSettings(userId) {
+      const { data } = await timed(sb.from('user_settings').select('*').eq('user_id', userId).maybeSingle());
+      return data;
+    },
+    async saveSettings(userId, householdId, settings) {
+      const payload = {
+        user_id: userId, household_id: householdId,
+        location_name: settings.location_name, location_lat: settings.location_lat,
+        location_lon: settings.location_lon, standby_timeout_min: settings.standby_timeout_min,
+        quiet_hours_start: settings.quiet_hours_start, quiet_hours_end: settings.quiet_hours_end,
+        immich_base_url: settings.immich_base_url, immich_api_key: settings.immich_api_key,
+        immich_album_id: settings.immich_album_id, calendar_url: settings.calendar_url,
+        updated_at: new Date().toISOString()
+      };
+      const { data, error } = await timed(sb.from('user_settings').upsert(payload, { onConflict: 'user_id' }).select().single());
+      if (error) throw error;
+      return data;
+    },
+    async loadChores(householdId) {
+      const { data, error } = await timed(sb.from('chores').select('*').eq('household_id', householdId).order('created_at', { ascending: false }));
+      if (error) throw error;
+      return data || [];
+    },
+    async addChore(chore) {
+      const { data, error } = await timed(sb.from('chores').insert(chore).select().single());
+      if (error) throw error;
+      return data;
+    },
+    async updateChore(id, updates) {
+      const { error } = await timed(sb.from('chores').update(updates).eq('id', id));
+      if (error) throw error;
+    },
+    async deleteChore(id) {
+      const { error } = await timed(sb.from('chores').delete().eq('id', id));
+      if (error) throw error;
+    },
+    async logChoreCompletion(choreId, householdId, userId, notes) {
+      const { error } = await timed(sb.from('chore_logs').insert({ chore_id: choreId, household_id: householdId, completed_by: userId, notes }));
+      if (error) throw error;
+    },
+    async markAlertSeen(userId, alertId, severity) {
+      await timed(sb.from('seen_alerts').upsert({ user_id: userId, alert_id: alertId, severity, seen_at: new Date().toISOString() }, { onConflict: 'user_id,alert_id' }));
+    },
+    async isAlertSeen(userId, alertId) {
+      const { data } = await timed(sb.from('seen_alerts').select('id').eq('user_id', userId).eq('alert_id', alertId).maybeSingle());
+      return !!data;
+    },
+    async logSystem(source, service, status, message, latencyMs) {
+      await timed(sb.from('system_logs').insert({ source, service, status, message, latency_ms: latencyMs }).select());
+    }
+  };
+})();
