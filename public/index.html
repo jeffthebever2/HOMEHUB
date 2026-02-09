@@ -74,6 +74,11 @@
         <h1 class="text-5xl font-bold mb-4">🏠 Home Hub</h1>
         <p class="text-gray-400 mb-8">Your family command center</p>
         <button id="btnGoogleLogin" class="btn btn-primary w-full text-lg py-3">Sign in with Google</button>
+        <p class="text-xs text-gray-500 mt-4">
+          By signing in, you agree to our 
+          <a href="/tos.html" target="_blank" class="text-blue-400 hover:text-blue-300 underline">Terms of Service</a> and 
+          <a href="/privacy.html" target="_blank" class="text-blue-400 hover:text-blue-300 underline">Privacy Policy</a>
+        </p>
         <button id="btnCheckSupabase" class="btn btn-secondary w-full text-sm py-2 mt-4">🔍 Check Supabase</button>
         <pre id="debugOutput" style="display:none; text-align:left; font-size:0.7rem; line-height:1.4; background:#0f172a; color:#94a3b8; padding:1rem; border-radius:0.5rem; margin-top:1rem; max-height:400px; overflow:auto; white-space:pre-wrap; word-break:break-all;"></pre>
       </div>
@@ -297,12 +302,76 @@
               </div>
             </div>
           </div>
-          <!-- Calendar -->
+          <!-- Calendar Selection -->
           <div class="card">
-            <h2 class="text-xl font-bold mb-4">📅 Calendar</h2>
-            <div><label class="block text-sm font-medium mb-2">Google Calendar Embed URL</label><input id="settingCalendarUrl" type="url" class="input" placeholder="https://calendar.google.com/calendar/embed?src=..."></div>
+            <h2 class="text-xl font-bold mb-4">📅 Calendar Selection</h2>
+            <div id="calendarSelectionContainer">
+              <p class="text-gray-400 text-sm mb-3">Choose which Google Calendars to display on your dashboard</p>
+              <button id="btnLoadCalendars" class="btn btn-secondary text-sm mb-3">Load My Calendars</button>
+              <div id="calendarCheckboxes" class="space-y-2"></div>
+            </div>
           </div>
-          <button id="btnSaveSettings" class="btn btn-primary w-full py-3">Save All Settings</button>
+          
+          <!-- Changelog -->
+          <div class="card">
+            <h2 class="text-xl font-bold mb-4">📋 What's New</h2>
+            <div class="space-y-3 text-sm">
+              <div class="border-l-4 border-blue-500 pl-4 py-2">
+                <p class="font-semibold text-blue-400">v2.0.0 - February 9, 2026</p>
+                <ul class="list-disc pl-5 mt-2 space-y-1 text-gray-400">
+                  <li>✨ Multi-calendar selection - choose which calendars to display</li>
+                  <li>📅 Automatic Google Calendar permission requests</li>
+                  <li>👤 Personalization - greetings and chore attribution</li>
+                  <li>🌤️ Redesigned weather center with animated radar</li>
+                  <li>🎨 Color-coded calendar indicators</li>
+                  <li>💾 Settings now persist forever</li>
+                </ul>
+              </div>
+              <div class="border-l-4 border-gray-500 pl-4 py-2">
+                <p class="font-semibold text-gray-300">v1.5.0 - February 8, 2026</p>
+                <ul class="list-disc pl-5 mt-2 space-y-1 text-gray-400">
+                  <li>Fixed navigation tabs</li>
+                  <li>Added standby mode improvements</li>
+                  <li>Google Calendar integration</li>
+                </ul>
+              </div>
+              <div class="border-l-4 border-gray-500 pl-4 py-2">
+                <p class="font-semibold text-gray-300">v1.0.0 - January 2026</p>
+                <ul class="list-disc pl-5 mt-2 space-y-1 text-gray-400">
+                  <li>Initial release</li>
+                  <li>Chores tracking</li>
+                  <li>Dog treat tracker</li>
+                  <li>Weather integration</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <!-- Legal & Privacy -->
+          <div class="card bg-gray-800">
+            <h2 class="text-xl font-bold mb-4">⚖️ Legal & Privacy</h2>
+            <div class="space-y-3 text-sm">
+              <p class="text-gray-400">Your settings and data are stored securely and persist indefinitely while your account is active.</p>
+              <div class="flex flex-wrap gap-4">
+                <a href="/privacy.html" target="_blank" class="text-blue-400 hover:text-blue-300 underline">
+                  📜 Privacy Policy
+                </a>
+                <a href="/tos.html" target="_blank" class="text-blue-400 hover:text-blue-300 underline">
+                  📋 Terms of Service
+                </a>
+                <a href="https://myaccount.google.com/permissions" target="_blank" class="text-blue-400 hover:text-blue-300 underline">
+                  🔐 Manage Google Permissions
+                </a>
+              </div>
+              <p class="text-xs text-gray-500 mt-3">
+                Home Hub uses Google Calendar API. By using calendar features, you agree to our Terms of Service and Privacy Policy, 
+                and acknowledge our compliance with <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" class="text-blue-400 hover:text-blue-300 underline">Google API Services User Data Policy</a>.
+              </p>
+            </div>
+          </div>
+
+          <button id="btnSaveSettings" class="btn btn-primary w-full py-3">💾 Save All Settings</button>
+          <p class="text-center text-sm text-gray-500 mt-2">Settings are automatically saved to your account and persist forever</p>
         </div>
       </div>
     </div>

@@ -14,6 +14,46 @@ Hub.calendar = {
    * @param {number} maxResults - Maximum number of events to fetch
    * @returns {Array|Object} Array of events or error object
    */
+  /**
+   * Get list of user's calendars
+   * @returns {Array|Object} Array of calendars or error object
+   */
+  async getCalendarList() {
+    try {
+      const { data: { session } } = await Hub.sb.auth.getSession();
+      if (!session?.provider_token) {
+        return { error: 'Not authenticated' };
+      }
+
+      const url = 'https://www.googleapis.com/calendar/v3/users/me/calendarList';
+      
+      console.log('[Calendar] Fetching calendar list...');
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${session.provider_token}`,
+          'Accept': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Calendar list error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('[Calendar] Found', data.items?.length || 0, 'calendars');
+      
+      return data.items || [];
+    } catch (error) {
+      console.error('[Calendar] Error fetching calendar list:', error);
+      return { error: error.message };
+    }
+  },
+
+  /**
+   * Fetch upcoming events from user's selected calendars
+   * @param {number} maxResults - Maximum number of events to fetch per calendar
+   * @returns {Array|Object} Array of events or error object
+   */
   async getUpcomingEvents(maxResults = 10) {
     try {
       // Check cache first
@@ -36,39 +76,75 @@ Hub.calendar = {
 
       const accessToken = session.provider_token;
 
-      // Call Google Calendar API
-      const timeMin = new Date().toISOString();
-      const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?` +
-        `maxResults=${maxResults}&` +
-        `orderBy=startTime&` +
-        `singleEvents=true&` +
-        `timeMin=${timeMin}`;
-
-      console.log('[Calendar] Fetching events...');
-      const response = await fetch(url, {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Accept': 'application/json'
-        }
-      });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          return { error: 'Calendar access expired - please sign out and sign in again' };
-        }
-        if (response.status === 403) {
-          return { error: 'Calendar API not enabled - check Google Cloud Console' };
-        }
-        throw new Error(`Calendar API error: ${response.status}`);
+      // Get selected calendar IDs from settings (or use 'primary' as default)
+      const settings = Hub.state?.settings || {};
+      let calendarIds = settings.selected_calendars || ['primary'];
+      
+      // Ensure it's an array
+      if (!Array.isArray(calendarIds)) {
+        calendarIds = ['primary'];
       }
 
-      const data = await response.json();
+      console.log('[Calendar] Fetching events from', calendarIds.length, 'calendars');
+
+      // Fetch events from each selected calendar
+      const timeMin = new Date().toISOString();
+      const allEvents = [];
+
+      for (const calendarId of calendarIds) {
+        try {
+          const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?` +
+            `maxResults=${maxResults}&` +
+            `orderBy=startTime&` +
+            `singleEvents=true&` +
+            `timeMin=${timeMin}`;
+
+          const response = await fetch(url, {
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Accept': 'application/json'
+            }
+          });
+
+          if (!response.ok) {
+            if (response.status === 401) {
+              return { error: 'Calendar access expired - please sign out and sign in again' };
+            }
+            if (response.status === 403) {
+              return { error: 'Calendar API not enabled - check Google Cloud Console' };
+            }
+            console.warn(`[Calendar] Error fetching from ${calendarId}:`, response.status);
+            continue; // Skip this calendar and try others
+          }
+
+          const data = await response.json();
+          const events = (data.items || []).map(event => ({
+            ...event,
+            calendarId: calendarId // Tag each event with its calendar ID
+          }));
+          
+          allEvents.push(...events);
+        } catch (err) {
+          console.error(`[Calendar] Error fetching events from ${calendarId}:`, err);
+          // Continue with other calendars
+        }
+      }
+
+      // Sort all events by start time
+      allEvents.sort((a, b) => {
+        const aTime = a.start.dateTime || a.start.date;
+        const bTime = b.start.dateTime || b.start.date;
+        return new Date(aTime) - new Date(bTime);
+      });
+
+      // Limit to maxResults total events
+      const limitedEvents = allEvents.slice(0, maxResults);
       
       // Cache the results
-      this._cache = data.items || [];
+      this._cache = limitedEvents;
       this._cacheTime = now;
       
-      console.log('[Calendar] Fetched', this._cache.length, 'events');
+      console.log('[Calendar] Fetched', limitedEvents.length, 'events total');
       return this._cache;
 
     } catch (error) {

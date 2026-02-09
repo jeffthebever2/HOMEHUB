@@ -324,11 +324,80 @@ Hub.app = {
     Hub.utils.$('settingIdleTimeout').value  = s.standby_timeout_min || 10;
     Hub.utils.$('settingQuietStart').value   = s.quiet_hours_start || '22:00';
     Hub.utils.$('settingQuietEnd').value     = s.quiet_hours_end   || '07:00';
-    Hub.utils.$('settingCalendarUrl').value  = s.calendar_url || '';
+    
+    // Load calendar selection if calendars available
+    this._loadCalendarSelection();
+  },
+
+  async _loadCalendarSelection() {
+    const container = Hub.utils.$('calendarCheckboxes');
+    if (!container) return;
+
+    const savedCalendars = Hub.state?.settings?.selected_calendars || ['primary'];
+    
+    // Show loading state
+    container.innerHTML = '<p class="text-gray-400 text-sm">Click "Load My Calendars" to select which calendars to display</p>';
+  },
+
+  async _fetchAndDisplayCalendars() {
+    const container = Hub.utils.$('calendarCheckboxes');
+    const btn = Hub.utils.$('btnLoadCalendars');
+    if (!container) return;
+
+    btn.disabled = true;
+    btn.textContent = 'Loading...';
+    container.innerHTML = '<p class="text-gray-400 text-sm animate-pulse">Fetching your calendars...</p>';
+
+    const calendars = await Hub.calendar.getCalendarList();
+    btn.disabled = false;
+    btn.textContent = 'Reload Calendars';
+
+    if (calendars.error) {
+      container.innerHTML = `<p class="text-red-400 text-sm">${Hub.utils.esc(calendars.error)}</p>`;
+      return;
+    }
+
+    if (!calendars || calendars.length === 0) {
+      container.innerHTML = '<p class="text-gray-400 text-sm">No calendars found</p>';
+      return;
+    }
+
+    const savedCalendars = Hub.state?.settings?.selected_calendars || ['primary'];
+    
+    // Create checkboxes for each calendar
+    container.innerHTML = calendars.map((cal, idx) => {
+      const isChecked = savedCalendars.includes(cal.id);
+      const colorStyle = cal.backgroundColor ? `background-color: ${cal.backgroundColor}` : '';
+      
+      return `
+        <label class="flex items-center gap-3 p-2 rounded hover:bg-gray-700 cursor-pointer">
+          <input 
+            type="checkbox" 
+            class="calendar-checkbox w-4 h-4" 
+            data-calendar-id="${Hub.utils.esc(cal.id)}"
+            ${isChecked ? 'checked' : ''}
+          >
+          <div class="w-3 h-3 rounded-full flex-shrink-0" style="${colorStyle}"></div>
+          <div class="flex-1 min-w-0">
+            <p class="font-medium text-sm truncate">${Hub.utils.esc(cal.summary || 'Untitled')}</p>
+            ${cal.description ? `<p class="text-xs text-gray-400 truncate">${Hub.utils.esc(cal.description)}</p>` : ''}
+          </div>
+        </label>
+      `;
+    }).join('');
+
+    Hub.ui.toast('Calendars loaded! Select which ones to show', 'success');
   },
 
   async _saveSettings() {
     if (!Hub.state.user || !Hub.state.household_id) return;
+    
+    // Get selected calendar IDs from checkboxes
+    const selectedCalendars = [];
+    document.querySelectorAll('.calendar-checkbox:checked').forEach(cb => {
+      selectedCalendars.push(cb.dataset.calendarId);
+    });
+    
     const payload = {
       location_name: Hub.utils.$('settingLocationName').value.trim(),
       location_lat: parseFloat(Hub.utils.$('settingLat').value) || 40.029059,
@@ -339,7 +408,7 @@ Hub.app = {
       immich_base_url: Hub.utils.$('settingImmichUrl').value.trim(),
       immich_api_key: Hub.utils.$('settingImmichKey').value.trim(),
       immich_album_id: Hub.utils.$('settingImmichAlbum').value.trim(),
-      calendar_url: Hub.utils.$('settingCalendarUrl').value.trim()
+      selected_calendars: selectedCalendars.length > 0 ? selectedCalendars : ['primary']
     };
     try {
       const saved = await Hub.db.saveSettings(Hub.state.user.id, Hub.state.household_id, payload);
@@ -370,6 +439,7 @@ Hub.app = {
     Hub.utils.$('btnSaveSettings')?.addEventListener('click', () => Hub.app._saveSettings());
     Hub.utils.$('btnUseLocation')?.addEventListener('click', () => Hub.app._useCurrentLocation());
     Hub.utils.$('btnRefreshStatus')?.addEventListener('click', () => Hub.app._loadStatusPage());
+    Hub.utils.$('btnLoadCalendars')?.addEventListener('click', () => Hub.app._fetchAndDisplayCalendars());
   },
 
   _startIdleTimer() {
