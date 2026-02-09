@@ -10,7 +10,7 @@ Hub.chores = {
     if (!el || !Hub.state.household_id) return;
 
     try {
-      const chores = await Hub.db.loadChores(Hub.state.household_id);
+      const chores = await Hub.db.loadChoresWithCompleters(Hub.state.household_id);
       if (!chores.length) {
         el.innerHTML = '<div class="card text-center"><p class="text-gray-400">No chores yet. Click "+ Add Chore" to create one!</p></div>';
         return;
@@ -19,6 +19,14 @@ Hub.chores = {
       el.innerHTML = chores.map(c => {
         const prioClass = c.priority === 'high' ? 'bg-red-600' : c.priority === 'medium' ? 'bg-yellow-600' : 'bg-gray-600';
         const isDone = c.status === 'done';
+        
+        // Get completer first name
+        let completerText = '';
+        if (isDone && c.completer_email) {
+          const firstName = c.completer_email.split('@')[0];
+          completerText = `<p class="text-sm text-green-400 mt-2">✓ Completed by ${Hub.utils.esc(firstName)}</p>`;
+        }
+        
         return `
           <div class="card flex items-start justify-between ${isDone ? 'opacity-60' : ''}">
             <div class="flex-1">
@@ -29,6 +37,7 @@ Hub.chores = {
                 ${c.due_date ? `<span class="inline-block px-2 py-1 rounded text-xs bg-gray-600">${c.due_date}</span>` : ''}
                 <span class="inline-block px-2 py-1 rounded text-xs bg-gray-700">${Hub.utils.esc(c.status)}</span>
               </div>
+              ${completerText}
             </div>
             <div class="flex gap-2 ml-4 flex-shrink-0">
               ${!isDone ? `<button onclick="Hub.chores.markDone('${c.id}')" class="btn btn-success text-sm">Done</button>` : ''}

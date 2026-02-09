@@ -239,6 +239,10 @@ Hub.app = {
 
   onPageEnter(page) {
     this._resetIdleTimer();
+    // Stop radar animation when leaving weather page
+    if (page !== 'weather' && Hub.weather) {
+      Hub.weather.stopRadarAnimation();
+    }
     switch (page) {
       case 'dashboard': this._loadDashboard(); break;
       case 'weather':   this._loadWeatherPage(); break;
@@ -252,30 +256,38 @@ Hub.app = {
 
   async _loadDashboard() {
     Hub.ui.updateDashboardDate();
+    Hub.ui.updateDashboardGreeting();
     Hub.chores.loadDashboard();
     this._loadDashboardWeather();
+    // Load calendar widget
+    if (Hub.calendar && typeof Hub.calendar.renderDashboard === 'function') {
+      Hub.calendar.renderDashboard().catch(e => console.warn('[Dashboard] Calendar error:', e));
+    }
   },
 
   async _loadDashboardWeather() {
     try {
-      const agg = await Hub.weather.fetchAggregate();
-      const aiSummary = await Hub.ai.getSummary(agg);
-      const normalized = Hub.weather.normalize(agg);
-      Hub.weather.renderDashboard(aiSummary, normalized);
-      if (aiSummary?.alerts?.active) {
-        Hub.ui.showBanner(aiSummary.alerts.banner_text, aiSummary.alerts.severity);
-        if (aiSummary.actions?.some(a => a.type === 'show_popup')) Hub.ui.showAlertPopup(aiSummary.alerts);
-      } else { Hub.ui.hideBanner(); }
-    } catch (e) { console.error('Dashboard weather error:', e); }
+      await Hub.weather.renderDashboard();
+      // Check for alerts (still works without AI)
+      const alerts = await Hub.weather.fetchAlerts();
+      if (alerts.length > 0) {
+        const alert = alerts[0];
+        Hub.ui.showBanner(alert.headline || 'Weather Alert', alert.severity || 'warning');
+      } else {
+        Hub.ui.hideBanner();
+      }
+    } catch (e) {
+      console.error('Dashboard weather error:', e);
+    }
   },
 
   async _loadWeatherPage() {
     try {
-      const agg = await Hub.weather.fetchAggregate();
-      const aiSummary = await Hub.ai.getSummary(agg);
-      Hub.weather.renderWeatherPage(aiSummary, agg);
+      await Hub.weather.renderWeatherPage();
     } catch (e) {
-      Hub.utils.$('weatherContent').innerHTML = '<p class="text-yellow-400">Error loading weather data.</p>';
+      console.error('Weather page error:', e);
+      const el = Hub.utils.$('weatherContent');
+      if (el) el.innerHTML = '<p class="text-yellow-400">Error loading weather data.</p>';
     }
   },
 

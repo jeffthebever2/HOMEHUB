@@ -69,9 +69,20 @@ Hub.router = {
   _activate(page) {
     if (!this.VALID_PAGES.includes(page)) page = 'dashboard';
     Hub.router.current = page;
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    
+    // Force hide all pages
+    document.querySelectorAll('.page').forEach(p => {
+      p.classList.remove('active');
+      p.style.display = 'none';
+    });
+    
+    // Force show target page
     const el = Hub.utils.$(page + 'Page');
-    if (el) el.classList.add('active');
+    if (el) {
+      el.classList.add('active');
+      el.style.display = 'block'; // Force display
+      console.log('[Router] Activated page:', page);
+    }
 
     // Fire page lifecycle
     Hub.app?.onPageEnter?.(page);

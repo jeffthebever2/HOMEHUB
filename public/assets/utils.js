@@ -75,5 +75,60 @@ Hub.utils = {
       lat: s.location_lat || window.HOME_HUB_CONFIG?.defaultLocation?.lat || 40.029059,
       lon: s.location_lon || window.HOME_HUB_CONFIG?.defaultLocation?.lon || -82.863462
     };
+  },
+
+  /** Get user's first name from Google OAuth */
+  getUserFirstName(user) {
+    if (!user) user = Hub.state?.user;
+    if (!user) return null;
+    
+    // Try user_metadata.full_name first (Google OAuth)
+    if (user.user_metadata?.full_name) {
+      const name = user.user_metadata.full_name.trim();
+      return name.split(' ')[0]; // Get first word as first name
+    }
+    
+    // Try user_metadata.name
+    if (user.user_metadata?.name) {
+      const name = user.user_metadata.name.trim();
+      return name.split(' ')[0];
+    }
+    
+    // Fall back to email prefix
+    if (user.email) {
+      return user.email.split('@')[0];
+    }
+    
+    return null;
+  },
+
+  /** Get user's display name (first name or email) */
+  getUserDisplayName(user) {
+    const firstName = this.getUserFirstName(user);
+    if (firstName) return firstName;
+    if (!user) user = Hub.state?.user;
+    return user?.email || 'User';
+  },
+
+  /** Get user's initials for avatar */
+  getUserInitials(user) {
+    if (!user) user = Hub.state?.user;
+    if (!user) return '?';
+    
+    // Try full name
+    if (user.user_metadata?.full_name) {
+      const parts = user.user_metadata.full_name.trim().split(' ');
+      if (parts.length >= 2) {
+        return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+      }
+      return parts[0].substring(0, 2).toUpperCase();
+    }
+    
+    // Fall back to email
+    if (user.email) {
+      return user.email.substring(0, 2).toUpperCase();
+    }
+    
+    return '?';
   }
 };

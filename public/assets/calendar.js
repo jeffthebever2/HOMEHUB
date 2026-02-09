@@ -1,0 +1,297 @@
+// ============================================================
+// assets/calendar.js — Google Calendar Integration
+// Uses Google Calendar API via Supabase OAuth provider token
+// ============================================================
+window.Hub = window.Hub || {};
+
+Hub.calendar = {
+  _cache: null,
+  _cacheTime: 0,
+  CACHE_TTL: 5 * 60 * 1000, // 5 minutes
+
+  /**
+   * Fetch upcoming events from user's primary calendar
+   * @param {number} maxResults - Maximum number of events to fetch
+   * @returns {Array|Object} Array of events or error object
+   */
+  async getUpcomingEvents(maxResults = 10) {
+    try {
+      // Check cache first
+      const now = Date.now();
+      if (this._cache && (now - this._cacheTime) < this.CACHE_TTL) {
+        console.log('[Calendar] Using cached events');
+        return this._cache;
+      }
+
+      // Get access token from Supabase session
+      if (!Hub.sb) {
+        console.error('[Calendar] Supabase client not initialized');
+        return { error: 'App not initialized - please refresh the page' };
+      }
+      const { data: { session } } = await Hub.sb.auth.getSession();
+      if (!session?.provider_token) {
+        console.warn('[Calendar] No provider token - user needs to re-authenticate');
+        return { error: 'Please sign out and sign in again to grant calendar access' };
+      }
+
+      const accessToken = session.provider_token;
+
+      // Call Google Calendar API
+      const timeMin = new Date().toISOString();
+      const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?` +
+        `maxResults=${maxResults}&` +
+        `orderBy=startTime&` +
+        `singleEvents=true&` +
+        `timeMin=${timeMin}`;
+
+      console.log('[Calendar] Fetching events...');
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Accept': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          return { error: 'Calendar access expired - please sign out and sign in again' };
+        }
+        if (response.status === 403) {
+          return { error: 'Calendar API not enabled - check Google Cloud Console' };
+        }
+        throw new Error(`Calendar API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      // Cache the results
+      this._cache = data.items || [];
+      this._cacheTime = now;
+      
+      console.log('[Calendar] Fetched', this._cache.length, 'events');
+      return this._cache;
+
+    } catch (error) {
+      console.error('[Calendar] Error fetching events:', error);
+      return { error: error.message };
+    }
+  },
+
+  /**
+   * Create a new calendar event
+   * @param {Object} event - Event object following Google Calendar API format
+   * @returns {Object} Success or error object
+   */
+  async createEvent(event) {
+    try {
+      if (!Hub.sb) {
+        return { error: 'App not initialized' };
+      }
+      const { data: { session } } = await Hub.sb.auth.getSession();
+      if (!session?.provider_token) {
+        return { error: 'No calendar access - please re-authenticate' };
+      }
+
+      console.log('[Calendar] Creating event:', event.summary);
+      const response = await fetch(
+        'https://www.googleapis.com/calendar/v3/calendars/primary/events',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.provider_token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(event)
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to create event: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      // Clear cache to force refresh
+      this._cache = null;
+      
+      console.log('[Calendar] Event created:', data.id);
+      return { success: true, event: data };
+
+    } catch (error) {
+      console.error('[Calendar] Error creating event:', error);
+      return { error: error.message };
+    }
+  },
+
+  /**
+   * Create a quick event with prompts
+   */
+  async createQuickEvent() {
+    const title = prompt('Event title:');
+    if (!title) return;
+
+    const dateStr = prompt('Date (YYYY-MM-DD):');
+    if (!dateStr) return;
+
+    const timeStr = prompt('Time (HH:MM in 24-hour format, or leave empty for all-day):');
+
+    let event;
+    if (timeStr) {
+      // Timed event
+      const startDateTime = new Date(`${dateStr}T${timeStr}:00`);
+      const endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000); // +1 hour
+
+      event = {
+        summary: title,
+        start: { 
+          dateTime: startDateTime.toISOString(), 
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone 
+        },
+        end: { 
+          dateTime: endDateTime.toISOString(), 
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone 
+        }
+      };
+    } else {
+      // All-day event
+      event = {
+        summary: title,
+        start: { date: dateStr },
+        end: { date: dateStr }
+      };
+    }
+
+    const result = await this.createEvent(event);
+    
+    if (result.error) {
+      Hub.ui.toast('Error: ' + result.error, 'error');
+    } else {
+      Hub.ui.toast('Event created!', 'success');
+      this.refreshCalendar();
+    }
+  },
+
+  /**
+   * Render calendar widget on dashboard
+   */
+  async renderDashboard() {
+    const widget = Hub.utils.$('calendarWidget');
+    if (!widget) {
+      console.warn('[Calendar] Widget element not found');
+      return;
+    }
+
+    widget.innerHTML = '<div class="animate-pulse text-gray-400 text-sm">Loading calendar...</div>';
+
+    const events = await this.getUpcomingEvents(5);
+
+    if (events.error) {
+      widget.innerHTML = `
+        <div class="text-yellow-400">
+          <p class="text-sm mb-2">📅 Calendar Not Connected</p>
+          <p class="text-xs text-gray-400">${Hub.utils.esc(events.error)}</p>
+          <button onclick="Hub.calendar.showSetupInstructions()" class="text-xs text-blue-400 hover:text-blue-300 mt-2">
+            How to connect
+          </button>
+        </div>
+      `;
+      return;
+    }
+
+    if (!events || events.length === 0) {
+      widget.innerHTML = `
+        <div class="text-center py-4">
+          <p class="text-gray-400 text-sm mb-2">📅 No upcoming events</p>
+          <button onclick="Hub.calendar.createQuickEvent()" class="text-xs text-blue-400 hover:text-blue-300">
+            + Create Event
+          </button>
+        </div>
+      `;
+      return;
+    }
+
+    // Render events
+    const html = events.map(event => {
+      const start = event.start.dateTime || event.start.date;
+      const startDate = new Date(start);
+      const isToday = this._isToday(startDate);
+      const isTomorrow = this._isTomorrow(startDate);
+      
+      let dateLabel;
+      if (isToday) dateLabel = 'Today';
+      else if (isTomorrow) dateLabel = 'Tomorrow';
+      else dateLabel = startDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+      const timeLabel = event.start.dateTime 
+        ? startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+        : 'All day';
+
+      return `
+        <div class="flex items-start gap-3 py-2 border-b border-gray-700 last:border-0">
+          <div class="text-xs text-gray-400 w-20 flex-shrink-0 pt-1">
+            ${Hub.utils.esc(dateLabel)}
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="font-medium text-sm truncate">${Hub.utils.esc(event.summary || 'Untitled')}</div>
+            <div class="text-xs text-gray-400">${Hub.utils.esc(timeLabel)}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    widget.innerHTML = `
+      <div class="space-y-1">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="font-semibold">📅 Upcoming Events</h3>
+          <div class="space-x-2">
+            <button onclick="Hub.calendar.createQuickEvent()" class="text-xs text-green-400 hover:text-green-300">
+              + Add
+            </button>
+            <button onclick="Hub.calendar.refreshCalendar()" class="text-xs text-blue-400 hover:text-blue-300">
+              Refresh
+            </button>
+          </div>
+        </div>
+        ${html}
+      </div>
+    `;
+  },
+
+  /**
+   * Force refresh calendar (clears cache)
+   */
+  async refreshCalendar() {
+    this._cache = null;
+    await this.renderDashboard();
+  },
+
+  /**
+   * Show setup instructions
+   */
+  showSetupInstructions() {
+    alert(
+      'To connect Google Calendar:\n\n' +
+      '1. Go to Google Cloud Console\n' +
+      '2. Enable Google Calendar API\n' +
+      '3. Add calendar scopes to Supabase OAuth\n' +
+      '4. Sign out and sign back in\n\n' +
+      'See GOOGLE_CALENDAR_API_GUIDE.md for details.'
+    );
+  },
+
+  // Helper functions
+  _isToday(date) {
+    const today = new Date();
+    return date.getDate() === today.getDate() &&
+           date.getMonth() === today.getMonth() &&
+           date.getFullYear() === today.getFullYear();
+  },
+
+  _isTomorrow(date) {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return date.getDate() === tomorrow.getDate() &&
+           date.getMonth() === tomorrow.getMonth() &&
+           date.getFullYear() === tomorrow.getFullYear();
+  }
+};

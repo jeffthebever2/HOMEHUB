@@ -196,6 +196,59 @@ window.Hub = window.Hub || {};
       if (error) throw error;
       return data || [];
     },
+    async loadChoresWithCompleters(householdId) {
+      // Get chores
+      const { data: chores, error } = await timed(
+        sb.from('chores')
+          .select('*')
+          .eq('household_id', householdId)
+          .order('created_at', { ascending: false })
+      );
+      if (error) throw error;
+      if (!chores) return [];
+
+      // Get completion logs for done chores
+      const doneChoreIds = chores.filter(c => c.status === 'done').map(c => c.id);
+      if (doneChoreIds.length === 0) return chores;
+
+      const { data: logs } = await timed(
+        sb.from('chore_logs')
+          .select('chore_id, completed_by')
+          .in('chore_id', doneChoreIds)
+          .order('completed_at', { ascending: false })
+      );
+
+      // Get unique completer IDs
+      const completerIds = [...new Set((logs || []).map(l => l.completed_by))];
+      if (completerIds.length === 0) return chores;
+
+      // Get user emails from household_members
+      const { data: members } = await timed(
+        sb.from('household_members')
+          .select('user_id, email')
+          .in('user_id', completerIds)
+      );
+
+      // Create map of user_id -> email
+      const emailMap = {};
+      (members || []).forEach(m => {
+        emailMap[m.user_id] = m.email;
+      });
+
+      // Create map of chore_id -> completer email
+      const completerMap = {};
+      (logs || []).forEach(log => {
+        if (!completerMap[log.chore_id] && emailMap[log.completed_by]) {
+          completerMap[log.chore_id] = emailMap[log.completed_by];
+        }
+      });
+
+      // Add completer_email to chores
+      return chores.map(chore => ({
+        ...chore,
+        completer_email: completerMap[chore.id] || null
+      }));
+    },
     async addChore(chore) {
       const { data, error } = await timed(sb.from('chores').insert(chore).select().single());
       if (error) throw error;
