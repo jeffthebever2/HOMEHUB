@@ -1,5 +1,8 @@
 // ============================================================
-// assets/chores.js — Chores management (Supabase)
+// assets/chores.js — Chores management (Supabase) (v2)
+//
+// Fixes in v2:
+//   - Fixed dashboard filter for legacy chores missing day_of_week
 // ============================================================
 window.Hub = window.Hub || {};
 
@@ -39,9 +42,16 @@ Hub.chores = {
       const today = new Date().getDay();
 
       // All chores for today (daily + matching weekday)
+      // Supports both day_of_week column AND category string (fallback for legacy chores)
       const todayAll = chores.filter(c => {
         if (c.category === 'Daily') return true;
+        // Check day_of_week column (set by new add/edit flow)
         if (c.day_of_week === today) return true;
+        // Fallback: parse category string for legacy chores missing day_of_week
+        if (c.day_of_week == null && c.category) {
+          var mapDay = Hub.chores.DAY_MAP[c.category];
+          if (mapDay === today) return true;
+        }
         return false;
       });
       const todayPending = todayAll.filter(c => c.status !== 'done');

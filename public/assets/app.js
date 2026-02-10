@@ -1,11 +1,11 @@
 // ============================================================
-// assets/app.js — Main application init & orchestration (v4)
+// assets/app.js — Main application init & orchestration (v5)
 //
-// Fixes in v4:
-//   - Removed #letmein test bypass (security)
-//   - Removed hardcoded household_id fallback (security)
-//   - Removed Immich integration
-//   - Cleaned up redundant display:none/block overrides
+// Fixes in v5:
+//   - Fixed _showApp() not clearing inline display styles (disappearing bug)
+//   - Fixed SIGNED_IN event being ignored (user stuck on loading)
+//   - Fixed 8s fallback checking wrong condition
+//   - Uses router._hideAll() for consistent screen management
 // ============================================================
 window.Hub = window.Hub || {};
 
@@ -46,10 +46,9 @@ Hub.app = {
         return;
       }
 
-      if (event === 'SIGNED_IN') return; // Wait for INITIAL_SESSION
-
-      if ((event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') && session?.user) {
-        if (this._loggedIn) return;
+      // Handle all events that carry a valid session
+      if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.user) {
+        if (this._loggedIn || this._loginInProgress) return;
         this._authHandled = true;
         await this._onLogin(session.user);
         return;
@@ -78,16 +77,11 @@ Hub.app = {
       }
     }, 3000);
 
-    // Fallback 2: 8s — absolute safety net
+    // Fallback 2: 8s — absolute safety net (catches edge cases where auth events never fire)
     setTimeout(() => {
-      if (this._loggedIn) return;
-      if (!this._loggedIn && !this._loginInProgress) {
-        const el = document.getElementById('loadingScreen');
-        if (el && el.style.display !== 'none') {
-          console.warn('[Auth] 8s HARD fallback → login');
-          Hub.router.showScreen('login');
-        }
-      }
+      if (this._loggedIn || this._authHandled || this._loginInProgress) return;
+      console.warn('[Auth] 8s HARD fallback — no auth events received, showing login');
+      Hub.router.showScreen('login');
     }, 8000);
 
     this._startIdleTimer();
@@ -142,27 +136,29 @@ Hub.app = {
   },
 
   _showApp() {
-    // Hide loading screen
-    const loadingScreen = document.getElementById('loadingScreen');
-    if (loadingScreen) loadingScreen.style.display = 'none';
-
-    // Hide all pages
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    // Use router's unified cleanup (hides loading, clears all inline styles)
+    Hub.router._hideAll();
 
     // Clear OAuth code from URL
     if (window.location.search.includes('code=')) {
-      const cleanUrl = window.location.origin + window.location.pathname + window.location.hash;
+      var cleanUrl = window.location.origin + window.location.pathname + window.location.hash;
       window.history.replaceState({}, document.title, cleanUrl);
     }
 
-    const hash = window.location.hash.replace('#/', '').replace('#', '');
-    const page = Hub.router.VALID_PAGES.includes(hash) ? hash : 'dashboard';
-    const el = Hub.utils.$(page + 'Page');
+    var hash = window.location.hash.replace('#/', '').replace('#', '');
+    var page = Hub.router.VALID_PAGES.includes(hash) ? hash : 'dashboard';
+    var el = Hub.utils.$(page + 'Page');
     
     if (el) {
       el.classList.add('active');
+      el.style.display = 'block';
     } else {
-      document.getElementById('dashboardPage').classList.add('active');
+      var dash = document.getElementById('dashboardPage');
+      if (dash) {
+        dash.classList.add('active');
+        dash.style.display = 'block';
+      }
+      page = 'dashboard';
     }
 
     Hub.router.current = page;
