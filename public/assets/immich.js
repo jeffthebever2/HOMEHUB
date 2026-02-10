@@ -8,18 +8,64 @@ Hub.immich = {
   _currentPhotoIndex: 0,
   _photoRotateInterval: null,
 
-  // HARDCODED IMMICH CONFIGURATION
+  // IMGUR ALBUM CONFIGURATION
+  _imgurConfig: {
+    albumId: '1siWAzN',
+    useImgur: true
+  },
+
+  // HARDCODED IMMICH CONFIGURATION (fallback)
   _hardcodedConfig: {
     immichUrl: 'http://192.168.7.248:2283',
     immichKey: 'LH6mLNi6tO8whoeiRkgkQkDjK7hmCUsAba02l7iazNI',
-    useWholeLibrary: true // Set to true to use ALL photos, false to use specific album
+    useWholeLibrary: true
   },
 
-  /** Fetch images from Immich - either whole library or specific album */
+  /** Fetch images from Imgur album or Immich library */
   async fetchImages() {
+    // Try Imgur first if enabled
+    if (this._imgurConfig.useImgur && this._imgurConfig.albumId) {
+      try {
+        console.log('[Immich] Fetching from Imgur album:', this._imgurConfig.albumId);
+        
+        // Fetch album data from Imgur API
+        const response = await fetch(`https://api.imgur.com/3/album/${this._imgurConfig.albumId}`, {
+          headers: {
+            'Authorization': 'Client-ID 546c25a59c58ad7' // Public Imgur client ID
+          }
+        });
+
+        if (!response.ok) {
+          console.error('[Immich] Imgur API failed:', response.status);
+          return this._tryImmichOrPlaceholders();
+        }
+
+        const data = await response.json();
+        
+        if (data.data && data.data.images) {
+          // Extract image URLs from album
+          this._images = data.data.images.map(img => img.link);
+          console.log('[Immich] ✓ Loaded', this._images.length, 'photos from Imgur album');
+          return this._images;
+        } else {
+          console.warn('[Immich] No images found in Imgur album');
+          return this._tryImmichOrPlaceholders();
+        }
+      } catch (e) {
+        console.error('[Immich] Error fetching from Imgur:', e);
+        return this._tryImmichOrPlaceholders();
+      }
+    }
+
+    // Fallback to Immich or placeholders
+    return this._tryImmichOrPlaceholders();
+  },
+
+  /** Try Immich library or use placeholders */
+  async _tryImmichOrPlaceholders() {
     const s = Hub.state.settings || {};
     
-    // Use hardcoded config first, fallback to settings
+    // Use hardcoded config
     const immichUrl = this._hardcodedConfig.immichUrl || s.immich_base_url || '';
     const immichKey = this._hardcodedConfig.immichKey || s.immich_api_key || '';
     const useWholeLibrary = this._hardcodedConfig.useWholeLibrary !== undefined 
@@ -27,16 +73,15 @@ Hub.immich = {
       : false;
 
     if (!immichUrl || !immichKey) {
-      console.log('[Immich] No configuration, using placeholders');
+      console.log('[Immich] No Immich configuration, using placeholders');
       return this._usePlaceholders();
     }
 
-    // FETCH ALL PHOTOS FROM LIBRARY
+    // Try to fetch from Immich (only works on local network)
     if (useWholeLibrary) {
       try {
-        console.log('[Immich] Fetching ALL photos from library:', immichUrl);
+        console.log('[Immich] Trying local Immich library:', immichUrl);
         
-        // Get all assets from Immich
         const response = await fetch(`${immichUrl}/api/assets`, {
           headers: {
             'x-api-key': immichKey,
@@ -45,62 +90,29 @@ Hub.immich = {
         });
 
         if (!response.ok) {
-          console.error('[Immich] Assets API failed:', response.status, response.statusText);
+          console.warn('[Immich] Local Immich not accessible (expected on Vercel)');
           return this._usePlaceholders();
         }
 
         const assets = await response.json();
-        console.log('[Immich] Received', assets.length, 'total assets from library');
-
-        // Filter to only images (not videos)
         const imageAssets = assets.filter(asset => 
           asset.type === 'IMAGE' && !asset.isTrashed
         );
         
-        console.log('[Immich] Filtered to', imageAssets.length, 'images (excluding videos and trash)');
-
-        // Build image URLs
         this._images = imageAssets.map(asset => 
           `${immichUrl}/api/assets/${asset.id}/thumbnail?size=preview`
         );
 
         if (this._images.length > 0) {
-          console.log('[Immich] ✓ Loaded', this._images.length, 'photos from your ENTIRE LIBRARY');
+          console.log('[Immich] ✓ Loaded', this._images.length, 'photos from local Immich');
           return this._images;
-        } else {
-          console.warn('[Immich] No images found in library');
-          return this._usePlaceholders();
         }
       } catch (e) {
-        console.error('[Immich] Error fetching library:', e);
-        return this._usePlaceholders();
+        console.log('[Immich] Local Immich not reachable (using Imgur instead)');
       }
     }
 
-    // FETCH FROM SPECIFIC ALBUM (if useWholeLibrary is false)
-    const albumId = this._hardcodedConfig.albumId || s.immich_album_id || '';
-    if (albumId) {
-      try {
-        console.log('[Immich] Fetching from album:', albumId);
-        const base = Hub.utils.apiBase();
-        const resp = await fetch(`${base}/api/immich-album?baseUrl=${encodeURIComponent(immichUrl)}&key=${encodeURIComponent(immichKey)}&albumId=${encodeURIComponent(albumId)}`);
-        
-        if (resp.ok) {
-          const data = await resp.json();
-          this._images = data.images || [];
-          if (this._images.length > 0) {
-            console.log('[Immich] ✓ Loaded', this._images.length, 'photos from album');
-            return this._images;
-          }
-        } else {
-          console.warn('[Immich] Album API failed:', resp.status);
-        }
-      } catch (e) {
-        console.error('[Immich] Error fetching album:', e);
-      }
-    }
-
-    // Fallback to placeholders
+    // Final fallback to placeholders
     return this._usePlaceholders();
   },
 

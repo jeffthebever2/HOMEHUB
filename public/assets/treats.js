@@ -186,7 +186,7 @@ Hub.treats = {
     Hub.ui.openModal('addTreatModal');
   },
 
-  /** Render dog status widget for dashboard */
+  /** Render dog status widget for dashboard with circular gauge */
   async renderDashboardWidget() {
     const el = Hub.utils.$('dogStatusWidget');
     if (!el) return;
@@ -228,24 +228,96 @@ Hub.treats = {
         return { dog, totalCal, limit, percent, isOnTrack };
       }));
 
-      // Render status for all dogs
+      // Render circular gauges for all dogs
       el.innerHTML = statuses.map(({ dog, totalCal, limit, percent, isOnTrack }) => {
-        const statusColor = isOnTrack ? 'text-green-400' : 'text-red-400';
-        const statusIcon = isOnTrack ? '✓' : '⚠️';
-        const statusText = isOnTrack ? 'On Track' : 'Over Limit';
-        const barColor = isOnTrack ? 'bg-green-500' : 'bg-red-500';
-        const barWidth = Math.min(percent, 100);
+        // Color changes: green -> yellow -> orange -> red
+        let gaugeColor, statusText, statusIcon;
+        if (percent <= 50) {
+          gaugeColor = '#22c55e'; // Green
+          statusText = 'Great!';
+          statusIcon = '✓';
+        } else if (percent <= 75) {
+          gaugeColor = '#84cc16'; // Light green
+          statusText = 'Good';
+          statusIcon = '✓';
+        } else if (percent <= 90) {
+          gaugeColor = '#f59e0b'; // Orange
+          statusText = 'Getting Close';
+          statusIcon = '⚠';
+        } else if (percent <= 100) {
+          gaugeColor = '#fb923c'; // Dark orange
+          statusText = 'Almost There';
+          statusIcon = '⚠';
+        } else {
+          gaugeColor = '#ef4444'; // Red
+          statusText = 'Over Limit!';
+          statusIcon = '✗';
+        }
+
+        // Calculate arc for circular gauge
+        const radius = 45;
+        const circumference = 2 * Math.PI * radius;
+        const strokeDashoffset = circumference - (Math.min(percent, 100) / 100) * circumference;
 
         return `
-          <div class="mb-3 last:mb-0">
-            <div class="flex items-center justify-between mb-1">
-              <span class="font-medium text-sm">${Hub.utils.esc(dog.name)}</span>
-              <span class="${statusColor} text-xs font-semibold">${statusIcon} ${statusText}</span>
+          <div class="mb-4 last:mb-0">
+            <!-- Dog name and status -->
+            <div class="flex items-center justify-between mb-3">
+              <span class="font-semibold text-base">${Hub.utils.esc(dog.name)}</span>
+              <span class="text-xs font-bold" style="color: ${gaugeColor};">${statusIcon} ${statusText}</span>
             </div>
-            <div class="bg-gray-700 rounded-full h-2 overflow-hidden mb-1">
-              <div class="${barColor} h-full transition-all duration-500" style="width: ${barWidth}%"></div>
+            
+            <!-- Circular gauge -->
+            <div class="flex items-center gap-4">
+              <!-- SVG Gauge -->
+              <svg class="transform -rotate-90" width="120" height="120" viewBox="0 0 120 120">
+                <!-- Background circle -->
+                <circle
+                  cx="60"
+                  cy="60"
+                  r="${radius}"
+                  stroke="#374151"
+                  stroke-width="10"
+                  fill="none"
+                />
+                <!-- Progress arc -->
+                <circle
+                  cx="60"
+                  cy="60"
+                  r="${radius}"
+                  stroke="${gaugeColor}"
+                  stroke-width="10"
+                  fill="none"
+                  stroke-linecap="round"
+                  style="
+                    stroke-dasharray: ${circumference};
+                    stroke-dashoffset: ${strokeDashoffset};
+                    transition: stroke-dashoffset 0.5s ease, stroke 0.5s ease;
+                  "
+                />
+                <!-- Center text -->
+                <text
+                  x="60"
+                  y="60"
+                  text-anchor="middle"
+                  dominant-baseline="middle"
+                  class="transform rotate-90"
+                  style="
+                    font-size: 24px;
+                    font-weight: 700;
+                    fill: ${gaugeColor};
+                    transform-origin: 60px 60px;
+                  "
+                >${percent}%</text>
+              </svg>
+              
+              <!-- Stats -->
+              <div class="flex-1">
+                <p class="text-sm font-semibold mb-1">${totalCal} / ${limit} cal</p>
+                <p class="text-xs text-gray-400">Daily limit</p>
+                ${percent > 100 ? `<p class="text-xs font-bold mt-1" style="color: ${gaugeColor};">+${totalCal - limit} over!</p>` : ''}
+              </div>
             </div>
-            <p class="text-xs text-gray-400">${totalCal} / ${limit} cal (${percent}%)</p>
           </div>
         `;
       }).join('');
