@@ -45,9 +45,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   standby_timeout_min INT DEFAULT 10,
   quiet_hours_start TIME DEFAULT '22:00',
   quiet_hours_end TIME DEFAULT '07:00',
-  immich_base_url TEXT,
-  immich_api_key TEXT,
-  immich_album_id TEXT,
+  selected_calendars JSONB DEFAULT '["primary"]'::jsonb,
   calendar_url TEXT,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -57,11 +55,14 @@ CREATE TABLE IF NOT EXISTS chores (
   household_id UUID NOT NULL REFERENCES households(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   description TEXT,
+  category TEXT DEFAULT 'Daily',
+  day_of_week INTEGER,
   priority TEXT DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
   recurrence TEXT DEFAULT 'once',
   assigned_to UUID REFERENCES auth.users(id),
   created_by UUID REFERENCES auth.users(id),
   status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'done', 'skipped')),
+  completed_by_name TEXT,
   due_date DATE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -208,7 +209,17 @@ CREATE POLICY "system_logs_select" ON system_logs FOR SELECT
   USING (is_allowed_user());
 
 -- ==========================================
--- 5. SEED DATA (EDIT BEFORE RUNNING)
+-- 5. MIGRATION: Add columns if upgrading
+-- (Safe to run even on fresh install)
+-- ==========================================
+
+ALTER TABLE chores ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'Daily';
+ALTER TABLE chores ADD COLUMN IF NOT EXISTS day_of_week INTEGER;
+ALTER TABLE chores ADD COLUMN IF NOT EXISTS completed_by_name TEXT;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS selected_calendars JSONB DEFAULT '["primary"]'::jsonb;
+
+-- ==========================================
+-- 6. SEED DATA (EDIT BEFORE RUNNING)
 -- ==========================================
 -- Replace YOUR_EMAIL@gmail.com with your actual Google email.
 

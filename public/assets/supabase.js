@@ -1,10 +1,9 @@
 // ============================================================
-// assets/supabase.js — Supabase auth + DB helpers  (v3)
+// assets/supabase.js — Supabase auth + DB helpers (v4)
 //
-// KEY CHANGES:
-//   - flowType: 'pkce' (server uses PKCE)
-//   - AbortController timeout on ALL DB queries (6s)
-//   - Boot diagnostics + debug tool
+// Fixes in v4:
+//   - Removed Immich settings fields
+//   - Cleaner timeout helper
 // ============================================================
 window.Hub = window.Hub || {};
 
@@ -12,10 +11,6 @@ window.Hub = window.Hub || {};
   const CFG = window.HOME_HUB_CONFIG || {};
   const SB_URL = CFG.supabaseUrl || CFG.supabase?.url || '';
   const SB_KEY = CFG.supabaseAnonKey || CFG.supabase?.anonKey || '';
-
-  console.log('[Boot] href:', window.location.href);
-  console.log('[Boot] has ?code=', window.location.search.includes('code='));
-  console.log('[Boot] has #access_token=', window.location.hash.includes('access_token'));
 
   const sb = window.supabase.createClient(SB_URL, SB_KEY, {
     auth: {
@@ -33,11 +28,12 @@ window.Hub = window.Hub || {};
     console.log('[Boot] session:', data.session ? data.session.user.email : 'none');
   }).catch(e => console.warn('[Boot] getSession err:', e.message));
 
-  // ── Helper: DB query with 6s timeout ──
-  function timed(queryBuilder) {
+  // ── Helper: DB query with timeout ──
+  function timed(queryBuilder, ms) {
+    ms = ms || 6000;
     return Promise.race([
       queryBuilder,
-      new Promise((_, rej) => setTimeout(() => rej(new Error('DB query timeout (6s)')), 6000))
+      new Promise((_, rej) => setTimeout(() => rej(new Error('DB query timeout (' + ms + 'ms)')), ms))
     ]);
   }
 
@@ -55,11 +51,11 @@ window.Hub = window.Hub || {};
     },
 
     async signOut() {
-      console.log('[Auth] signOut()');
       Hub.app._loggedIn = false;
       Hub.app._loginInProgress = false;
       Hub.app._authHandled = false;
       Hub.state.user = null;
+      Hub.state.user_id = null;
       Hub.state.household_id = null;
       Hub.state.userRole = null;
       await sb.auth.signOut();
@@ -78,9 +74,6 @@ window.Hub = window.Hub || {};
 
     async checkAccess(user) {
       try {
-        console.log('[Auth] checkAccess:', user.email);
-
-        const t0 = Date.now();
         const { data, error } = await timed(
           sb.from('household_members')
             .select('household_id, role')
@@ -88,10 +81,8 @@ window.Hub = window.Hub || {};
             .limit(1)
             .maybeSingle()
         );
-        console.log('[Auth] household_members (' + (Date.now() - t0) + 'ms):', JSON.stringify({ data, err: error?.message }));
         if (error || !data) return false;
 
-        const t1 = Date.now();
         const { data: ae, error: aeErr } = await timed(
           sb.from('allowed_emails')
             .select('id')
@@ -99,12 +90,10 @@ window.Hub = window.Hub || {};
             .limit(1)
             .maybeSingle()
         );
-        console.log('[Auth] allowed_emails (' + (Date.now() - t1) + 'ms):', JSON.stringify({ ae, err: aeErr?.message }));
         if (aeErr || !ae) return false;
 
         Hub.state.household_id = data.household_id;
         Hub.state.userRole = data.role;
-        console.log('[Auth] ✓ Granted — household:', data.household_id);
         return true;
       } catch (e) {
         console.error('[Auth] checkAccess error:', e.message);
@@ -158,16 +147,6 @@ window.Hub = window.Hub || {};
         if (error) log('✗ ' + error.message);
         else log('✓ ' + JSON.stringify(data));
       } catch (e) { log('✗ ' + e.message); }
-      log('');
-
-      try {
-        log('DB: allowed_emails…');
-        const t = Date.now();
-        const { data, error } = await timed(sb.from('allowed_emails').select('email').limit(5));
-        log('  ' + (Date.now() - t) + 'ms');
-        if (error) log('✗ ' + error.message);
-        else log('✓ ' + JSON.stringify(data));
-      } catch (e) { log('✗ ' + e.message); }
 
       if (el) el.textContent = out.join('\n');
       return out;
@@ -180,103 +159,66 @@ window.Hub = window.Hub || {};
       const { data } = await timed(sb.from('user_settings').select('*').eq('user_id', userId).maybeSingle());
       return data;
     },
+
     async saveSettings(userId, householdId, settings) {
       const payload = {
-        user_id: userId, household_id: householdId,
-        location_name: settings.location_name, location_lat: settings.location_lat,
-        location_lon: settings.location_lon, standby_timeout_min: settings.standby_timeout_min,
-        quiet_hours_start: settings.quiet_hours_start, quiet_hours_end: settings.quiet_hours_end,
-        immich_base_url: settings.immich_base_url, immich_api_key: settings.immich_api_key,
-        immich_album_id: settings.immich_album_id,
-        selected_calendars: settings.selected_calendars || ['primary'], // ADDED: Calendar selection
+        user_id: userId,
+        household_id: householdId,
+        location_name: settings.location_name,
+        location_lat: settings.location_lat,
+        location_lon: settings.location_lon,
+        standby_timeout_min: settings.standby_timeout_min,
+        quiet_hours_start: settings.quiet_hours_start,
+        quiet_hours_end: settings.quiet_hours_end,
+        selected_calendars: settings.selected_calendars || ['primary'],
         updated_at: new Date().toISOString()
       };
-      console.log('[DB] Saving settings with selected_calendars:', payload.selected_calendars);
       const { data, error } = await timed(sb.from('user_settings').upsert(payload, { onConflict: 'user_id' }).select().single());
-      if (error) {
-        console.error('[DB] Error saving settings:', error);
-        throw error;
-      }
-      console.log('[DB] Settings saved successfully:', data);
+      if (error) throw error;
       return data;
     },
+
     async loadChores(householdId) {
       const { data, error } = await timed(sb.from('chores').select('*').eq('household_id', householdId).order('created_at', { ascending: false }));
       if (error) throw error;
       return data || [];
     },
+
     async loadChoresWithCompleters(householdId) {
-      // Get chores
       const { data: chores, error } = await timed(
-        sb.from('chores')
-          .select('*')
-          .eq('household_id', householdId)
-          .order('created_at', { ascending: false })
+        sb.from('chores').select('*').eq('household_id', householdId).order('created_at', { ascending: false })
       );
       if (error) throw error;
       if (!chores) return [];
 
-      // Get completion logs for done chores
-      const doneChoreIds = chores.filter(c => c.status === 'done').map(c => c.id);
-      if (doneChoreIds.length === 0) return chores;
-
-      const { data: logs } = await timed(
-        sb.from('chore_logs')
-          .select('chore_id, completed_by')
-          .in('chore_id', doneChoreIds)
-          .order('completed_at', { ascending: false })
-      );
-
-      // Get unique completer IDs
-      const completerIds = [...new Set((logs || []).map(l => l.completed_by))];
-      if (completerIds.length === 0) return chores;
-
-      // Get user emails from household_members
-      const { data: members } = await timed(
-        sb.from('household_members')
-          .select('user_id, email')
-          .in('user_id', completerIds)
-      );
-
-      // Create map of user_id -> email
-      const emailMap = {};
-      (members || []).forEach(m => {
-        emailMap[m.user_id] = m.email;
-      });
-
-      // Create map of chore_id -> completer email
-      const completerMap = {};
-      (logs || []).forEach(log => {
-        if (!completerMap[log.chore_id] && emailMap[log.completed_by]) {
-          completerMap[log.chore_id] = emailMap[log.completed_by];
-        }
-      });
-
-      // Add completer_email to chores
-      return chores.map(chore => ({
-        ...chore,
-        completer_email: completerMap[chore.id] || null
-      }));
+      // Chores with completed_by_name already have the info we need
+      return chores;
     },
+
     async addChore(chore) {
       const { data, error } = await timed(sb.from('chores').insert(chore).select().single());
       if (error) throw error;
       return data;
     },
+
     async updateChore(id, updates) {
       const { error } = await timed(sb.from('chores').update(updates).eq('id', id));
       if (error) throw error;
     },
+
     async deleteChore(id) {
+      // Delete logs first (foreign key), then chore
+      await timed(sb.from('chore_logs').delete().eq('chore_id', id));
       const { error } = await timed(sb.from('chores').delete().eq('id', id));
       if (error) throw error;
     },
+
     async logChoreCompletion(choreId, householdId, userId, notes) {
       const { error } = await timed(sb.from('chore_logs').insert({ chore_id: choreId, household_id: householdId, completed_by: userId, notes }));
       if (error) throw error;
     },
+
     async markChoreDone(choreId, userId, personName) {
-      // Update chore status and add person's name
       const { error: updateError } = await timed(
         sb.from('chores')
           .update({ status: 'done', completed_by_name: personName })
@@ -284,19 +226,21 @@ window.Hub = window.Hub || {};
       );
       if (updateError) throw updateError;
 
-      // Log completion
       const { data: chore } = await timed(sb.from('chores').select('household_id').eq('id', choreId).single());
       if (chore) {
-        await this.logChoreCompletion(choreId, chore.household_id, userId, `Completed by ${personName}`);
+        await this.logChoreCompletion(choreId, chore.household_id, userId, 'Completed by ' + personName);
       }
     },
+
     async markAlertSeen(userId, alertId, severity) {
       await timed(sb.from('seen_alerts').upsert({ user_id: userId, alert_id: alertId, severity, seen_at: new Date().toISOString() }, { onConflict: 'user_id,alert_id' }));
     },
+
     async isAlertSeen(userId, alertId) {
       const { data } = await timed(sb.from('seen_alerts').select('id').eq('user_id', userId).eq('alert_id', alertId).maybeSingle());
       return !!data;
     },
+
     async logSystem(source, service, status, message, latencyMs) {
       await timed(sb.from('system_logs').insert({ source, service, status, message, latency_ms: latencyMs }).select());
     }
