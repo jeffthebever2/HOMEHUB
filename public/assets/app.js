@@ -257,7 +257,12 @@ Hub.app = {
   async _loadDashboard() {
     Hub.ui.updateDashboardDate();
     Hub.ui.updateDashboardGreeting();
-    Hub.chores.loadDashboard();
+    
+    // Load chores for dashboard
+    if (Hub.chores && typeof Hub.chores.renderDashboard === 'function') {
+      Hub.chores.renderDashboard().catch(e => console.warn('[Dashboard] Chores error:', e));
+    }
+    
     this._loadDashboardWeather();
     
     // Load calendar widget

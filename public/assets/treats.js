@@ -322,5 +322,103 @@ Hub.treats = {
       console.error('[Treats] Error rendering dashboard widget:', e);
       el.innerHTML = '<p class="text-gray-400 text-sm">Error loading dog status</p>';
     }
+  },
+
+  /** Show quick add treat modal */
+  async showQuickAdd() {
+    if (!this.firebaseDb) {
+      this.init();
+      if (!this.firebaseDb) {
+        Hub.ui.toast('Firebase not configured', 'error');
+        return;
+      }
+    }
+
+    try {
+      // Load catalog from Firebase
+      const catalogSnap = await this.firebaseDb.ref('familyData/catalog').once('value');
+      const catalog = catalogSnap.val() || [];
+
+      if (!catalog.length) {
+        Hub.ui.toast('No treats in catalog', 'error');
+        return;
+      }
+
+      // Show modal with treat selection
+      const modal = document.createElement('div');
+      modal.className = 'fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4';
+      modal.innerHTML = `
+        <div class="bg-gray-800 rounded-xl p-6 max-w-md w-full max-h-[80vh] overflow-y-auto">
+          <h3 class="text-xl font-bold mb-4">Add Treat for Barker</h3>
+          <div class="space-y-2 mb-4">
+            ${catalog.map((treat, idx) => `
+              <button 
+                onclick="Hub.treats.addQuickTreat('${treat.id}', '${Hub.utils.esc(treat.name)}', ${treat.kcalPerUnit})"
+                class="w-full text-left px-4 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+              >
+                <div class="font-semibold">${Hub.utils.esc(treat.name)}</div>
+                <div class="text-sm text-gray-400">${treat.kcalPerUnit} cal per ${treat.unitLabel || 'unit'}</div>
+              </button>
+            `).join('')}
+          </div>
+          <button 
+            onclick="this.closest('.fixed').remove()"
+            class="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg"
+          >
+            Cancel
+          </button>
+        </div>
+      `;
+      document.body.appendChild(modal);
+    } catch (e) {
+      console.error('[Treats] Error showing quick add:', e);
+      Hub.ui.toast('Error loading treats', 'error');
+    }
+  },
+
+  /** Add a quick treat (default quantity 1) */
+  async addQuickTreat(treatId, treatName, calories) {
+    try {
+      // Get current items
+      const itemsSnap = await this.firebaseDb.ref('familyData/items').once('value');
+      const items = itemsSnap.val() || [];
+
+      // Find the treat in catalog for full details
+      const catalogSnap = await this.firebaseDb.ref('familyData/catalog').once('value');
+      const catalog = catalogSnap.val() || [];
+      const treat = catalog.find(t => t.id === treatId);
+
+      if (!treat) {
+        Hub.ui.toast('Treat not found', 'error');
+        return;
+      }
+
+      // Add new item
+      const newItem = {
+        id: Date.now().toString(),
+        catalogId: treatId,
+        name: treatName,
+        kcalPerUnit: calories,
+        qty: 1,
+        unitLabel: treat.unitLabel || 'unit',
+        step: treat.step || 1,
+        type: 'catalog',
+        imageUrl: treat.imageUrl || ''
+      };
+
+      items.push(newItem);
+      await this.firebaseDb.ref('familyData/items').set(items);
+
+      // Close modal
+      document.querySelectorAll('.fixed.inset-0').forEach(m => m.remove());
+
+      // Refresh dashboard
+      await this.renderDashboardWidget();
+      
+      Hub.ui.toast(`Added ${treatName} for Barker!`, 'success');
+    } catch (e) {
+      console.error('[Treats] Error adding treat:', e);
+      Hub.ui.toast('Error adding treat', 'error');
+    }
   }
 };

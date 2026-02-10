@@ -275,6 +275,21 @@ window.Hub = window.Hub || {};
       const { error } = await timed(sb.from('chore_logs').insert({ chore_id: choreId, household_id: householdId, completed_by: userId, notes }));
       if (error) throw error;
     },
+    async markChoreDone(choreId, userId, personName) {
+      // Update chore status and add person's name
+      const { error: updateError } = await timed(
+        sb.from('chores')
+          .update({ status: 'done', completed_by_name: personName })
+          .eq('id', choreId)
+      );
+      if (updateError) throw updateError;
+
+      // Log completion
+      const { data: chore } = await timed(sb.from('chores').select('household_id').eq('id', choreId).single());
+      if (chore) {
+        await this.logChoreCompletion(choreId, chore.household_id, userId, `Completed by ${personName}`);
+      }
+    },
     async markAlertSeen(userId, alertId, severity) {
       await timed(sb.from('seen_alerts').upsert({ user_id: userId, alert_id: alertId, severity, seen_at: new Date().toISOString() }, { onConflict: 'user_id,alert_id' }));
     },
