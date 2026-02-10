@@ -216,47 +216,48 @@ window.Hub = window.Hub || {};
       if (error) throw error;
       if (!chores) return [];
 
-      // Get completion logs for done chores
-      const doneChoreIds = chores.filter(c => c.status === 'done').map(c => c.id);
-      if (doneChoreIds.length === 0) return chores;
+      // If chores already have completed_by_name (new schema), just return them
+      // Otherwise try to look up completer from logs
+      const needsLookup = chores.filter(c => c.status === 'done' && !c.completed_by_name);
+      if (needsLookup.length === 0) return chores;
 
-      const { data: logs } = await timed(
-        sb.from('chore_logs')
-          .select('chore_id, completed_by')
-          .in('chore_id', doneChoreIds)
-          .order('completed_at', { ascending: false })
-      );
+      // Try to get completion info from logs for chores without completed_by_name
+      try {
+        const doneIds = needsLookup.map(c => c.id);
+        const { data: logs } = await timed(
+          sb.from('chore_logs')
+            .select('chore_id, completed_by, notes')
+            .in('chore_id', doneIds)
+            .order('completed_at', { ascending: false })
+        );
 
-      // Get unique completer IDs
-      const completerIds = [...new Set((logs || []).map(l => l.completed_by))];
-      if (completerIds.length === 0) return chores;
+        if (logs && logs.length > 0) {
+          // Build map: chore_id -> notes (which contains "Completed by Name")
+          const notesMap = {};
+          logs.forEach(function (log) {
+            if (!notesMap[log.chore_id] && log.notes) {
+              notesMap[log.chore_id] = log.notes;
+            }
+          });
 
-      // Get user emails from household_members
-      const { data: members } = await timed(
-        sb.from('household_members')
-          .select('user_id, email')
-          .in('user_id', completerIds)
-      );
-
-      // Create map of user_id -> email
-      const emailMap = {};
-      (members || []).forEach(m => {
-        emailMap[m.user_id] = m.email;
-      });
-
-      // Create map of chore_id -> completer email
-      const completerMap = {};
-      (logs || []).forEach(log => {
-        if (!completerMap[log.chore_id] && emailMap[log.completed_by]) {
-          completerMap[log.chore_id] = emailMap[log.completed_by];
+          // Add completer info to chores
+          return chores.map(function (chore) {
+            if (chore.status === 'done' && !chore.completed_by_name && notesMap[chore.id]) {
+              // Extract name from "Completed by Name" note
+              var note = notesMap[chore.id];
+              var match = note.match(/Completed by (.+)/);
+              return Object.assign({}, chore, {
+                completed_by_name: match ? match[1] : null
+              });
+            }
+            return chore;
+          });
         }
-      });
+      } catch (e) {
+        console.warn('[DB] Completer lookup failed (non-critical):', e.message);
+      }
 
-      // Add completer_email to chores
-      return chores.map(chore => ({
-        ...chore,
-        completer_email: completerMap[chore.id] || null
-      }));
+      return chores;
     },
     async addChore(chore) {
       const { data, error } = await timed(sb.from('chores').insert(chore).select().single());
@@ -268,6 +269,8 @@ window.Hub = window.Hub || {};
       if (error) throw error;
     },
     async deleteChore(id) {
+      // Delete logs first (foreign key constraint)
+      await timed(sb.from('chore_logs').delete().eq('chore_id', id));
       const { error } = await timed(sb.from('chores').delete().eq('id', id));
       if (error) throw error;
     },
@@ -276,18 +279,38 @@ window.Hub = window.Hub || {};
       if (error) throw error;
     },
     async markChoreDone(choreId, userId, personName) {
-      // Update chore status and add person's name
-      const { error: updateError } = await timed(
-        sb.from('chores')
-          .update({ status: 'done', completed_by_name: personName })
-          .eq('id', choreId)
-      );
-      if (updateError) throw updateError;
+      // Try updating with completed_by_name (new schema)
+      // Falls back to just status update if column doesn't exist
+      try {
+        const { error: updateError } = await timed(
+          sb.from('chores')
+            .update({ status: 'done', completed_by_name: personName })
+            .eq('id', choreId)
+        );
+        if (updateError) {
+          // Column might not exist — fall back to just status
+          console.warn('[DB] completed_by_name update failed, trying status only:', updateError.message);
+          const { error: fallbackErr } = await timed(
+            sb.from('chores').update({ status: 'done' }).eq('id', choreId)
+          );
+          if (fallbackErr) throw fallbackErr;
+        }
+      } catch (e) {
+        // Last resort: just update status
+        const { error } = await timed(
+          sb.from('chores').update({ status: 'done' }).eq('id', choreId)
+        );
+        if (error) throw error;
+      }
 
       // Log completion
-      const { data: chore } = await timed(sb.from('chores').select('household_id').eq('id', choreId).single());
-      if (chore) {
-        await this.logChoreCompletion(choreId, chore.household_id, userId, `Completed by ${personName}`);
+      try {
+        const { data: chore } = await timed(sb.from('chores').select('household_id').eq('id', choreId).single());
+        if (chore) {
+          await this.logChoreCompletion(choreId, chore.household_id, userId, 'Completed by ' + personName);
+        }
+      } catch (logErr) {
+        console.warn('[DB] Completion log failed (non-critical):', logErr.message);
       }
     },
     async markAlertSeen(userId, alertId, severity) {
