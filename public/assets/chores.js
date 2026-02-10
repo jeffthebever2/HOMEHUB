@@ -9,11 +9,26 @@ Hub.chores = {
   /** Load and render dashboard chores (today's priority) */
   async renderDashboard() {
     const el = Hub.utils.$('dashboardChores');
-    if (!el || !Hub.state.household_id) return;
+    if (!el) {
+      console.warn('[Chores] Dashboard element not found');
+      return;
+    }
+
+    // Wait for household_id if not ready
+    if (!Hub.state.household_id) {
+      console.warn('[Chores] Waiting for household_id...');
+      el.innerHTML = '<p class="text-gray-400 text-sm">Loading chores...</p>';
+      setTimeout(() => this.renderDashboard(), 500);
+      return;
+    }
 
     try {
+      console.log('[Chores] Loading dashboard chores for household:', Hub.state.household_id);
       const chores = await Hub.db.loadChoresWithCompleters(Hub.state.household_id);
+      console.log('[Chores] Loaded', chores.length, 'total chores');
+      
       const today = new Date().getDay(); // 0=Sunday, 1=Monday, etc
+      console.log('[Chores] Today is day:', today);
       
       // Get today's daily chores + this weekday's chores
       const todayChores = chores.filter(c => {
@@ -23,27 +38,29 @@ Hub.chores = {
         return false;
       }).slice(0, 5); // Show first 5
 
+      console.log('[Chores] Found', todayChores.length, 'pending chores for today');
+
       if (!todayChores.length) {
-        el.innerHTML = '<p class="text-gray-400 text-sm">No pending chores for today! 🎉</p>';
+        el.innerHTML = '<p class="text-gray-400 text-sm">No pending chores</p>';
         return;
       }
 
       el.innerHTML = todayChores.map(c => `
-        <div class="flex items-center justify-between py-2 border-b border-gray-700 last:border-0">
-          <div class="flex-1">
-            <p class="text-sm font-medium">${Hub.utils.esc(c.title)}</p>
-            <p class="text-xs text-gray-400">${Hub.utils.esc(c.category || 'General')}</p>
+        <div class="flex items-center justify-between py-3 border-b border-gray-700 last:border-0">
+          <div class="flex-1 min-w-0 pr-3">
+            <p class="text-sm font-semibold truncate">${Hub.utils.esc(c.title)}</p>
+            <p class="text-xs text-gray-500">${Hub.utils.esc(c.category || 'General')}</p>
           </div>
           <button 
             onclick="Hub.chores.quickComplete('${c.id}')" 
-            class="px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded font-semibold transition-colors"
+            class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs rounded-lg font-semibold transition-colors flex-shrink-0"
           >
             Done
           </button>
         </div>
       `).join('');
     } catch (e) {
-      console.error('Dashboard chores error:', e);
+      console.error('[Chores] Dashboard error:', e);
       el.innerHTML = '<p class="text-gray-400 text-sm">Error loading chores</p>';
     }
   },

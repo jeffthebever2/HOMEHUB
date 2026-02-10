@@ -133,75 +133,85 @@
 
     <!-- ========== DASHBOARD ========== -->
     <div id="dashboardPage" class="page">
-      <div class="max-w-7xl mx-auto p-3 sm:p-4 md:p-6">
+      <div class="max-w-7xl mx-auto p-4 md:p-6">
         <!-- Header -->
-        <header class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <header class="mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div>
-            <h1 class="text-3xl sm:text-4xl md:text-5xl font-bold">🏠 Home Hub</h1>
-            <p class="text-gray-400 mt-1 text-sm" id="dashboardDate"></p>
-            <p class="text-blue-400 text-sm mt-1" id="dashboardGreeting"></p>
+            <h1 class="text-4xl md:text-5xl font-bold">🏠 Home Hub</h1>
+            <p class="text-gray-400 mt-2 text-base" id="dashboardDate"></p>
+            <p class="text-blue-400 text-base mt-1" id="dashboardGreeting"></p>
           </div>
           <div class="flex flex-wrap gap-2">
-            <button onclick="Hub.router.go('standby')" class="btn btn-secondary text-sm py-2 px-3">🖥 Standby</button>
-            <button onclick="Hub.router.go('status')" class="btn btn-secondary text-sm py-2 px-3">📊 Status</button>
-            <button onclick="Hub.router.go('settings')" class="btn btn-secondary text-sm py-2 px-3">⚙️ Settings</button>
-            <button id="btnSignOut" class="btn btn-secondary text-sm py-2 px-3">Sign Out</button>
+            <button onclick="Hub.router.go('standby')" class="btn btn-secondary text-sm py-2 px-4">🖥 Standby</button>
+            <button onclick="Hub.router.go('status')" class="btn btn-secondary text-sm py-2 px-4">📊 Status</button>
+            <button onclick="Hub.router.go('settings')" class="btn btn-secondary text-sm py-2 px-4">⚙️ Settings</button>
+            <button id="btnSignOut" class="btn btn-secondary text-sm py-2 px-4">Sign Out</button>
           </div>
         </header>
 
-        <!-- Main Grid - Responsive -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <!-- Main Grid - 2 Column Layout -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
           
-          <!-- Calendar Widget - Full width on mobile, 2 cols on larger -->
-          <div class="card md:col-span-2 lg:col-span-2">
-            <div id="calendarWidget">
-              <p class="text-gray-400 text-sm">Loading calendar...</p>
+          <!-- Left Column -->
+          <div class="space-y-6">
+            
+            <!-- Calendar Widget -->
+            <div class="card">
+              <div id="calendarWidget">
+                <p class="text-gray-400 text-sm">Loading calendar...</p>
+              </div>
             </div>
+
+            <!-- Weather Card -->
+            <div class="card">
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold">☀️ Weather</h2>
+                <button onclick="Hub.router.go('weather')" class="text-blue-400 hover:text-blue-300 text-sm">
+                  Full Forecast →
+                </button>
+              </div>
+              <div id="dashboardWeather">
+                <p class="text-gray-400 text-sm">Loading weather…</p>
+              </div>
+            </div>
+
+          </div>
+          
+          <!-- Right Column -->
+          <div class="space-y-6">
+            
+            <!-- Dog Treat Status Widget -->
+            <div class="card">
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="font-bold text-xl">🐕 Barker</h3>
+                <button onclick="Hub.treats.showQuickAdd()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg font-semibold transition-colors">
+                  + Treat
+                </button>
+              </div>
+              <div id="dogStatusWidget">
+                <p class="text-gray-400 text-sm">Loading...</p>
+              </div>
+            </div>
+
+            <!-- Chores Preview -->
+            <div class="card">
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold">Today's Chores</h2>
+                <button onclick="Hub.router.go('chores')" class="text-blue-400 hover:text-blue-300 text-sm">
+                  View All →
+                </button>
+              </div>
+              <div id="dashboardChores" class="space-y-2">
+                <p class="text-gray-400 text-sm">Loading chores...</p>
+              </div>
+            </div>
+
           </div>
 
-          <!-- Dog Treat Status Widget -->
-          <div class="card">
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="font-bold text-lg">🐕 Barker</h3>
-              <button onclick="Hub.treats.showQuickAdd()" class="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-lg font-semibold transition-colors">
-                + Treat
-              </button>
-            </div>
-            <div id="dogStatusWidget">
-              <p class="text-gray-400 text-sm">Loading...</p>
-            </div>
-          </div>
-
-          <!-- Weather Card - Full width on small, 2 cols on md -->
-          <div class="card md:col-span-2">
-            <div class="flex items-center justify-between mb-3">
-              <h2 class="text-xl font-bold">🌤️ Weather</h2>
-              <button onclick="Hub.router.go('weather')" class="text-blue-400 hover:text-blue-300 text-sm">
-                Full Forecast →
-              </button>
-            </div>
-            <div id="dashboardWeather">
-              <p class="text-gray-400 text-sm">Loading weather…</p>
-            </div>
-          </div>
-
-          <!-- Chores Preview -->
-          <div class="card">
-            <div class="flex items-center justify-between mb-3">
-              <h2 class="text-lg font-bold">Today's Chores</h2>
-              <button onclick="Hub.router.go('chores')" class="text-blue-400 hover:text-blue-300 text-sm">
-                View All →
-              </button>
-            </div>
-            <div id="dashboardChores">
-              <p class="text-gray-400 text-sm">No pending chores</p>
-            </div>
-          </div>
-
-          <!-- Immich Photos Widget - Full width on small, spans appropriately on larger -->
-          <div class="card md:col-span-2 lg:col-span-3">
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="font-bold text-lg">📸 Family Photos</h3>
+          <!-- Photos Widget - Full Width -->
+          <div class="card lg:col-span-2">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-bold text-xl">📸 Family Photos</h3>
             </div>
             <div id="immichDashboardWidget" class="min-h-[200px]">
               <p class="text-gray-400 text-sm text-center py-8">Loading photos...</p>
