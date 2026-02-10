@@ -10,7 +10,7 @@ Hub.immich = {
 
   // IMGUR ALBUM CONFIGURATION
   _imgurConfig: {
-    albumId: '1siWAzN',
+    albumId: 'kAG2MS3',
     useImgur: true
   },
 
