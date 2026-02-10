@@ -191,11 +191,11 @@ Hub.immich = {
     // Show first photo immediately
     this._showStandbyPhoto();
 
-    // Rotate every 15 seconds
+    // Rotate every 30 seconds (longer for smaller photo collection)
     this._photoRotateInterval = setInterval(() => {
       this._currentPhotoIndex = (this._currentPhotoIndex + 1) % this._images.length;
       this._showStandbyPhoto();
-    }, 15000);
+    }, 30000); // 30 seconds
 
     console.log('[Immich] Slideshow started with', images.length, 'photos');
   },

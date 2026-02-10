@@ -200,127 +200,117 @@ Hub.treats = {
     }
 
     try {
-      // Load dogs
-      const snapshot = await this.firebaseDb.ref('dogs').once('value');
-      this.dogs = snapshot.val() || {};
-      const dogIds = Object.keys(this.dogs);
-
-      if (dogIds.length === 0) {
-        el.innerHTML = '<p class="text-gray-400 text-sm">No dogs tracked yet</p>';
+      // Load Barker's data from familyData
+      const snapshot = await this.firebaseDb.ref('familyData').once('value');
+      const familyData = snapshot.val();
+      
+      if (!familyData || !familyData.settings) {
+        el.innerHTML = '<p class="text-gray-400 text-sm">No dog data yet</p>';
         return;
       }
 
-      // Get status for each dog
-      const statuses = await Promise.all(dogIds.map(async (dogId) => {
-        const dog = this.dogs[dogId];
-        const treatsSnapshot = await this.firebaseDb.ref(`treats/${dogId}`).once('value');
-        const allTreats = treatsSnapshot.val() || {};
-        const todayStart = Hub.utils.todayStart();
+      const dogName = familyData.settings.dogName || 'Barker';
+      const limit = familyData.settings.goalKcal || 1800;
+      
+      // Calculate today's calories from items
+      const items = familyData.items || [];
+      const totalCal = items.reduce((sum, item) => {
+        const calories = (item.kcalPerUnit || 0) * (item.qty || 0);
+        return sum + calories;
+      }, 0);
+      
+      const percent = Math.round((totalCal / limit) * 100);
 
-        // Calculate today's calories
-        const todayTreats = Object.entries(allTreats)
-          .filter(([_, t]) => t.timestamp >= todayStart);
-        const totalCal = todayTreats.reduce((s, [_, t]) => s + (t.calories || 0), 0);
-        const limit = dog.dailyCalorieLimit || 1000;
-        const percent = Math.round((totalCal / limit) * 100);
-        const isOnTrack = percent <= 100;
+      // Color changes: green -> yellow -> orange -> red
+      let gaugeColor, statusText, statusIcon;
+      if (percent <= 50) {
+        gaugeColor = '#22c55e'; // Green
+        statusText = 'Great!';
+        statusIcon = '✓';
+      } else if (percent <= 75) {
+        gaugeColor = '#84cc16'; // Light green
+        statusText = 'Good';
+        statusIcon = '✓';
+      } else if (percent <= 90) {
+        gaugeColor = '#f59e0b'; // Orange
+        statusText = 'Getting Close';
+        statusIcon = '⚠';
+      } else if (percent <= 100) {
+        gaugeColor = '#fb923c'; // Dark orange
+        statusText = 'Almost There';
+        statusIcon = '⚠';
+      } else {
+        gaugeColor = '#ef4444'; // Red
+        statusText = 'Over Limit!';
+        statusIcon = '✗';
+      }
 
-        return { dog, totalCal, limit, percent, isOnTrack };
-      }));
+      // Calculate arc for circular gauge
+      const radius = 45;
+      const circumference = 2 * Math.PI * radius;
+      const strokeDashoffset = circumference - (Math.min(percent, 100) / 100) * circumference;
 
-      // Render circular gauges for all dogs
-      el.innerHTML = statuses.map(({ dog, totalCal, limit, percent, isOnTrack }) => {
-        // Color changes: green -> yellow -> orange -> red
-        let gaugeColor, statusText, statusIcon;
-        if (percent <= 50) {
-          gaugeColor = '#22c55e'; // Green
-          statusText = 'Great!';
-          statusIcon = '✓';
-        } else if (percent <= 75) {
-          gaugeColor = '#84cc16'; // Light green
-          statusText = 'Good';
-          statusIcon = '✓';
-        } else if (percent <= 90) {
-          gaugeColor = '#f59e0b'; // Orange
-          statusText = 'Getting Close';
-          statusIcon = '⚠';
-        } else if (percent <= 100) {
-          gaugeColor = '#fb923c'; // Dark orange
-          statusText = 'Almost There';
-          statusIcon = '⚠';
-        } else {
-          gaugeColor = '#ef4444'; // Red
-          statusText = 'Over Limit!';
-          statusIcon = '✗';
-        }
-
-        // Calculate arc for circular gauge
-        const radius = 45;
-        const circumference = 2 * Math.PI * radius;
-        const strokeDashoffset = circumference - (Math.min(percent, 100) / 100) * circumference;
-
-        return `
-          <div class="mb-4 last:mb-0">
-            <!-- Dog name and status -->
-            <div class="flex items-center justify-between mb-3">
-              <span class="font-semibold text-base">${Hub.utils.esc(dog.name)}</span>
-              <span class="text-xs font-bold" style="color: ${gaugeColor};">${statusIcon} ${statusText}</span>
-            </div>
+      el.innerHTML = `
+        <div>
+          <!-- Dog name and status -->
+          <div class="flex items-center justify-between mb-3">
+            <span class="font-semibold text-base">${Hub.utils.esc(dogName)}</span>
+            <span class="text-xs font-bold" style="color: ${gaugeColor};">${statusIcon} ${statusText}</span>
+          </div>
+          
+          <!-- Circular gauge -->
+          <div class="flex items-center gap-4">
+            <!-- SVG Gauge -->
+            <svg class="transform -rotate-90" width="120" height="120" viewBox="0 0 120 120">
+              <!-- Background circle -->
+              <circle
+                cx="60"
+                cy="60"
+                r="${radius}"
+                stroke="#374151"
+                stroke-width="10"
+                fill="none"
+              />
+              <!-- Progress arc -->
+              <circle
+                cx="60"
+                cy="60"
+                r="${radius}"
+                stroke="${gaugeColor}"
+                stroke-width="10"
+                fill="none"
+                stroke-linecap="round"
+                style="
+                  stroke-dasharray: ${circumference};
+                  stroke-dashoffset: ${strokeDashoffset};
+                  transition: stroke-dashoffset 0.5s ease, stroke 0.5s ease;
+                "
+              />
+              <!-- Center text -->
+              <text
+                x="60"
+                y="60"
+                text-anchor="middle"
+                dominant-baseline="middle"
+                class="transform rotate-90"
+                style="
+                  font-size: 24px;
+                  font-weight: 700;
+                  fill: ${gaugeColor};
+                  transform-origin: 60px 60px;
+                "
+              >${percent}%</text>
+            </svg>
             
-            <!-- Circular gauge -->
-            <div class="flex items-center gap-4">
-              <!-- SVG Gauge -->
-              <svg class="transform -rotate-90" width="120" height="120" viewBox="0 0 120 120">
-                <!-- Background circle -->
-                <circle
-                  cx="60"
-                  cy="60"
-                  r="${radius}"
-                  stroke="#374151"
-                  stroke-width="10"
-                  fill="none"
-                />
-                <!-- Progress arc -->
-                <circle
-                  cx="60"
-                  cy="60"
-                  r="${radius}"
-                  stroke="${gaugeColor}"
-                  stroke-width="10"
-                  fill="none"
-                  stroke-linecap="round"
-                  style="
-                    stroke-dasharray: ${circumference};
-                    stroke-dashoffset: ${strokeDashoffset};
-                    transition: stroke-dashoffset 0.5s ease, stroke 0.5s ease;
-                  "
-                />
-                <!-- Center text -->
-                <text
-                  x="60"
-                  y="60"
-                  text-anchor="middle"
-                  dominant-baseline="middle"
-                  class="transform rotate-90"
-                  style="
-                    font-size: 24px;
-                    font-weight: 700;
-                    fill: ${gaugeColor};
-                    transform-origin: 60px 60px;
-                  "
-                >${percent}%</text>
-              </svg>
-              
-              <!-- Stats -->
-              <div class="flex-1">
-                <p class="text-sm font-semibold mb-1">${totalCal} / ${limit} cal</p>
-                <p class="text-xs text-gray-400">Daily limit</p>
-                ${percent > 100 ? `<p class="text-xs font-bold mt-1" style="color: ${gaugeColor};">+${totalCal - limit} over!</p>` : ''}
-              </div>
+            <!-- Stats -->
+            <div class="flex-1">
+              <p class="text-sm font-semibold mb-1">${Math.round(totalCal)} / ${limit} cal</p>
+              <p class="text-xs text-gray-400">Daily limit</p>
+              ${percent > 100 ? `<p class="text-xs font-bold mt-1" style="color: ${gaugeColor};">+${Math.round(totalCal - limit)} over!</p>` : ''}
             </div>
           </div>
-        `;
-      }).join('');
+        </div>
+      `;
 
     } catch (e) {
       console.error('[Treats] Error rendering dashboard widget:', e);

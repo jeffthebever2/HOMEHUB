@@ -16,6 +16,20 @@
   <script src="https://www.gstatic.com/firebasejs/10.7.2/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.2/firebase-auth-compat.js"></script>
 
+  <!-- Firebase Config for Dog Tracker -->
+  <script>
+    window.HOME_HUB_CONFIG = window.HOME_HUB_CONFIG || {};
+    window.HOME_HUB_CONFIG.firebase = {
+      apiKey: "AIzaSyBISAQF9xw2ifb9HllNj4LniyMLD6OhclU",
+      authDomain: "dog-calorie-counter.firebaseapp.com",
+      databaseURL: "https://dog-calorie-counter-default-rtdb.firebaseio.com",
+      projectId: "dog-calorie-counter",
+      storageBucket: "dog-calorie-counter.firebasestorage.app",
+      messagingSenderId: "835874316228",
+      appId: "1:835874316228:web:cbebd7e0ad3b071352ce91"
+    };
+  </script>
+
   <!-- App config (must come before app scripts) -->
   <script src="config.js"></script>
 
@@ -188,9 +202,6 @@
           <div class="card md:col-span-2 lg:col-span-3">
             <div class="flex items-center justify-between mb-3">
               <h3 class="font-bold text-lg">📸 Family Photos</h3>
-              <button onclick="Hub.immich.refreshPhotos()" class="text-blue-400 hover:text-blue-300 text-xs">
-                Refresh
-              </button>
             </div>
             <div id="immichDashboardWidget" class="min-h-[200px]">
               <p class="text-gray-400 text-sm text-center py-8">Loading photos...</p>
@@ -209,21 +220,21 @@
       </div>
       
       <!-- Dark overlay for readability -->
-      <div class="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-black/30"></div>
+      <div class="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/20"></div>
       
       <!-- Content overlay - responsive -->
-      <div class="relative z-10 min-h-screen p-4 sm:p-6 md:p-8 flex flex-col" id="standbyContent">
+      <div class="relative z-10 min-h-screen p-4 sm:p-6 md:p-8 flex flex-col justify-end" id="standbyContent">
         
-        <!-- Top: Date and Time - centered -->
-        <div class="flex-1 flex flex-col items-center justify-center text-center">
+        <!-- Time and Date - Bottom Left Corner -->
+        <div class="mb-4">
           <!-- Clock -->
-          <div id="standbyClock" class="text-6xl sm:text-7xl md:text-8xl lg:text-9xl font-bold tracking-tight mb-2 md:mb-4"></div>
+          <div id="standbyClock" class="text-5xl sm:text-6xl md:text-7xl font-bold tracking-tight mb-1"></div>
           <!-- Date -->
-          <div id="standbyDate" class="text-lg sm:text-xl md:text-2xl text-gray-300 font-light"></div>
+          <div id="standbyDate" class="text-base sm:text-lg md:text-xl text-gray-300 font-light"></div>
         </div>
 
-        <!-- Bottom: Info Cards - compact and responsive -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 max-w-6xl mx-auto w-full">
+        <!-- Info Cards - compact and responsive -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 max-w-6xl w-full mb-4">
           
           <!-- Calendar Events - compact -->
           <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10">
