@@ -1,6 +1,6 @@
 // HOME HUB CONFIGURATION
 // Edit these values with your actual credentials before deploying.
-// Weather API keys and AI keys are NOT stored here — they go in Vercel env vars.
+// Weather API keys and AI keys are NOT stored here — they go in Cloudflare env vars.
 
 window.HOME_HUB_CONFIG = {
   // === SUPABASE (Required) ===
@@ -25,6 +25,10 @@ window.HOME_HUB_CONFIG = {
     lon: -82.863462
   },
 
-  // === API BASE (leave empty for same-origin Vercel Functions) ===
+  // === IMMICH (Optional — for standby photo collage) ===
+  immichBaseUrl: '',                    // e.g. http://192.168.1.100:2283
+  immichSharedAlbumKeyOrToken: '',      // shared link key or API token
+
+  // === API BASE (leave empty for same-origin Cloudflare Pages Functions) ===
   apiBase: ''
 };

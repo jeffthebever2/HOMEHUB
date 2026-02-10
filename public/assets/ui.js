@@ -34,8 +34,10 @@ Hub.ui = {
     const s = Hub.state.settings || {};
     const isQuiet = Hub.utils.isQuietHours(s.quiet_hours_start, s.quiet_hours_end);
 
+    // During quiet hours, suppress popup unless severity is "warning"
     if (isQuiet && alertData.severity !== 'warning') return;
 
+    // Check if already seen
     const alertId = alertData.banner_text || 'unknown';
     if (Hub.state.user) {
       const seen = await Hub.db.isAlertSeen(Hub.state.user.id, alertId);
@@ -55,10 +57,10 @@ Hub.ui = {
     }
   },
 
-  /** Toast notification */
+  /** Render a simple toast message */
   toast(msg, type) {
     const el = document.createElement('div');
-    el.style.cssText = 'position:fixed;bottom:2rem;left:50%;transform:translateX(-50%);z-index:100;padding:.75rem 1.5rem;border-radius:.5rem;font-weight:500;transition:opacity .3s;max-width:90vw;text-align:center;';
+    el.style.cssText = 'position:fixed;bottom:2rem;left:50%;transform:translateX(-50%);z-index:100;padding:.75rem 1.5rem;border-radius:.5rem;font-weight:500;transition:opacity .3s;';
     el.style.background = type === 'error' ? '#ef4444' : '#10b981';
     el.style.color = '#fff';
     el.textContent = msg;
@@ -83,7 +85,8 @@ Hub.ui = {
       let greeting = 'Good morning';
       if (hour >= 12 && hour < 17) greeting = 'Good afternoon';
       else if (hour >= 17) greeting = 'Good evening';
-      el.textContent = greeting + ', ' + firstName + '!';
+      
+      el.textContent = `${greeting}, ${firstName}! 👋`;
     } else {
       el.textContent = '';
     }

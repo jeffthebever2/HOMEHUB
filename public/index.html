@@ -16,6 +16,20 @@
   <script src="https://www.gstatic.com/firebasejs/10.7.2/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.2/firebase-auth-compat.js"></script>
 
+  <!-- Firebase Config for Dog Tracker -->
+  <script>
+    window.HOME_HUB_CONFIG = window.HOME_HUB_CONFIG || {};
+    window.HOME_HUB_CONFIG.firebase = {
+      apiKey: "AIzaSyBISAQF9xw2ifb9HllNj4LniyMLD6OhclU",
+      authDomain: "dog-calorie-counter.firebaseapp.com",
+      databaseURL: "https://dog-calorie-counter-default-rtdb.firebaseio.com",
+      projectId: "dog-calorie-counter",
+      storageBucket: "dog-calorie-counter.firebasestorage.app",
+      messagingSenderId: "835874316228",
+      appId: "1:835874316228:web:cbebd7e0ad3b071352ce91"
+    };
+  </script>
+
   <!-- App config (must come before app scripts) -->
   <script src="config.js"></script>
 
@@ -33,6 +47,9 @@
     .hidden { display: none !important; }
     .page { display: none; } .page.active { display: block; }
     .standby-clock { font-variant-numeric: tabular-nums; letter-spacing: -.05em; }
+    .photo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+    .photo-item { aspect-ratio: 16/9; background: #1f2937; border-radius: .5rem; overflow: hidden; }
+    .photo-item img { width: 100%; height: 100%; object-fit: cover; transition: opacity 1s; }
     .alert-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 50; padding: .75rem 1rem; text-align: center; font-weight: 700; }
     .alert-banner.warning { background: #ef4444; } .alert-banner.watch { background: #f59e0b; color: #000; } .alert-banner.advisory { background: #eab308; color: #000; }
     .status-dot { display: inline-block; width: .75rem; height: .75rem; border-radius: 50%; }
@@ -41,14 +58,10 @@
     .progress-bar { height: 1rem; background: #374151; border-radius: 9999px; overflow: hidden; }
     .progress-fill { height: 100%; border-radius: 9999px; transition: width .4s; }
     select.input { appearance: auto; }
-
-    /* Skeleton shimmer loading */
-    .skeleton { background: linear-gradient(90deg, #1f2937 25%, #374151 50%, #1f2937 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: .5rem; }
-    @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-
+    
     /* Standby photo transitions */
     #standbyCurrentPhoto { transition: opacity 0.5s ease-in-out; }
-
+    
     /* Responsive utilities */
     @media (max-width: 640px) {
       .card { padding: 1rem; margin-bottom: 1rem; }
@@ -65,6 +78,18 @@
         <p class="text-xl text-gray-400" id="loadingText">Loading Home Hub…</p>
       </div>
     </div>
+    <script>
+      // Instant check: does localStorage have a saved Supabase session?
+      try {
+        const key = Object.keys(localStorage).find(k => k.startsWith('sb-') && k.endsWith('-auth-token'));
+        if (key) {
+          const stored = JSON.parse(localStorage.getItem(key));
+          const email = stored?.user?.email;
+          const el = document.getElementById('loadingText');
+          if (email && el) el.textContent = 'Welcome back, ' + email.split('@')[0] + '! Signing in…';
+        }
+      } catch (e) { /* ignore */ }
+    </script>
 
     <!-- Login Screen -->
     <div id="loginScreen" class="page min-h-screen flex items-center justify-center">
@@ -90,17 +115,6 @@
         <p class="text-gray-400 mb-4">Your account is not authorized.</p>
         <p class="text-gray-500 text-sm mb-8" id="deniedEmail"></p>
         <button id="btnSignOutDenied" class="btn btn-secondary w-full">Sign Out</button>
-      </div>
-    </div>
-
-    <!-- No Household Screen -->
-    <div id="noHouseholdScreen" class="page min-h-screen flex items-center justify-center">
-      <div class="card max-w-md w-full text-center mx-4">
-        <div class="text-7xl mb-6">🏠</div>
-        <h1 class="text-3xl font-bold mb-4">No Household Found</h1>
-        <p class="text-gray-400 mb-4">Your account isn't linked to a household yet.</p>
-        <p class="text-gray-500 text-sm mb-8">Ask the household admin to add your email.</p>
-        <button id="btnSignOutNoHousehold" class="btn btn-secondary w-full">Sign Out</button>
       </div>
     </div>
 
@@ -144,9 +158,7 @@
             <!-- Calendar Widget -->
             <div class="card">
               <div id="calendarWidget">
-                <div class="skeleton h-4 w-32 mb-3"></div>
-                <div class="skeleton h-3 w-full mb-2"></div>
-                <div class="skeleton h-3 w-3/4"></div>
+                <p class="text-gray-400 text-sm">Loading calendar...</p>
               </div>
             </div>
 
@@ -159,13 +171,7 @@
                 </button>
               </div>
               <div id="dashboardWeather">
-                <div class="flex items-center gap-4">
-                  <div class="skeleton h-16 w-16 rounded-full"></div>
-                  <div class="flex-1">
-                    <div class="skeleton h-8 w-24 mb-2"></div>
-                    <div class="skeleton h-3 w-32"></div>
-                  </div>
-                </div>
+                <p class="text-gray-400 text-sm">Loading weather…</p>
               </div>
             </div>
 
@@ -183,8 +189,7 @@
                 </button>
               </div>
               <div id="dogStatusWidget">
-                <div class="skeleton h-4 w-full mb-2"></div>
-                <div class="skeleton h-4 w-3/4"></div>
+                <p class="text-gray-400 text-sm">Loading...</p>
               </div>
             </div>
 
@@ -197,35 +202,51 @@
                 </button>
               </div>
               <div id="dashboardChores" class="space-y-2">
-                <div class="skeleton h-3 w-full mb-2"></div>
-                <div class="skeleton h-3 w-5/6 mb-2"></div>
-                <div class="skeleton h-3 w-4/6"></div>
+                <p class="text-gray-400 text-sm">Loading chores...</p>
               </div>
             </div>
 
           </div>
+
+          <!-- Photos Widget - Full Width -->
+          <div class="card lg:col-span-2">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-bold text-xl">📸 Family Photos</h3>
+            </div>
+            <div id="immichDashboardWidget" class="min-h-[200px]">
+              <p class="text-gray-400 text-sm text-center py-8">Loading photos...</p>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
 
     <!-- ========== STANDBY ========== -->
     <div id="standbyPage" class="page min-h-screen bg-black text-white relative overflow-hidden cursor-pointer">
-      <!-- Dark gradient background -->
-      <div class="absolute inset-0 bg-gradient-to-br from-gray-900 via-black to-gray-900"></div>
+      <!-- Full screen photo background - rotating -->
+      <div id="standbyPhotoBackground" class="absolute inset-0 transition-opacity duration-1000">
+        <img id="standbyCurrentPhoto" class="w-full h-full object-cover" alt="" />
+      </div>
+      
+      <!-- Dark overlay for readability -->
+      <div class="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/20"></div>
       
       <!-- Content overlay - responsive -->
       <div class="relative z-10 min-h-screen p-4 sm:p-6 md:p-8 flex flex-col justify-end" id="standbyContent">
         
         <!-- Time and Date - Bottom Left Corner -->
         <div class="mb-4">
+          <!-- Clock -->
           <div id="standbyClock" class="text-5xl sm:text-6xl md:text-7xl font-bold tracking-tight mb-1"></div>
+          <!-- Date -->
           <div id="standbyDate" class="text-base sm:text-lg md:text-xl text-gray-300 font-light"></div>
         </div>
 
-        <!-- Info Cards -->
+        <!-- Info Cards - compact and responsive -->
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 max-w-6xl w-full mb-4">
           
-          <!-- Calendar Events -->
+          <!-- Calendar Events - compact -->
           <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10">
             <h3 class="text-sm font-semibold mb-2 text-blue-400">📅 Upcoming Events</h3>
             <div id="standbyCalendar" class="space-y-2 text-xs sm:text-sm max-h-32 overflow-hidden">
@@ -233,7 +254,7 @@
             </div>
           </div>
 
-          <!-- Due Chores -->
+          <!-- Due Chores - compact -->
           <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10">
             <h3 class="text-sm font-semibold mb-2 text-green-400">✅ Chores Due</h3>
             <div id="standbyChores" class="space-y-2 text-xs sm:text-sm max-h-32 overflow-hidden">
@@ -241,7 +262,7 @@
             </div>
           </div>
 
-          <!-- Weather -->
+          <!-- Weather - compact -->
           <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10 sm:col-span-2 lg:col-span-1">
             <h3 class="text-sm font-semibold mb-2 text-yellow-400">🌤️ Weather</h3>
             <div id="standbyWeather" class="text-xs sm:text-sm">
@@ -251,7 +272,7 @@
           
         </div>
 
-        <!-- Tap to wake hint -->
+        <!-- Tap to wake hint - always at very bottom -->
         <div class="text-center mt-4 sm:mt-6">
           <p class="text-gray-500 text-xs">Tap anywhere to wake</p>
         </div>
@@ -347,6 +368,15 @@
               <button id="btnUseLocation" class="btn btn-secondary text-sm">📍 Use Current Location</button>
             </div>
           </div>
+          <!-- Immich -->
+          <div class="card">
+            <h2 class="text-xl font-bold mb-4">📸 Immich Photos</h2>
+            <div class="space-y-4">
+              <div><label class="block text-sm font-medium mb-2">Immich Base URL</label><input id="settingImmichUrl" type="url" class="input" placeholder="http://192.168.1.100:2283"></div>
+              <div><label class="block text-sm font-medium mb-2">API Key / Shared Token</label><input id="settingImmichKey" type="password" class="input" placeholder="Your Immich API key or shared link key"></div>
+              <div><label class="block text-sm font-medium mb-2">Album ID</label><input id="settingImmichAlbum" type="text" class="input" placeholder="Shared album ID"></div>
+            </div>
+          </div>
           <!-- Standby -->
           <div class="card">
             <h2 class="text-xl font-bold mb-4">💤 Standby Mode</h2>
@@ -373,41 +403,31 @@
             <h2 class="text-xl font-bold mb-4">📋 What's New</h2>
             <div class="space-y-3 text-sm">
               <div class="border-l-4 border-blue-500 pl-4 py-2">
-                <p class="font-semibold text-blue-400">v2.2.0 - February 10, 2026</p>
+                <p class="font-semibold text-blue-400">v2.0.0 - February 9, 2026</p>
                 <ul class="list-disc pl-5 mt-2 space-y-1 text-gray-400">
-                  <li>🐛 Fixed login → dashboard disappearing (inline style override)</li>
-                  <li>🐛 Fixed "No Household" screen never showing</li>
-                  <li>🐛 Fixed SIGNED_IN event ignored on OAuth redirect</li>
-                  <li>🐛 Fixed legacy chores without day_of_week not appearing on dashboard</li>
-                  <li>⚡ Unified router screen/page transitions</li>
-                  <li>⚡ More robust auth fallback timers</li>
+                  <li>✨ Multi-calendar selection - choose which calendars to display</li>
+                  <li>📅 Automatic Google Calendar permission requests</li>
+                  <li>👤 Personalization - greetings and chore attribution</li>
+                  <li>🌤️ Redesigned weather center with animated radar</li>
+                  <li>🎨 Color-coded calendar indicators</li>
+                  <li>💾 Settings now persist forever</li>
                 </ul>
               </div>
               <div class="border-l-4 border-gray-500 pl-4 py-2">
-                <p class="font-semibold text-gray-300">v2.1.0 - February 10, 2026</p>
+                <p class="font-semibold text-gray-300">v1.5.0 - February 8, 2026</p>
                 <ul class="list-disc pl-5 mt-2 space-y-1 text-gray-400">
-                  <li>🐛 Fixed chores not loading / duplicate code bug</li>
-                  <li>🐛 Fixed Sunday chores never showing on dashboard</li>
-                  <li>✨ Added daily progress bar to dashboard chores</li>
-                  <li>✨ Category selector on new chore creation</li>
-                  <li>🔒 Removed test bypass and hardcoded fallbacks</li>
-                  <li>🧹 Removed Immich integration (unused)</li>
-                  <li>⚡ Loading skeleton animations</li>
-                </ul>
-              </div>
-              <div class="border-l-4 border-gray-500 pl-4 py-2">
-                <p class="font-semibold text-gray-300">v2.0.0 - February 9, 2026</p>
-                <ul class="list-disc pl-5 mt-2 space-y-1 text-gray-400">
-                  <li>Multi-calendar selection</li>
-                  <li>Personalization & chore attribution</li>
-                  <li>Redesigned weather center with animated radar</li>
-                  <li>Color-coded calendar indicators</li>
+                  <li>Fixed navigation tabs</li>
+                  <li>Added standby mode improvements</li>
+                  <li>Google Calendar integration</li>
                 </ul>
               </div>
               <div class="border-l-4 border-gray-500 pl-4 py-2">
                 <p class="font-semibold text-gray-300">v1.0.0 - January 2026</p>
                 <ul class="list-disc pl-5 mt-2 space-y-1 text-gray-400">
                   <li>Initial release</li>
+                  <li>Chores tracking</li>
+                  <li>Dog treat tracker</li>
+                  <li>Weather integration</li>
                 </ul>
               </div>
             </div>
@@ -419,9 +439,15 @@
             <div class="space-y-3 text-sm">
               <p class="text-gray-400">Your settings and data are stored securely and persist indefinitely while your account is active.</p>
               <div class="flex flex-wrap gap-4">
-                <a href="/privacy.html" target="_blank" class="text-blue-400 hover:text-blue-300 underline">📜 Privacy Policy</a>
-                <a href="/tos.html" target="_blank" class="text-blue-400 hover:text-blue-300 underline">📋 Terms of Service</a>
-                <a href="https://myaccount.google.com/permissions" target="_blank" class="text-blue-400 hover:text-blue-300 underline">🔐 Manage Google Permissions</a>
+                <a href="/privacy.html" target="_blank" class="text-blue-400 hover:text-blue-300 underline">
+                  📜 Privacy Policy
+                </a>
+                <a href="/tos.html" target="_blank" class="text-blue-400 hover:text-blue-300 underline">
+                  📋 Terms of Service
+                </a>
+                <a href="https://myaccount.google.com/permissions" target="_blank" class="text-blue-400 hover:text-blue-300 underline">
+                  🔐 Manage Google Permissions
+                </a>
               </div>
               <p class="text-xs text-gray-500 mt-3">
                 Home Hub uses Google Calendar API. By using calendar features, you agree to our Terms of Service and Privacy Policy, 
@@ -472,15 +498,10 @@
       <div class="space-y-4">
         <input id="choreTitle" type="text" placeholder="Title" class="input">
         <textarea id="choreDescription" placeholder="Description (optional)" class="input" rows="3"></textarea>
-        <select id="choreCategory" class="input">
-          <option value="Daily">Daily</option>
-          <option value="Monday (Living Room)">Monday (Living Room)</option>
-          <option value="Tuesday (Bathrooms)">Tuesday (Bathrooms)</option>
-          <option value="Wednesday (Entryway)">Wednesday (Entryway)</option>
-          <option value="Thursday (Kitchen)">Thursday (Kitchen)</option>
-          <option value="Friday (Bedrooms)">Friday (Bedrooms)</option>
-          <option value="Saturday (Miscellaneous)">Saturday (Miscellaneous)</option>
-          <option value="Sunday (Grocery/Family)">Sunday (Grocery/Family)</option>
+        <select id="chorePriority" class="input">
+          <option value="low">Low Priority</option>
+          <option value="medium" selected>Medium Priority</option>
+          <option value="high">High Priority</option>
         </select>
         <div class="flex gap-3">
           <button id="btnSaveChore" class="btn btn-primary flex-1">Create Chore</button>
@@ -501,6 +522,7 @@
   <script src="assets/treats.js"></script>
   <script src="assets/chores.js"></script>
   <script src="assets/standby.js"></script>
+  <script src="assets/immich.js"></script>
   <script src="assets/app.js"></script>
 </body>
 </html>

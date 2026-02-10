@@ -5,15 +5,18 @@ window.Hub = window.Hub || {};
 
 Hub.standby = {
   _clockInterval: null,
+  _weatherInterval: null,
   _dataInterval: null,
 
   /** Start standby mode */
   start() {
-    console.log('[Standby] Starting');
+    console.log('[Standby] Starting standby mode');
     
+    // Update clock immediately and every second
     this._updateClock();
     this._clockInterval = setInterval(() => this._updateClock(), 1000);
 
+    // Load initial data
     this._loadWeather();
     this._loadCalendar();
     this._loadChores();
@@ -25,22 +28,27 @@ Hub.standby = {
       this._loadChores();
     }, 300000);
 
+    // Start photo slideshow
+    Hub.immich.startStandbySlideshow();
+
     // Wake on interaction
     const wake = () => {
       this.stop();
       Hub.router.go('dashboard');
     };
-    const content = Hub.utils.$('standbyContent');
-    if (content) content.onclick = wake;
+    Hub.utils.$('standbyContent').onclick = wake;
   },
 
   /** Stop standby mode */
   stop() {
-    console.log('[Standby] Stopping');
+    console.log('[Standby] Stopping standby mode');
     clearInterval(this._clockInterval);
     clearInterval(this._dataInterval);
     this._clockInterval = null;
     this._dataInterval = null;
+    
+    // Stop photo slideshow
+    Hub.immich.stopStandbySlideshow();
   },
 
   /** Update clock display */
@@ -50,10 +58,18 @@ Hub.standby = {
     const dateEl = Hub.utils.$('standbyDate');
     
     if (clockEl) {
-      clockEl.textContent = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      clockEl.textContent = now.toLocaleTimeString('en-US', { 
+        hour: 'numeric', 
+        minute: '2-digit'
+      });
     }
+    
     if (dateEl) {
-      dateEl.textContent = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+      dateEl.textContent = now.toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        month: 'long', 
+        day: 'numeric'
+      });
     }
   },
 
@@ -98,7 +114,9 @@ Hub.standby = {
         return;
       }
 
-      el.innerHTML = events.slice(0, 3).map(event => {
+      // Show next 3 events
+      const limitedEvents = events.slice(0, 3);
+      el.innerHTML = limitedEvents.map(event => {
         const start = event.start.dateTime || event.start.date;
         const startDate = new Date(start);
         const isToday = Hub.calendar._isToday(startDate);
@@ -135,25 +153,29 @@ Hub.standby = {
 
     try {
       const chores = await Hub.db.loadChoresWithCompleters(Hub.state.household_id);
-      const today = new Date().getDay();
-      const pending = chores.filter(c => {
-        if (c.status === 'done') return false;
-        if (c.category === 'Daily') return true;
-        if (c.day_of_week === today) return true;
-        return false;
-      });
+      const pending = chores.filter(c => c.status === 'pending');
       
       if (pending.length === 0) {
         el.innerHTML = '<p class="text-gray-500">All caught up! 🎉</p>';
         return;
       }
 
-      el.innerHTML = pending.slice(0, 4).map(chore => `
-        <div class="flex items-center gap-2">
-          <span class="text-gray-400">•</span>
-          <p class="flex-1 truncate">${Hub.utils.esc(chore.title)}</p>
-        </div>
-      `).join('');
+      // Show first 4 pending chores
+      const limited = pending.slice(0, 4);
+      el.innerHTML = limited.map(chore => {
+        const priorityColor = {
+          high: 'text-red-400',
+          medium: 'text-yellow-400',
+          low: 'text-gray-400'
+        }[chore.priority] || 'text-gray-400';
+
+        return `
+          <div class="flex items-center gap-2">
+            <span class="${priorityColor}">•</span>
+            <p class="flex-1 truncate">${Hub.utils.esc(chore.title)}</p>
+          </div>
+        `;
+      }).join('');
 
       if (pending.length > 4) {
         el.innerHTML += `<p class="text-xs text-gray-500 mt-1">+${pending.length - 4} more</p>`;

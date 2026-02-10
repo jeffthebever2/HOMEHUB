@@ -51,6 +51,9 @@ export default async function handler(req, res) {
     results.ai = { status: 'error', error: e.message, latency_ms: Date.now() - aiStart };
   }
 
+  // 4. Immich
+  results.immich = { status: 'ok', note: 'User-configured, proxied on demand' };
+
   return res.status(200).json({
     ok: true,
     timestamp: new Date().toISOString(),
