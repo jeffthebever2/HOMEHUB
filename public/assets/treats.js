@@ -211,14 +211,20 @@ Hub.treats = {
 
       const dogName = familyData.settings.dogName || 'Barker';
       const limit = familyData.settings.goalKcal || 1800;
+      const cups = familyData.settings.cups || 4;
+      const kcalPerCup = familyData.settings.kcalPerCup || 384;
       
-      // Calculate today's calories from items
+      // Calculate food calories (cups × calories per cup)
+      const foodCalories = cups * kcalPerCup;
+      
+      // Calculate treats from items (these should be automatically added by recurring treats)
       const items = familyData.items || [];
-      const totalCal = items.reduce((sum, item) => {
+      const treatCalories = items.reduce((sum, item) => {
         const calories = (item.kcalPerUnit || 0) * (item.qty || 0);
         return sum + calories;
       }, 0);
       
+      const totalCal = foodCalories + treatCalories;
       const percent = Math.round((totalCal / limit) * 100);
 
       // Color changes: green -> yellow -> orange -> red
@@ -305,7 +311,7 @@ Hub.treats = {
             <!-- Stats -->
             <div class="flex-1">
               <p class="text-sm font-semibold mb-1">${Math.round(totalCal)} / ${limit} cal</p>
-              <p class="text-xs text-gray-400">Daily limit</p>
+              <p class="text-xs text-gray-400">Food: ${foodCalories} + Treats: ${Math.round(treatCalories)}</p>
               ${percent > 100 ? `<p class="text-xs font-bold mt-1" style="color: ${gaugeColor};">+${Math.round(totalCal - limit)} over!</p>` : ''}
             </div>
           </div>
