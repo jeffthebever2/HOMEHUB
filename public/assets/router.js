@@ -7,7 +7,8 @@ window.Hub = window.Hub || {};
 
 Hub.router = {
   current: 'dashboard',
-  VALID_PAGES: ['dashboard', 'standby', 'weather', 'chores', 'treats', 'settings', 'status'],
+  // NOTE: 'control' is intentionally hidden from the UI (secret/admin-only entry)
+  VALID_PAGES: ['dashboard', 'standby', 'weather', 'chores', 'treats', 'settings', 'status', 'control'],
 
   /** Navigate to a page */
   go(page) {
@@ -68,6 +69,19 @@ Hub.router = {
   /** Activate a page (called after auth check) */
   _activate(page) {
     if (!this.VALID_PAGES.includes(page)) page = 'dashboard';
+
+    // Admin-only gate for hidden control center
+    if (page === 'control' && Hub.state?.userRole !== 'admin') {
+      console.warn('[Router] Blocked control page for non-admin user');
+      try { 
+        Hub.ui?.toast?.('Admin-only page', 'error'); 
+      } catch (e) { 
+        console.warn('[Router] Failed to show toast:', e.message);
+      }
+      page = 'dashboard';
+      // Keep URL consistent so users can't "stick" on /control
+      if (window.location.hash !== '#/dashboard') window.location.hash = '#/dashboard';
+    }
     Hub.router.current = page;
     
     // Force hide all pages

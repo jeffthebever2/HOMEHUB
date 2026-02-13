@@ -49,8 +49,11 @@ CREATE TABLE IF NOT EXISTS user_settings (
   immich_api_key TEXT,
   immich_album_id TEXT,
   calendar_url TEXT,
+  selected_calendars JSONB DEFAULT '["primary"]'::jsonb,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+COMMENT ON COLUMN user_settings.selected_calendars IS 'Array of Google Calendar IDs selected by the user (e.g. ["primary", "work@company.com"])';
 
 CREATE TABLE IF NOT EXISTS chores (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

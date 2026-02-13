@@ -1,0 +1,83 @@
+╔══════════════════════════════════════════════════════════════════╗
+║                                                                  ║
+║              🏠 HOME HUB v2.0.1 - START HERE                     ║
+║                                                                  ║
+╚══════════════════════════════════════════════════════════════════╝
+
+WHAT'S THIS?
+────────────
+This folder contains ALL the fixed files for your Home Hub.
+Everything is organized exactly like your GitHub repository.
+
+
+FASTEST WAY TO DEPLOY (2 minutes):
+──────────────────────────────────
+
+1. Download this ENTIRE folder to your computer
+
+2. Open Terminal/Command Prompt and navigate to your repo:
+   
+   cd /path/to/your/homehub
+   
+   (Example: cd ~/Documents/homehub)
+
+3. Run the copy script:
+   
+   bash /path/to/homehub-fixed/copy-files.sh /path/to/homehub-fixed
+   
+   (Example: bash ~/Downloads/homehub-fixed/copy-files.sh ~/Downloads/homehub-fixed)
+   
+   OR copy manually:
+   
+   cp -r /path/to/homehub-fixed/api/* ./api/
+   cp -r /path/to/homehub-fixed/public/* ./public/
+   cp /path/to/homehub-fixed/database-setup.sql ./
+
+4. Push to GitHub:
+   
+   git add -A
+   git commit -m "Fix: v2.0.1 improvements"
+   git push origin main
+
+5. Done! Vercel will auto-deploy in ~2 minutes
+
+
+WHAT GOT FIXED:
+───────────────
+✅ Security: Debug mode protected in production
+✅ Performance: Faster, smoother (debounced events)
+✅ Bugs: Race condition fixed, cache clearing works
+✅ Errors: Better logging and user messages
+
+
+FILES THAT WILL BE REPLACED:
+────────────────────────────
+→ api/weather-aggregate.js
+→ public/assets/app.js
+→ public/assets/supabase.js  
+→ public/assets/calendar.js
+→ public/assets/router.js
+→ database-setup.sql
+
+
+NEED MORE DETAILS?
+──────────────────
+📖 README.md          - Complete instructions
+💻 GIT-COMMANDS.md    - Git help
+📝 CHANGES.txt        - What changed in each file
+📂 FILE-STRUCTURE.txt - Visual folder layout
+
+
+QUESTIONS?
+──────────
+• Everything is backward compatible ✅
+• No database changes needed (already done) ✅
+• No user action required ✅
+• Can rollback easily if needed ✅
+
+
+═══════════════════════════════════════════════════════════════════
+
+                      READY TO DEPLOY! 🚀
+
+═══════════════════════════════════════════════════════════════════

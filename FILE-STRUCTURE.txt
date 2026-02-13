@@ -1,0 +1,87 @@
+📁 homehub-fixed/
+│
+├── 📄 README.md                          ← Start here! Complete instructions
+├── 📄 GIT-COMMANDS.md                    ← Git commands cheat sheet
+├── 📄 CHANGES.txt                        ← Detailed list of every change
+│
+├── 📄 database-setup.sql                 ← ✅ Fixed: Added selected_calendars column
+│
+├── 📁 api/
+│   └── 📄 weather-aggregate.js           ← ✅ Fixed: Configurable timeout (6s)
+│
+└── 📁 public/
+    └── 📁 assets/
+        ├── 📄 app.js                     ← ✅ Fixed: Security, performance, race conditions
+        ├── 📄 supabase.js                ← ✅ Fixed: Error logging, constants
+        ├── 📄 calendar.js                ← ✅ Fixed: Cache clearing method
+        └── 📄 router.js                  ← ✅ Fixed: Error logging
+
+
+═══════════════════════════════════════════════════════════════════
+
+QUICK START:
+
+1. Copy this entire homehub-fixed folder to your computer
+
+2. Navigate to your GitHub repository:
+   cd /path/to/your/homehub
+
+3. Copy the files (preserves structure):
+   cp -r /path/to/homehub-fixed/api/* ./api/
+   cp -r /path/to/homehub-fixed/public/* ./public/
+   cp /path/to/homehub-fixed/database-setup.sql ./
+
+4. Commit and push:
+   git add -A
+   git commit -m "Fix: v2.0.1 improvements"
+   git push origin main
+
+5. Vercel will auto-deploy!
+
+═══════════════════════════════════════════════════════════════════
+
+FILES TO REPLACE IN YOUR REPO:
+
+✅ /api/weather-aggregate.js
+✅ /public/assets/app.js
+✅ /public/assets/supabase.js
+✅ /public/assets/calendar.js
+✅ /public/assets/router.js
+✅ /database-setup.sql (documentation only - your DB already has the column)
+
+═══════════════════════════════════════════════════════════════════
+
+WHAT WAS FIXED:
+
+🔒 Security
+   • Debug bypass protected in production
+   • Better access control guards
+
+⚡ Performance
+   • Debounced idle timer (no mousemove spam)
+   • Passive event listeners
+   • Reduced API timeout (10s → 6s)
+
+🐛 Bug Fixes
+   • Race condition in login flow eliminated
+   • Calendar cache clears on settings change
+   • All error logging improved
+
+📊 Code Quality
+   • Configuration constants (no magic numbers)
+   • Better error messages
+   • Version tracking (2.0.1)
+
+═══════════════════════════════════════════════════════════════════
+
+NEED HELP?
+
+📖 Read README.md for detailed instructions
+💻 Check GIT-COMMANDS.md for git help
+📝 See CHANGES.txt for line-by-line changes
+
+═══════════════════════════════════════════════════════════════════
+
+Version: 2.0.1
+Status: ✅ READY TO DEPLOY
+Last Updated: February 13, 2026

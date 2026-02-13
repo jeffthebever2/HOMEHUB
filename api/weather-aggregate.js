@@ -1,7 +1,7 @@
 // /api/weather-aggregate.js — Vercel Serverless Function
 // GET /api/weather-aggregate?lat=..&lon=..
 
-const TIMEOUT_MS = 10000;
+const TIMEOUT_MS = parseInt(process.env.API_TIMEOUT_MS) || 6000;  // Default 6 seconds
 const WG_UA = 'HomeHub/1.0 (contact: Will)';
 
 async function fetchJSON(url, opts = {}) {

@@ -1,12 +1,24 @@
 // ============================================================
-// assets/app.js — Main application init & orchestration (v3)
+// assets/app.js — Main application init & orchestration (v4)
 //
 // - Handles ALL auth events (SIGNED_IN, INITIAL_SESSION, etc.)
 // - _loggedIn guard prevents duplicate execution
-// - #letmein bypass for testing
+// - #letmein bypass for testing (dev only)
 // - 3s getSession fallback + 8s hard fallback
+// - Race condition protection
+// - Performance optimizations
 // ============================================================
 window.Hub = window.Hub || {};
+
+// Configuration constants
+const APP_CONFIG = {
+  VERSION: '2.0.1',
+  SECRET_CLICK_COUNT: 7,
+  SECRET_KEY_TIMEOUT_MS: 1500,
+  AUTH_FALLBACK_TIMEOUT_MS: 3000,
+  AUTH_HARD_FALLBACK_MS: 8000,
+  IDLE_DEBOUNCE_MS: 100
+};
 
 Hub.state = {
   user: null,
@@ -26,10 +38,24 @@ Hub.app = {
     this._bindUI();
     Hub.router.init();
     Hub.treats.init();
+    Hub.control?.init?.();
 
-    // ── TEST BYPASS: visit /#letmein ──
+    // ── TEST BYPASS: visit /#letmein (DEV ONLY) ──
     if (window.location.hash === '#letmein') {
-      console.log('[Auth] ⚠ BYPASS MODE');
+      // Only allow in development/preview environments
+      const isDev = window.location.hostname === 'localhost' || 
+                    window.location.hostname.includes('preview') ||
+                    window.location.hostname.includes('127.0.0.1') ||
+                    window.location.hostname.includes('.vercel.app');
+      
+      if (!isDev) {
+        console.warn('[Auth] ⚠️ Bypass attempt in PRODUCTION - BLOCKED');
+        alert('Debug mode is disabled in production');
+        window.location.hash = '';
+        return;
+      }
+      
+      console.log('[Auth] ⚠️ BYPASS MODE (dev only)');
       this._loggedIn = true;
       this._authHandled = true;
       Hub.state.user = { id: 'test', email: 'bypass@test' };
@@ -39,7 +65,7 @@ Hub.app = {
       document.getElementById('loadingScreen').style.display = 'none';
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
       document.getElementById('dashboardPage').classList.add('active');
-      console.log('[Auth] ⚠ Dashboard forced via bypass');
+      console.log('[Auth] ⚠️ Dashboard forced via bypass');
       return;
     }
 
@@ -67,6 +93,16 @@ Hub.app = {
           console.warn('[Auth] SIGNED_OUT during login - ignoring');
           return;
         }
+
+        // Safety net: if a session still exists in storage, ignore the SIGNED_OUT event
+        // (can happen in edge cases when the browser throttles background timers).
+        try {
+          const s = await Hub.auth.getSession();
+          if (s?.user) {
+            console.warn('[Auth] SIGNED_OUT event but session still exists — ignoring');
+            return;
+          }
+        } catch (e) {}
         this._loggedIn = false;
         this._authHandled = true;
         this._loginInProgress = false;
@@ -78,6 +114,17 @@ Hub.app = {
       // Skip SIGNED_IN — wait for INITIAL_SESSION
       if (event === 'SIGNED_IN') {
         console.log('[Auth] Ignoring SIGNED_IN (waiting for INITIAL_SESSION)');
+        return;
+      }
+
+      // If refresh fails (often due to network sleep), don't instantly dump the user to login.
+      if (event === 'TOKEN_REFRESH_FAILED') {
+        console.warn('[Auth] TOKEN_REFRESH_FAILED — keeping session, will retry when tab is active/online');
+        try { 
+          Hub.ui.toast('Session refresh failed (network sleep?). Keeping you signed in…', 'error'); 
+        } catch (e) {
+          console.warn('[Auth] Failed to show toast:', e.message);
+        }
         return;
       }
 
@@ -117,7 +164,7 @@ Hub.app = {
         console.error('[Auth] 3s fallback error:', e);
         if (!this._loggedIn && !this._loginInProgress) Hub.router.showScreen('login');
       }
-    }, 3000);
+    }, APP_CONFIG.AUTH_FALLBACK_TIMEOUT_MS);
 
     // Fallback 2: 8s — absolute safety net
     setTimeout(() => {
@@ -132,64 +179,70 @@ Hub.app = {
           Hub.router.showScreen('login');
         }
       }
-    }, 8000);
+    }, APP_CONFIG.AUTH_HARD_FALLBACK_MS);
 
     this._startIdleTimer();
   },
 
   async _onLogin(user) {
-    // Prevent concurrent login attempts
-    if (this._loginInProgress) {
-      console.log('[Auth] Login already in progress, skip');
+    // Atomic check and set - prevent concurrent login attempts
+    if (this._loginInProgress || this._loggedIn) {
+      console.log('[Auth] Login already in progress or completed, skip');
       return;
     }
-
-    if (this._loggedIn) {
-      console.log('[Auth] Already logged in, skip');
-      return;
-    }
-
+    
     this._loginInProgress = true;
 
     try {
       console.log('[Auth] _onLogin:', user.email);
+      
+      // Double-check after setting flag
+      if (this._loggedIn) {
+        console.log('[Auth] Already logged in (detected after flag set), skip');
+        return;
+      }
+      
       const allowed = await Hub.auth.checkAccess(user);
       console.log('[Auth] checkAccess →', allowed);
 
-      // Double check still not logged in
+      // Triple check - another tab could have completed login
       if (this._loggedIn) {
-        this._loginInProgress = false;
+        console.log('[Auth] Already logged in (detected after checkAccess), skip');
         return;
       }
 
       if (!allowed) {
         console.warn('[Auth] DENIED:', user.email);
-        this._loginInProgress = false;
         Hub.utils.$('deniedEmail').textContent = user.email;
         Hub.router.showScreen('accessDenied');
         return;
       }
 
-      // Set logged in BEFORE showing app
+      // Set logged in BEFORE any async operations
       this._loggedIn = true;
       Hub.state.user = user;
 
       try {
         const s = await Hub.db.loadSettings(user.id);
         Hub.state.settings = s || {};
+        
+        // Clear caches when loading new settings
+        if (s?.selected_calendars) {
+          if (Hub.calendar?.clearCache) Hub.calendar.clearCache();
+        }
       } catch (e) {
-        console.warn('[Auth] Settings fail:', e.message);
+        console.warn('[Auth] Settings load failed:', e.message);
         Hub.state.settings = {};
       }
 
       console.log('[Auth] ✓ Showing app');
       this._showApp();
-      this._loginInProgress = false;
     } catch (e) {
       console.error('[Auth] _onLogin error:', e);
-      this._loginInProgress = false;
       this._loggedIn = false;
       Hub.router.showScreen('login');
+    } finally {
+      this._loginInProgress = false;
     }
   },
 
@@ -246,11 +299,15 @@ Hub.app = {
     switch (page) {
       case 'dashboard': this._loadDashboard(); break;
       case 'weather':   this._loadWeatherPage(); break;
-      case 'chores':    Hub.chores.load(); break;
+      case 'chores':
+        Hub.chores.load();
+        Hub.chores.renderStats?.('choresStats', 7).catch?.(() => {});
+        break;
       case 'treats':    Hub.treats.loadDogs(); break;
       case 'standby':   Hub.standby.start(); break;
       case 'settings':  this._loadSettingsForm(); break;
       case 'status':    this._loadStatusPage(); break;
+      case 'control':   Hub.control?.load?.(); break;
     }
   },
 
@@ -261,6 +318,11 @@ Hub.app = {
     // Load chores for dashboard
     if (Hub.chores && typeof Hub.chores.renderDashboard === 'function') {
       Hub.chores.renderDashboard().catch(e => console.warn('[Dashboard] Chores error:', e));
+    }
+
+    // Load chore stats (leaderboard)
+    if (Hub.chores && typeof Hub.chores.renderStats === 'function') {
+      Hub.chores.renderStats('dashboardChoreStats', 7, { compact: true }).catch(e => console.warn('[Dashboard] Chore stats error:', e));
     }
     
     this._loadDashboardWeather();
@@ -488,7 +550,10 @@ Hub.app = {
       
       // Refresh dashboard to show new calendar selection
       Hub.router.go('dashboard');
-    } catch (e) { Hub.ui.toast('Save failed: ' + e.message, 'error'); }
+    } catch (e) { 
+      console.error('[Settings] Save error:', e.message);
+      Hub.ui.toast('Failed to save settings. Please check your internet connection and try again.', 'error');
+    }
   },
 
   _useCurrentLocation() {
@@ -514,12 +579,88 @@ Hub.app = {
     Hub.utils.$('btnUseLocation')?.addEventListener('click', () => Hub.app._useCurrentLocation());
     Hub.utils.$('btnRefreshStatus')?.addEventListener('click', () => Hub.app._loadStatusPage());
     Hub.utils.$('btnLoadCalendars')?.addEventListener('click', () => Hub.app._fetchAndDisplayCalendars());
+
+    // Hidden: secret admin-only control center entry
+    this._bindSecretControlEntry();
+  },
+
+  _bindSecretControlEntry() {
+    const title = document.getElementById('homeHubTitle');
+    if (title && !title._controlBound) {
+      title._controlBound = true;
+      let clicks = 0;
+      let timer = null;
+      title.addEventListener('click', () => {
+        clicks++;
+        clearTimeout(timer);
+        timer = setTimeout(() => { clicks = 0; }, 1200);
+        if (clicks >= APP_CONFIG.SECRET_CLICK_COUNT) {
+          clicks = 0;
+          if (Hub.state?.userRole === 'admin') {
+            Hub.router.go('control');
+            try { Hub.ui.toast('Control Center unlocked', 'success'); } catch (e) {
+              console.warn('[App] Failed to show toast:', e.message);
+            }
+          } else {
+            try { Hub.ui.toast('Admin only', 'error'); } catch (e) {
+              console.warn('[App] Failed to show toast:', e.message);
+            }
+          }
+        }
+      });
+    }
+
+    // Optional extra: type "control" anywhere to open (admin-only)
+    if (!window._hubControlKeySeqBound) {
+      window._hubControlKeySeqBound = true;
+      let buf = '';
+      let last = 0;
+      window.addEventListener('keydown', (e) => {
+        if (!Hub.state?.user) return;
+        const now = Date.now();
+        if (now - last > APP_CONFIG.SECRET_KEY_TIMEOUT_MS) buf = '';
+        last = now;
+        const k = (e.key || '').toLowerCase();
+        if (k.length !== 1) return;
+        buf = (buf + k).slice(-7);
+        if (buf === 'control') {
+          buf = '';
+          if (Hub.state?.userRole === 'admin') {
+            Hub.router.go('control');
+            try { Hub.ui.toast('Control Center unlocked', 'success'); } catch (e) {
+              console.warn('[App] Failed to show toast:', e.message);
+            }
+          } else {
+            try { Hub.ui.toast('Admin only', 'error'); } catch (e) {
+              console.warn('[App] Failed to show toast:', e.message);
+            }
+          }
+        }
+      });
+    }
+  },
+
+  // Debounce helper to avoid excessive function calls
+  _debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func.apply(this, args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
   },
 
   _startIdleTimer() {
     this._resetIdleTimer();
+    
+    // Debounce the reset to avoid excessive calls (especially for mousemove)
+    const debouncedReset = this._debounce(() => this._resetIdleTimer(), APP_CONFIG.IDLE_DEBOUNCE_MS);
+    
     ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'].forEach(ev =>
-      window.addEventListener(ev, () => this._resetIdleTimer())
+      window.addEventListener(ev, debouncedReset, { passive: true })
     );
   },
 

@@ -1,12 +1,20 @@
 // ============================================================
-// assets/supabase.js — Supabase auth + DB helpers  (v3)
+// assets/supabase.js — Supabase auth + DB helpers  (v4)
 //
 // KEY CHANGES:
 //   - flowType: 'pkce' (server uses PKCE)
-//   - AbortController timeout on ALL DB queries (6s)
+//   - Configurable timeout on ALL DB queries (default 6s)
 //   - Boot diagnostics + debug tool
+//   - Better error logging
 // ============================================================
 window.Hub = window.Hub || {};
+
+// Configuration
+const SUPABASE_CONFIG = {
+  DB_QUERY_TIMEOUT_MS: 6000,
+  KEEPALIVE_MINUTES: 10,
+  REFRESH_IF_EXPIRES_IN_SECONDS: 20 * 60
+};
 
 (function () {
   const CFG = window.HOME_HUB_CONFIG || {};
@@ -28,16 +36,77 @@ window.Hub = window.Hub || {};
 
   Hub.sb = sb;
 
+  // ── Keep session alive (prevents idle tab logout) ──
+  // Supabase access tokens expire (~1h). Auto-refresh SHOULD handle it, but
+  // background tabs can get throttled. This adds a lightweight safety net.
+  let _keepAliveStarted = false;
+
+  async function _refreshIfNeeded(reason) {
+    try {
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) return null;
+
+      const expiresAt = session.expires_at ? (session.expires_at * 1000) : null;
+      if (!expiresAt) return session;
+
+      const secondsLeft = Math.floor((expiresAt - Date.now()) / 1000);
+      if (secondsLeft > SUPABASE_CONFIG.REFRESH_IF_EXPIRES_IN_SECONDS) return session;
+
+      console.log('[Auth] Refreshing session (' + reason + ') — seconds left:', secondsLeft);
+      const { data, error } = await sb.auth.refreshSession();
+      if (error) {
+        console.warn('[Auth] refreshSession error:', error.message);
+        return session;
+      }
+      if (data?.session) {
+        console.log('[Auth] Session refreshed');
+        return data.session;
+      }
+      return session;
+    } catch (e) {
+      console.warn('[Auth] refreshIfNeeded exception:', e.message);
+      return null;
+    }
+  }
+
+  function _startKeepAlive() {
+    if (_keepAliveStarted) return;
+    _keepAliveStarted = true;
+
+    // Some environments need this explicitly; harmless if unsupported.
+    try { 
+      sb.auth.startAutoRefresh?.(); 
+    } catch (e) {
+      console.warn('[Auth] startAutoRefresh not available:', e.message);
+    }
+
+    // Periodic keepalive (throttled in background, but still helps).
+    setInterval(() => _refreshIfNeeded('interval'), SUPABASE_CONFIG.KEEPALIVE_MINUTES * 60 * 1000);
+
+    // When the tab becomes visible again, refresh immediately if near expiry.
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) _refreshIfNeeded('visibility');
+    });
+
+    // If network comes back, refresh.
+    window.addEventListener('online', () => _refreshIfNeeded('online'));
+  }
+
+  _startKeepAlive();
+
   // Boot: log session state (non-blocking)
   sb.auth.getSession().then(({ data }) => {
     console.log('[Boot] session:', data.session ? data.session.user.email : 'none');
   }).catch(e => console.warn('[Boot] getSession err:', e.message));
 
-  // ── Helper: DB query with 6s timeout ──
+  // ── Helper: DB query with configurable timeout ──
   function timed(queryBuilder) {
     return Promise.race([
       queryBuilder,
-      new Promise((_, rej) => setTimeout(() => rej(new Error('DB query timeout (6s)')), 6000))
+      new Promise((_, rej) => 
+        setTimeout(() => rej(new Error('DB query timeout (' + SUPABASE_CONFIG.DB_QUERY_TIMEOUT_MS + 'ms)')), 
+                   SUPABASE_CONFIG.DB_QUERY_TIMEOUT_MS)
+      )
     ]);
   }
 
@@ -74,6 +143,11 @@ window.Hub = window.Hub || {};
         console.warn('[Auth] getSession err:', e.message);
         return null;
       }
+    },
+
+    // Force a refresh if the session is near expiry (and often refreshes Google provider_token too)
+    async ensureFreshSession(reason = 'manual') {
+      return await _refreshIfNeeded(reason);
     },
 
     async checkAccess(user) {
@@ -278,6 +352,17 @@ window.Hub = window.Hub || {};
       const { error } = await timed(sb.from('chore_logs').insert({ chore_id: choreId, household_id: householdId, completed_by: userId, notes }));
       if (error) throw error;
     },
+    async loadChoreLogs(householdId, sinceIso) {
+      let q = sb.from('chore_logs')
+        .select('completed_at, notes')
+        .eq('household_id', householdId)
+        .order('completed_at', { ascending: false })
+        .limit(1000);
+      if (sinceIso) q = q.gte('completed_at', sinceIso);
+      const { data, error } = await timed(q);
+      if (error) throw error;
+      return data || [];
+    },
     async markChoreDone(choreId, userId, personName) {
       // Try updating with completed_by_name (new schema)
       // Falls back to just status update if column doesn't exist
@@ -312,6 +397,35 @@ window.Hub = window.Hub || {};
       } catch (logErr) {
         console.warn('[DB] Completion log failed (non-critical):', logErr.message);
       }
+    },
+
+    // ── Site Control Center (optional table) ─────────────────
+    async loadSiteControlSettings(householdId, siteName) {
+      const { data, error } = await timed(
+        sb.from('site_control_settings')
+          .select('*')
+          .eq('household_id', householdId)
+          .eq('site_name', siteName)
+          .maybeSingle()
+      );
+      if (error) throw error;
+      return data;
+    },
+    async saveSiteControlSettings(householdId, siteName, userId, payload) {
+      const row = Object.assign({}, payload, {
+        household_id: householdId,
+        site_name: siteName,
+        updated_by: userId || null,
+        updated_at: new Date().toISOString()
+      });
+      const { data, error } = await timed(
+        sb.from('site_control_settings')
+          .upsert(row, { onConflict: 'household_id,site_name' })
+          .select()
+          .single()
+      );
+      if (error) throw error;
+      return data;
     },
     async markAlertSeen(userId, alertId, severity) {
       await timed(sb.from('seen_alerts').upsert({ user_id: userId, alert_id: alertId, severity, seen_at: new Date().toISOString() }, { onConflict: 'user_id,alert_id' }));

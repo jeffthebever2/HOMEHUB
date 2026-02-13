@@ -9,6 +9,58 @@ Hub.calendar = {
   _cacheTime: 0,
   CACHE_TTL: 5 * 60 * 1000, // 5 minutes
 
+  // Clear cache manually (e.g., when settings change)
+  clearCache() {
+    this._cache = null;
+    this._cacheTime = 0;
+    console.log('[Calendar] Cache cleared');
+  },
+
+  // --- Token helpers: keep Google Calendar auth alive ---
+  async _getProviderToken() {
+    try {
+      const { data: { session } } = await Hub.sb.auth.getSession();
+      if (session?.provider_token) return session.provider_token;
+
+      // Try refreshing Supabase session; this often refreshes Google provider_token too
+      if (Hub.auth?.ensureFreshSession) await Hub.auth.ensureFreshSession('google-token');
+
+      const { data: { session: s2 } } = await Hub.sb.auth.getSession();
+      return s2?.provider_token || null;
+    } catch (e) {
+      console.warn('[Calendar] Provider token lookup failed:', e.message);
+      return null;
+    }
+  },
+
+  async _googleFetch(url, init = {}, retry = true) {
+    if (!Hub.sb) return { error: 'App not initialized - please refresh the page' };
+    let token = await this._getProviderToken();
+    if (!token) return { error: 'Not authenticated. Please sign out and sign in again to grant calendar access.' };
+
+    const headers = Object.assign({
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/json'
+    }, (init.headers || {}));
+
+    let response = await fetch(url, Object.assign({}, init, { headers }));
+
+    // If Google says token expired, refresh session and retry once
+    if (response.status === 401 && retry) {
+      console.warn('[Calendar] 401 from Google — attempting silent refresh');
+      try {
+        if (Hub.auth?.ensureFreshSession) await Hub.auth.ensureFreshSession('google-401');
+      } catch (e) {}
+
+      token = await this._getProviderToken();
+      if (!token) return response;
+      const headers2 = Object.assign({}, headers, { 'Authorization': `Bearer ${token}` });
+      response = await fetch(url, Object.assign({}, init, { headers: headers2 }));
+    }
+
+    return response;
+  },
+
   /**
    * Fetch upcoming events from user's primary calendar
    * @param {number} maxResults - Maximum number of events to fetch
@@ -21,43 +73,31 @@ Hub.calendar = {
   async getCalendarList() {
     try {
       console.log('[Calendar] Getting calendar list...');
-      
-      const { data: { session } } = await Hub.sb.auth.getSession();
-      if (!session?.provider_token) {
-        console.error('[Calendar] No provider token found');
-        return { error: 'Not authenticated. Please sign out and sign in again to grant calendar access.' };
-      }
-
-      console.log('[Calendar] Session found, provider_token exists:', !!session.provider_token);
 
       const url = 'https://www.googleapis.com/calendar/v3/users/me/calendarList';
-      
       console.log('[Calendar] Fetching from:', url);
-      const response = await fetch(url, {
-        headers: {
-          'Authorization': `Bearer ${session.provider_token}`,
-          'Accept': 'application/json'
-        }
-      });
+
+      const response = await this._googleFetch(url);
+      if (response?.error) return response;
 
       console.log('[Calendar] Response status:', response.status);
 
       if (!response.ok) {
         const errorText = await response.text();
         console.error('[Calendar] Error response:', errorText);
-        
+
         if (response.status === 401) {
-          return { error: 'Calendar access expired. Please sign out and sign in again.' };
+          return { error: 'Calendar token expired. Try again; if it keeps happening, sign out and sign in again.' };
         }
         if (response.status === 403) {
-          return { error: 'Calendar API access denied. Make sure Calendar API is enabled in Google Cloud Console and you granted calendar permissions when signing in.' };
+          return { error: 'Calendar API access denied (403). Make sure Calendar API is enabled and you granted calendar scopes when signing in.' };
         }
         throw new Error(`Calendar list error: ${response.status} - ${errorText}`);
       }
 
       const data = await response.json();
       console.log('[Calendar] Found', data.items?.length || 0, 'calendars:', data.items?.map(c => c.summary));
-      
+
       return data.items || [];
     } catch (error) {
       console.error('[Calendar] Error fetching calendar list:', error);
@@ -79,23 +119,10 @@ Hub.calendar = {
         return this._cache;
       }
 
-      // Get access token from Supabase session
-      if (!Hub.sb) {
-        console.error('[Calendar] Supabase client not initialized');
-        return { error: 'App not initialized - please refresh the page' };
-      }
-      const { data: { session } } = await Hub.sb.auth.getSession();
-      if (!session?.provider_token) {
-        console.warn('[Calendar] No provider token - user needs to re-authenticate');
-        return { error: 'Please sign out and sign in again to grant calendar access' };
-      }
-
-      const accessToken = session.provider_token;
-
       // Get selected calendar IDs with localStorage backup
       const settings = Hub.state?.settings || {};
       let calendarIds = settings.selected_calendars || null;
-      
+
       // If not in settings, try localStorage
       if (!calendarIds || !Array.isArray(calendarIds) || calendarIds.length === 0) {
         const stored = localStorage.getItem('selected_calendars');
@@ -108,7 +135,7 @@ Hub.calendar = {
           }
         }
       }
-      
+
       // Final fallback to primary
       if (!calendarIds || !Array.isArray(calendarIds) || calendarIds.length === 0) {
         calendarIds = ['primary'];
@@ -132,19 +159,16 @@ Hub.calendar = {
             `singleEvents=true&` +
             `timeMin=${timeMin}`;
 
-          const response = await fetch(url, {
-            headers: {
-              'Authorization': `Bearer ${accessToken}`,
-              'Accept': 'application/json'
-            }
-          });
+          const response = await this._googleFetch(url);
+          if (response?.error) return response;
 
           if (!response.ok) {
             if (response.status === 401) {
-              return { error: 'Calendar access expired - please sign out and sign in again' };
+              // Usually recoverable; _googleFetch already retried once.
+              return { error: 'Calendar token expired. Try again; if it keeps happening, sign out and sign in again.' };
             }
             if (response.status === 403) {
-              return { error: 'Calendar API not enabled - check Google Cloud Console' };
+              return { error: 'Calendar API access denied (403). Make sure the Google Calendar API is enabled and the right scopes were granted.' };
             }
             console.warn(`[Calendar] Error fetching from ${calendarId}:`, response.status);
             continue; // Skip this calendar and try others
@@ -155,9 +179,8 @@ Hub.calendar = {
             ...event,
             calendarId: calendarId // Tag each event with its calendar ID
           }));
-          
+
           console.log(`[Calendar] Fetched ${events.length} events from calendar: ${calendarId}`);
-          
           allEvents.push(...events);
         } catch (err) {
           console.error(`[Calendar] Error fetching events from ${calendarId}:`, err);
@@ -174,11 +197,11 @@ Hub.calendar = {
 
       // Limit to maxResults total events
       const limitedEvents = allEvents.slice(0, maxResults);
-      
+
       // Cache the results
       this._cache = limitedEvents;
       this._cacheTime = now;
-      
+
       console.log('[Calendar] ===== FETCH COMPLETE =====');
       console.log(`[Calendar] Total events fetched: ${limitedEvents.length}`);
       const calendarCounts = {};
@@ -188,7 +211,7 @@ Hub.calendar = {
       });
       console.log('[Calendar] Events by calendar:', calendarCounts);
       console.log('[Calendar] ==========================');
-      
+
       return this._cache;
 
     } catch (error) {
@@ -207,33 +230,35 @@ Hub.calendar = {
       if (!Hub.sb) {
         return { error: 'App not initialized' };
       }
-      const { data: { session } } = await Hub.sb.auth.getSession();
-      if (!session?.provider_token) {
-        return { error: 'No calendar access - please re-authenticate' };
-      }
 
       console.log('[Calendar] Creating event:', event.summary);
-      const response = await fetch(
+
+      const response = await this._googleFetch(
         'https://www.googleapis.com/calendar/v3/calendars/primary/events',
         {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${session.provider_token}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify(event)
         }
       );
 
+      if (response?.error) return response;
+
       if (!response.ok) {
-        throw new Error(`Failed to create event: ${response.status}`);
+        if (response.status === 401) {
+          return { error: 'Calendar token expired. Try again; if it keeps happening, sign out and sign in again.' };
+        }
+        const t = await response.text().catch(() => '');
+        throw new Error(`Failed to create event: ${response.status}${t ? ' - ' + t : ''}`);
       }
 
       const data = await response.json();
-      
+
       // Clear cache to force refresh
       this._cache = null;
-      
+
       console.log('[Calendar] Event created:', data.id);
       return { success: true, event: data };
 
