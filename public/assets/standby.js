@@ -146,22 +146,39 @@ Hub.standby = {
     }
   },
 
-  /** Load due chores */
+  /** Load due chores (today's only) */
   async _loadChores() {
     const el = Hub.utils.$('standbyChores');
     if (!el) return;
 
     try {
       const chores = await Hub.db.loadChoresWithCompleters(Hub.state.household_id);
-      const pending = chores.filter(c => c.status === 'pending');
+      const today = new Date().getDay(); // 0=Sun, 1=Mon, etc.
       
-      if (pending.length === 0) {
+      // Filter: only today's chores (Daily + current weekday)
+      const todayChores = chores.filter(c => {
+        // Skip done chores
+        if (c.status !== 'pending') return false;
+        
+        // Daily chores always show
+        if (c.category === 'Daily') return true;
+        
+        // Weekly chores for today's day
+        if (typeof c.day_of_week === 'number' && c.day_of_week === today) return true;
+        
+        // Fallback: parse category for day
+        if (c.day_of_week == null && c.category && Hub.chores?.DAY_MAP?.[c.category] === today) return true;
+        
+        return false;
+      });
+      
+      if (todayChores.length === 0) {
         el.innerHTML = '<p class="text-gray-500">All caught up! 🎉</p>';
         return;
       }
 
-      // Show first 4 pending chores
-      const limited = pending.slice(0, 4);
+      // Show first 4 pending chores for today
+      const limited = todayChores.slice(0, 4);
       el.innerHTML = limited.map(chore => {
         const priorityColor = {
           high: 'text-red-400',
@@ -177,10 +194,11 @@ Hub.standby = {
         `;
       }).join('');
 
-      if (pending.length > 4) {
-        el.innerHTML += `<p class="text-xs text-gray-500 mt-1">+${pending.length - 4} more</p>`;
+      if (todayChores.length > 4) {
+        el.innerHTML += `<p class="text-xs text-gray-500 mt-1">+${todayChores.length - 4} more</p>`;
       }
     } catch (e) {
+      console.warn('[Standby] Chores load error:', e.message);
       el.innerHTML = '<p class="text-gray-500">Loading...</p>';
     }
   },
