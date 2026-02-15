@@ -28,11 +28,19 @@
       ]
     }
   ],
+{
   "crons": [
     {
-     "crons": [
-  { "path": "/api/cron-chores-reset", "schedule": "0 8 * * *" }
-]
+      "path": "/api/cron-chores-reset",
+      "schedule": "0 8 * * *"
     }
-  ]
+  ],
+  "functions": {
+    "api/cron-chores-reset.js": {
+      "maxDuration": 30
+    },
+    "api/chores-reset-my-household.js": {
+      "maxDuration": 30
+    }
+  }
 }
