@@ -1,149 +1,104 @@
-// ============================================================
-// /api/cron-chores-reset.js
-// Automatic Daily Chore Reset Endpoint
-// Called by Vercel Cron (hourly) + client fallback
-// Resets chores for households where the date has changed
-// ============================================================
-
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// Vercel Cron: resets chores once per day per household (safe + idempotent)
+// Schedule configured in vercel.json
 
 export default async function handler(req, res) {
-  // Allow GET for easy testing, but primarily expects POST from cron
-  if (req.method !== 'GET' && req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
   try {
-    // Initialize Supabase with service role key (bypasses RLS)
-    const supabaseUrl = process.env.SUPABASE_URL;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const SB_URL = process.env.SUPABASE_URL;
+    const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    if (!supabaseUrl || !supabaseServiceKey) {
-      console.error('[Cron Reset] Missing Supabase credentials');
-      return res.status(500).json({ 
-        error: 'Server configuration error',
-        processed: 0
-      });
+    if (!SB_URL || !SB_KEY) {
+      return res.status(500).json({ error: 'Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY' });
     }
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: { persistSession: false }
+    const tz = process.env.HOMEHUB_TZ || 'America/New_York';
+
+    const now = new Date();
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+
+    const weekdayShort = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' }).format(now);
+    const wkMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    const dow = wkMap[weekdayShort] ?? now.getDay();
+
+    const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    const dayName = dayNames[dow];
+
+    // Fetch households
+    const householdsResp = await fetch(`${SB_URL}/rest/v1/households?select=id,last_chore_reset_date`, {
+      headers: {
+        apikey: SB_KEY,
+        Authorization: `Bearer ${SB_KEY}`
+      }
     });
 
-    // Get current date in America/New_York timezone
-    const today = new Date().toLocaleString('en-US', { 
-      timeZone: 'America/New_York',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    });
-    const [month, day, year] = today.split('/');
-    const todayDate = `${year}-${month}-${day}`; // YYYY-MM-DD format
-
-    // Get current day of week in America/New_York (0=Sunday, 6=Saturday)
-    const todayDayOfWeek = new Date(todayDate + 'T12:00:00').getDay();
-
-    console.log(`[Cron Reset] Running for date: ${todayDate}, day of week: ${todayDayOfWeek}`);
-
-    // Fetch all households that need reset
-    const { data: households, error: fetchError } = await supabase
-      .from('households')
-      .select('id, name, last_chore_reset_date')
-      .or(`last_chore_reset_date.is.null,last_chore_reset_date.neq.${todayDate}`);
-
-    if (fetchError) {
-      console.error('[Cron Reset] Error fetching households:', fetchError);
-      return res.status(500).json({ 
-        error: 'Database error',
-        details: fetchError.message 
-      });
+    if (!householdsResp.ok) {
+      const t = await householdsResp.text();
+      return res.status(500).json({ error: 'Failed to load households', detail: t });
     }
 
-    if (!households || households.length === 0) {
-      console.log('[Cron Reset] No households need reset');
-      return res.status(200).json({ 
-        message: 'No households need reset',
-        date: todayDate,
-        processed: 0
+    const households = await householdsResp.json();
+    let did = 0;
+    let skipped = 0;
+
+    for (const h of households) {
+      const last = h.last_chore_reset_date || null;
+      if (last === today) { skipped++; continue; }
+
+      // Reset daily + today's weekly chores (supports old schema categories too)
+      const or = encodeURIComponent(`(category.eq.Daily,day_of_week.eq.${dow},category.eq.${dayName})`);
+      const patchResp = await fetch(`${SB_URL}/rest/v1/chores?household_id=eq.${h.id}&status=in.(done,skipped)&or=${or}`, {
+        method: 'PATCH',
+        headers: {
+          apikey: SB_KEY,
+          Authorization: `Bearer ${SB_KEY}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=minimal'
+        },
+        body: JSON.stringify({
+          status: 'pending',
+          completed_by_name: null,
+          completer_email: null
+        })
       });
-    }
 
-    console.log(`[Cron Reset] Found ${households.length} household(s) to process`);
+      if (!patchResp.ok) {
+        // Don't fail the whole cron; log and continue
+        const t = await patchResp.text();
+        console.warn('[CronReset] patch chores failed:', h.id, t);
+        continue;
+      }
 
-    const results = [];
+      // Mark household as reset today
+      const hhResp = await fetch(`${SB_URL}/rest/v1/households?id=eq.${h.id}`, {
+        method: 'PATCH',
+        headers: {
+          apikey: SB_KEY,
+          Authorization: `Bearer ${SB_KEY}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=minimal'
+        },
+        body: JSON.stringify({ last_chore_reset_date: today })
+      });
 
-    for (const household of households) {
-      try {
-        // Reset chores for this household
-        // Daily chores: reset if status = 'done'
-        // Weekly chores: reset if status = 'done' AND day_of_week matches today
-        const { data: resetChores, error: resetError } = await supabase
-          .from('chores')
-          .update({ status: 'pending' })
-          .eq('household_id', household.id)
-          .eq('status', 'done')
-          .or(`category.eq.Daily,day_of_week.eq.${todayDayOfWeek}`);
-
-        if (resetError) {
-          console.error(`[Cron Reset] Error resetting chores for ${household.name}:`, resetError);
-          results.push({
-            household: household.name,
-            success: false,
-            error: resetError.message
-          });
-          continue;
-        }
-
-        // Update last_chore_reset_date
-        const { error: updateError } = await supabase
-          .from('households')
-          .update({ last_chore_reset_date: todayDate })
-          .eq('id', household.id);
-
-        if (updateError) {
-          console.error(`[Cron Reset] Error updating reset date for ${household.name}:`, updateError);
-        }
-
-        // Log to system_logs
-        await supabase.from('system_logs').insert({
-          source: 'server',
-          service: 'chore-reset',
-          status: 'ok',
-          message: `Automatic reset for ${household.name} on ${todayDate}`
-        });
-
-        console.log(`[Cron Reset] ✓ Reset chores for ${household.name}`);
-        results.push({
-          household: household.name,
-          success: true,
-          date: todayDate
-        });
-
-      } catch (err) {
-        console.error(`[Cron Reset] Exception for ${household.name}:`, err);
-        results.push({
-          household: household.name,
-          success: false,
-          error: err.message
-        });
+      if (!hhResp.ok) {
+        const t = await hhResp.text();
+        console.warn('[CronReset] patch household failed:', h.id, t);
+      } else {
+        did++;
       }
     }
 
-    const successCount = results.filter(r => r.success).length;
-    
     return res.status(200).json({
-      message: `Processed ${households.length} household(s)`,
-      date: todayDate,
-      dayOfWeek: todayDayOfWeek,
-      processed: successCount,
-      results
+      ok: true,
+      tz,
+      today,
+      dow,
+      dayName,
+      households: households.length,
+      didReset: did,
+      skipped
     });
-
-  } catch (error) {
-    console.error('[Cron Reset] Fatal error:', error);
-    return res.status(500).json({ 
-      error: 'Internal server error',
-      message: error.message 
-    });
+  } catch (e) {
+    console.error('[CronReset] error:', e);
+    return res.status(500).json({ error: 'Cron reset failed', detail: e?.message });
   }
 }

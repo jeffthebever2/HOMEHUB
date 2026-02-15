@@ -13,8 +13,10 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TABLE IF NOT EXISTS households (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  last_chore_reset_date DATE
 );
+
 
 CREATE TABLE IF NOT EXISTS household_members (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -69,6 +71,7 @@ CREATE TABLE IF NOT EXISTS chores (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+
 CREATE TABLE IF NOT EXISTS chore_logs (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   chore_id UUID NOT NULL REFERENCES chores(id) ON DELETE CASCADE,
@@ -96,6 +99,7 @@ CREATE TABLE IF NOT EXISTS system_logs (
   latency_ms INT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
 
 -- ==========================================
 -- 2. ENABLE ROW LEVEL SECURITY

@@ -148,30 +148,35 @@ Hub.weather = {
 
     if (normalized?.current) {
       el.innerHTML = `
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-4">
-            <div class="text-6xl">${normalized.current.icon}</div>
-            <div>
-              <p class="text-4xl font-bold">${normalized.current.temp_f}°F</p>
-              <p class="text-gray-400">${Hub.utils.esc(normalized.current.condition)}</p>
+        <div class="flex items-center justify-between gap-5">
+          <div class="flex items-center gap-4 min-w-0">
+            <div class="text-6xl hh-float">${normalized.current.icon}</div>
+            <div class="min-w-0">
+              <p class="text-xs uppercase tracking-wide text-gray-400">Right now</p>
+              <p class="text-5xl font-extrabold leading-none">${normalized.current.temp_f}°</p>
+              <p class="text-sm text-gray-400 mt-1 truncate">${Hub.utils.esc(normalized.current.condition)}</p>
+              <p class="text-xs text-gray-500 mt-1">Feels like ${normalized.current.feels_like_f}°F • 💨 ${normalized.current.wind_mph} mph • 💧 ${normalized.current.humidity}%</p>
             </div>
           </div>
-          <div class="text-right text-sm text-gray-400">
-            <p>Feels like ${normalized.current.feels_like_f}°F</p>
-            <p>💨 ${normalized.current.wind_mph} mph</p>
-            <p>💧 ${normalized.current.humidity}%</p>
+
+          <div class="text-right text-xs text-gray-400 space-y-1 flex-shrink-0">
+            <p>🧭 ${Hub.utils.esc(normalized.current.wind_dir || '—')}</p>
+            <p>☁️ ${normalized.current.cloud_cover ?? '—'}%</p>
+            <p>🌡️ ${normalized.current.dewpoint_f ?? '—'}° dew</p>
           </div>
         </div>
-        <div class="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-gray-700">
-          <div>
-            <p class="text-gray-400 text-sm">Today</p>
-            <p class="text-xl font-bold">${normalized.today?.high_f ?? '--'}° / ${normalized.today?.low_f ?? '--'}°</p>
-            <p class="text-sm text-gray-400">💧 ${normalized.today?.precip_chance ?? 0}% rain</p>
+
+        <div class="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-white/10">
+          <div class="rounded-2xl border border-white/10 bg-white/5 p-3">
+            <p class="text-gray-400 text-xs uppercase tracking-wide">Today</p>
+            <p class="text-xl font-bold mt-1">${normalized.today?.high_f ?? '--'}° <span class="text-gray-500 text-base font-semibold">/ ${normalized.today?.low_f ?? '--'}°</span></p>
+            <div class="mt-2 text-sm text-gray-400">💧 ${normalized.today?.precip_chance ?? 0}% precip</div>
           </div>
-          <div>
-            <p class="text-gray-400 text-sm">Tomorrow</p>
-            <p class="text-xl font-bold">${normalized.tomorrow?.high_f ?? '--'}° / ${normalized.tomorrow?.low_f ?? '--'}°</p>
-            <p class="text-sm text-gray-400">💧 ${normalized.tomorrow?.precip_chance ?? 0}% rain</p>
+
+          <div class="rounded-2xl border border-white/10 bg-white/5 p-3">
+            <p class="text-gray-400 text-xs uppercase tracking-wide">Tomorrow</p>
+            <p class="text-xl font-bold mt-1">${normalized.tomorrow?.high_f ?? '--'}° <span class="text-gray-500 text-base font-semibold">/ ${normalized.tomorrow?.low_f ?? '--'}°</span></p>
+            <div class="mt-2 text-sm text-gray-400">💧 ${normalized.tomorrow?.precip_chance ?? 0}% precip</div>
           </div>
         </div>
       `;

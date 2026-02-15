@@ -68,6 +68,24 @@ Hub.ui = {
     setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 2500);
   },
 
+
+  /** Confetti burst (used for chore completion, etc.) */
+  confettiBurst(x, y, count = 18) {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const colors = ['#60a5fa','#a78bfa','#34d399','#fbbf24','#f87171'];
+    for (let i = 0; i < count; i++) {
+      const el = document.createElement('div');
+      el.className = 'hh-confetti';
+      el.style.left = (x + (Math.random() * 10 - 5)) + 'px';
+      el.style.top = (y + (Math.random() * 10 - 5)) + 'px';
+      el.style.background = colors[i % colors.length];
+      el.style.setProperty('--dx', (Math.random() * 180 - 90) + 'px');
+      el.style.setProperty('--dy', (Math.random() * -180 - 40) + 'px');
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 750);
+    }
+  },
+
   /** Update dashboard date */
   updateDashboardDate() {
     const el = Hub.utils.$('dashboardDate');
@@ -86,7 +104,7 @@ Hub.ui = {
       if (hour >= 12 && hour < 17) greeting = 'Good afternoon';
       else if (hour >= 17) greeting = 'Good evening';
       
-      el.textContent = `${greeting}, ${firstName}! 👋`;
+      el.innerHTML = `${greeting}, ${firstName}! <span class="wave">👋</span>`;
     } else {
       el.textContent = '';
     }

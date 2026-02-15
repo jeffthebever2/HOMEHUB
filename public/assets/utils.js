@@ -15,6 +15,12 @@ Hub.utils = {
     return d.innerHTML;
   },
 
+  /** Escape string for HTML attributes */
+  escAttr(str) {
+    return Hub.utils.esc(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  },
+
+
   /** Format date nicely */
   formatDate(d) {
     return new Date(d).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
