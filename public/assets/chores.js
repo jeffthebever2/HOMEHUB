@@ -31,6 +31,41 @@ Hub.chores = {
   ],
 
   /** Load and render dashboard chores (today's priority) */
+
+  /** Create confetti particles */
+  _createConfetti(x, y) {
+    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
+    for (let i = 0; i < 15; i++) {
+      const particle = document.createElement('div');
+      particle.style.cssText = `
+        position: fixed;
+        left: ${x}px;
+        top: ${y}px;
+        width: 8px;
+        height: 8px;
+        background: ${colors[Math.floor(Math.random() * colors.length)]};
+        border-radius: 50%;
+        pointer-events: none;
+        z-index: 10000;
+        animation: confettiFall 0.8s ease-out forwards;
+      `;
+      particle.style.setProperty('--tx', `${(Math.random() - 0.5) * 200}px`);
+      particle.style.setProperty('--ty', `${Math.random() * -200 - 50}px`);
+      document.body.appendChild(particle);
+      setTimeout(() => particle.remove(), 800);
+    }
+  },
+
+  /** Get colored icon for chore category */
+  _getCategoryIcon(category) {
+    const icons = {
+      'Daily': '<span class="inline-block w-2 h-2 rounded-full bg-blue-500 mr-1"></span>',
+      'Weekly': '<span class="inline-block w-2 h-2 rounded-full bg-yellow-500 mr-1"></span>',
+      'Monthly': '<span class="inline-block w-2 h-2 rounded-full bg-purple-500 mr-1"></span>'
+    };
+    return icons[category] || '';
+  },
+
   async renderDashboard() {
     var el = Hub.utils.$('dashboardChores');
     if (!el) return;
