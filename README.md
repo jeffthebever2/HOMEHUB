@@ -2,7 +2,7 @@
 
 ## ✅ ALL 14 FILES ARE READY TO UPLOAD
 
-Every file is complete and ready to deploy. Just upload to GitHub!
+Every single file is complete and ready to deploy. Just upload to GitHub!
 
 ## 📦 FILES (14 total)
 
@@ -14,7 +14,7 @@ Every file is complete and ready to deploy. Just upload to GitHub!
 - ✅ `migration-add-chore-reset-tracking.sql`
 
 ### UPDATED FILES:
-- ✅ `vercel.json`
+- ✅ `vercel.json` - **FIXED for Hobby plan** (daily cron at 4 AM)
 - ✅ `public/config.js`
 - ✅ `public/assets/router.js`
 - ✅ `public/assets/app.js`
@@ -44,9 +44,20 @@ git commit -m "Upgrade to Home Hub v2.0"
 git push
 ```
 
+Vercel will auto-deploy - **deployment will now succeed!**
+
+## ⏰ CRON SCHEDULE (FIXED)
+
+**Vercel Hobby Plan:** Chores reset once per day at ~4 AM
+- Schedule: `0 4 * * *` (daily at 4 AM)
+- **Note:** On Hobby plan, runs between 4:00-4:59 AM (not exact)
+- **This is perfect for chore resets!**
+
+If you upgrade to Vercel Pro, you can change to hourly (`0 * * * *`) in vercel.json.
+
 ## ✨ FEATURES
 
-- ⏰ Automatic chore resets (daily)
+- ⏰ Automatic chore resets (daily at ~4 AM)
 - 🎵 Music tab (YouTube Music)
 - 📻 Radio tab (live streaming)
 - 🎮 Now Playing widget
@@ -60,12 +71,22 @@ For the fancy bento grid dashboard layout, see `INDEX_HTML_UPDATES.txt` for CSS 
 
 ## 🧪 TEST
 
-1. `/api/cron-chores-reset` returns JSON
+1. Visit `/api/cron-chores-reset` - should return JSON
 2. Music and Radio pages work
 3. Complete a chore → see confetti
 4. No console errors
-5. Wait 24h → chores auto-reset
+5. Next day after 4 AM → chores auto-reset
+
+## 🆘 TROUBLESHOOTING
+
+**Deployment fails with "limited to daily cron jobs":**
+- ✅ FIXED! vercel.json now uses daily schedule
+
+**Cron not working:**
+- Verify `SUPABASE_SERVICE_ROLE_KEY` is set in Vercel
+- Wait until after 4 AM the next day
+- Check `/api/cron-chores-reset` manually works
 
 ---
 
-**ALL 14 FILES COMPLETE - JUST UPLOAD!** 🚀
+**ALL 14 FILES COMPLETE - DEPLOYMENT WILL SUCCEED!** 🚀
