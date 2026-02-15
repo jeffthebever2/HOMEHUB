@@ -8,7 +8,7 @@ window.Hub = window.Hub || {};
 Hub.router = {
   current: 'dashboard',
   // NOTE: 'control' is intentionally hidden from the UI (secret/admin-only entry)
-  VALID_PAGES: ['dashboard', 'standby', 'weather', 'chores', 'treats', 'settings', 'status', 'control'],
+  VALID_PAGES: ['dashboard', 'standby', 'weather', 'chores', 'treats', 'music', 'radio', 'settings', 'status', 'control'],
 
   /** Navigate to a page */
   go(page) {

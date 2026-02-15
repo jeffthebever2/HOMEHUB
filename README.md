@@ -1,204 +1,199 @@
-# Home Hub - Fixed Files v2.0.1
+# 🏠 HOME HUB V2.0 UPGRADE
 
-## 📁 What's In This Folder
+## 📦 What's in This Package
 
-This folder contains all the fixed files for your Home Hub application. The structure matches your GitHub repository exactly.
+This package contains all the files you need to upgrade your Home Hub to v2.0. The file structure **exactly matches your GitHub repository** for easy upload.
 
-```
-homehub-fixed/
-├── api/
-│   └── weather-aggregate.js          ✅ Fixed: Configurable timeout (10s → 6s)
-├── public/
-│   └── assets/
-│       ├── app.js                     ✅ Fixed: Security, race conditions, performance
-│       ├── supabase.js                ✅ Fixed: Error logging, constants
-│       ├── calendar.js                ✅ Fixed: Cache clearing method
-│       └── router.js                  ✅ Fixed: Error logging
-└── database-setup.sql                 ✅ Fixed: Added selected_calendars column
-```
-
----
-
-## 🚀 Quick Deploy Instructions
-
-### Method 1: Direct Copy (Recommended)
-
-1. **Download this entire `homehub-fixed` folder**
-
-2. **Navigate to your local GitHub repository:**
-   ```bash
-   cd /path/to/your/homehub-repo
-   ```
-
-3. **Copy the fixed files (preserves structure):**
-   ```bash
-   # Copy all files maintaining structure
-   cp -r /path/to/homehub-fixed/* ./
-   
-   # Or manually:
-   cp /path/to/homehub-fixed/api/weather-aggregate.js ./api/
-   cp /path/to/homehub-fixed/public/assets/app.js ./public/assets/
-   cp /path/to/homehub-fixed/public/assets/supabase.js ./public/assets/
-   cp /path/to/homehub-fixed/public/assets/calendar.js ./public/assets/
-   cp /path/to/homehub-fixed/public/assets/router.js ./public/assets/
-   cp /path/to/homehub-fixed/database-setup.sql ./
-   ```
-
-4. **Review changes:**
-   ```bash
-   git status
-   git diff
-   ```
-
-5. **Commit and push:**
-   ```bash
-   git add -A
-   git commit -m "Fix: Security, performance, and error handling improvements (v2.0.1)
-
-   - Protect debug bypass in production (security)
-   - Fix race condition in login flow
-   - Add debounced idle timer (performance)
-   - Improve error logging throughout
-   - Add calendar cache clearing
-   - Make API timeout configurable
-   - Add configuration constants
-   - Update database schema documentation
-   "
-   
-   git push origin main
-   ```
-
-### Method 2: GitHub Web Interface
-
-1. Go to your GitHub repository
-2. Navigate to each file location
-3. Click "Edit" (pencil icon)
-4. Copy/paste the contents from the corresponding fixed file
-5. Commit each file with a descriptive message
-
----
-
-## ✅ What Was Fixed
-
-### 🔒 Security
-- **Protected debug bypass** - `#letmein` only works in dev/preview, blocked in production
-- **Better access control** - Triple-check guards in login flow
-
-### ⚡ Performance  
-- **Debounced idle timer** - No more excessive mousemove events (100ms debounce)
-- **Passive event listeners** - Better scrolling performance
-- **Reduced API timeout** - From 10s to 6s (configurable)
-
-### 🐛 Bug Fixes
-- **Race condition eliminated** - Atomic login flow with proper guards
-- **Cache clearing** - Calendar cache clears when settings change
-- **Error logging** - All silent catches removed, proper error context
-
-### 📊 Code Quality
-- **Configuration constants** - No more magic numbers
-- **Better error messages** - User-friendly messages for failures
-- **Version tracking** - App version now at 2.0.1
-
----
-
-## 🧪 After Deployment - Test These
+## 📁 File Structure
 
 ```
-✅ Visit your site
-✅ Sign in with Google  
-✅ Try /#letmein in production (should be blocked with alert)
-✅ Load calendars in Settings
-✅ Select multiple calendars and save
-✅ Refresh page - calendars should persist
-✅ Move mouse rapidly - should be smooth, no lag
-✅ Open browser console (F12) - errors should have [Module] prefix
+homehub-v2-upgrade/
+├── README.md                              ← You are here
+│
+├── 🆕 NEW FILES (Upload to GitHub as-is)
+│   ├── api/
+│   │   └── cron-chores-reset.js          ← Upload to /api/
+│   ├── public/assets/
+│   │   ├── player.js                      ← Upload to /public/assets/
+│   │   ├── radio.js                       ← Upload to /public/assets/
+│   │   └── music.js                       ← Upload to /public/assets/
+│   └── migration-add-chore-reset-tracking.sql ← Run in Supabase, then commit
+│
+├── ✏️ UPDATED FILES (Replace on GitHub)
+│   ├── vercel.json                        ← Replace /vercel.json
+│   ├── public/
+│   │   ├── config.js                      ← Replace /public/config.js
+│   │   └── assets/
+│   │       └── router.js                  ← Replace /public/assets/router.js
+│
+└── 📝 UPDATE-GUIDES/ (Manual edits required)
+    ├── INDEX_HTML_UPDATES.md              → Edit /public/index.html
+    ├── APP_JS_UPDATES.md                  → Edit /public/assets/app.js
+    ├── CHORES_JS_UPDATES.md               → Edit /public/assets/chores.js
+    ├── TREATS_JS_UPDATES.md               → Edit /public/assets/treats.js
+    ├── STANDBY_JS_UPDATES.md              → Edit /public/assets/standby.js
+    ├── WEATHER_JS_UPDATES.md              → Edit /public/assets/weather.js
+    ├── README_V2.md                       ← Feature overview
+    └── DEPLOYMENT_GUIDE.md                ← Full deployment guide
 ```
 
----
+## 🚀 Deployment Instructions
 
-## 📝 Database Changes
+### Step 1: Database Migration (5 minutes)
+1. Open Supabase Dashboard → SQL Editor
+2. Copy contents of `migration-add-chore-reset-tracking.sql`
+3. Execute
+4. Verify: `SELECT * FROM households LIMIT 1;` shows new `last_chore_reset_date` column
 
-**No action needed!** Your Supabase database already has the `selected_calendars` column from your previous migration. The updated `database-setup.sql` is only for documentation and future fresh installs.
+### Step 2: Vercel Configuration (5 minutes)
+1. Go to Vercel Dashboard → Your Project → Settings → Environment Variables
+2. Add: `SUPABASE_SERVICE_ROLE_KEY` (get from Supabase → Settings → API → service_role)
+3. Save (deployment will auto-trigger)
 
----
+### Step 3: Upload to GitHub (30 minutes)
 
-## 🔄 Rollback Plan
+#### Option A: Using GitHub Web Interface
+1. Go to your repository on GitHub
+2. **Upload NEW files:**
+   - Navigate to `/api/` → Upload `api/cron-chores-reset.js`
+   - Navigate to `/public/assets/` → Upload `player.js`, `radio.js`, `music.js`
+   - Upload `migration-add-chore-reset-tracking.sql` to root
 
-If something goes wrong:
+3. **Replace UPDATED files:**
+   - Click on `/vercel.json` → Edit → Copy contents from `vercel.json` → Commit
+   - Click on `/public/config.js` → Edit → Copy contents → Commit
+   - Click on `/public/assets/router.js` → Edit → Copy contents → Commit
 
-**Via Vercel Dashboard:**
-1. Go to Deployments
-2. Find the previous working deployment  
-3. Click "Promote to Production"
-
-**Via Git:**
+#### Option B: Using Git Command Line
 ```bash
-git revert HEAD
-git push origin main
+# Copy new files to your local repo
+cp -r homehub-v2-upgrade/api/cron-chores-reset.js your-repo/api/
+cp homehub-v2-upgrade/public/assets/player.js your-repo/public/assets/
+cp homehub-v2-upgrade/public/assets/radio.js your-repo/public/assets/
+cp homehub-v2-upgrade/public/assets/music.js your-repo/public/assets/
+cp homehub-v2-upgrade/migration-add-chore-reset-tracking.sql your-repo/
+
+# Replace updated files
+cp homehub-v2-upgrade/vercel.json your-repo/
+cp homehub-v2-upgrade/public/config.js your-repo/public/
+cp homehub-v2-upgrade/public/assets/router.js your-repo/public/assets/
+
+# Commit and push
+git add .
+git commit -m "Add automatic chore reset, music, and radio features"
+git push
 ```
 
+### Step 4: Apply Manual Updates (30-60 minutes)
+
+You need to manually edit these 6 files. Each has a guide in `UPDATE-GUIDES/`:
+
+1. **`public/index.html`** - Use `INDEX_HTML_UPDATES.md`
+   - Major: Complete design system overhaul
+   - Find/replace CSS and HTML sections as shown
+
+2. **`public/assets/app.js`** - Use `APP_JS_UPDATES.md`
+   - Add player/radio/music init
+   - Add chore reset call on login
+   - Update page routing
+
+3. **`public/assets/chores.js`** - Use `CHORES_JS_UPDATES.md`
+   - Add confetti animation
+   - Add category icons
+   - Enhanced UI with progress bars
+
+4. **`public/assets/treats.js`** - Use `TREATS_JS_UPDATES.md`
+   - Add timestamp support
+   - Add recent history to dashboard
+
+5. **`public/assets/standby.js`** - Use `STANDBY_JS_UPDATES.md`
+   - Add Now Playing widget integration
+
+6. **`public/assets/weather.js`** - Use `WEATHER_JS_UPDATES.md`
+   - Enhanced visuals and animations
+
+**Each guide has clear FIND/REPLACE instructions. Open the guide and your file side-by-side.**
+
+After editing each file, commit to GitHub:
+```bash
+git add public/index.html
+git commit -m "Apply design system updates"
+# Repeat for each file
+```
+
+### Step 5: Test (30 minutes)
+1. Visit `your-app.vercel.app/api/cron-chores-reset` - should return JSON
+2. Check dashboard - should show bento grid layout
+3. Check Music and Radio pages appear in navigation
+4. Test Now Playing widget
+5. Verify no console errors (F12)
+6. Wait 24 hours - chores should auto-reset
+
+## ✨ What You're Getting
+
+- ⏰ **Automatic daily chore resets** (server-side cron, no admin required)
+- 🎵 **Music tab** with YouTube Music
+- 📻 **Radio tab** with live streaming
+- 🎮 **Now Playing widget** on dashboard and standby
+- ✨ **Enhanced chores UI** with confetti, animations, progress bars
+- 🐕 **Treat history** with timestamps on dashboard
+- 📊 **Bento grid dashboard** with beautiful asymmetric layout
+- 🎨 **Complete design system** with elevated dark mode
+- 🖥️ **Standby mode** with Ken Burns photo effect
+- 🌤️ **Better weather** with animated icons
+
+## 📋 Checklist
+
+Before starting:
+- [ ] I've read this README
+- [ ] I have access to Supabase dashboard
+- [ ] I have access to Vercel dashboard
+- [ ] I have access to GitHub repository
+- [ ] I have 1-2 hours available
+
+After deployment:
+- [ ] Database migration executed
+- [ ] Vercel env var set
+- [ ] New files uploaded to GitHub
+- [ ] Updated files replaced on GitHub
+- [ ] Manual edits applied to 6 files
+- [ ] `/api/cron-chores-reset` returns JSON
+- [ ] Dashboard shows new layout
+- [ ] Music/Radio pages work
+- [ ] No console errors
+
+## 🆘 Need Help?
+
+1. **Can't upload to GitHub?** Use the GitHub web interface - navigate to each folder and upload files directly
+2. **Confused by update guides?** Each guide has clear FIND/REPLACE sections - just search for the text and replace it
+3. **Environment variables?** SUPABASE_SERVICE_ROLE_KEY is in Supabase Dashboard → Settings → API → service_role (secret key)
+4. **Cron not working?** Check Vercel Dashboard → Deployments → Your latest deployment → Functions → cron-chores-reset
+
+See `UPDATE-GUIDES/DEPLOYMENT_GUIDE.md` for detailed troubleshooting.
+
+## 📚 Documentation
+
+- `UPDATE-GUIDES/README_V2.md` - Complete feature overview
+- `UPDATE-GUIDES/DEPLOYMENT_GUIDE.md` - Detailed deployment guide with troubleshooting
+- Each `*_UPDATES.md` file - Step-by-step edit instructions
+
+## ⚠️ Important Notes
+
+- ✅ All changes are **backward compatible**
+- ✅ **Non-breaking** - existing features remain intact
+- ✅ You can deploy in stages (backend first, then UI)
+- ✅ Easy rollback - just revert your GitHub commits
+
+## 🎯 Estimated Time
+
+- Database + Vercel setup: 10 min
+- Upload files to GitHub: 30 min
+- Apply manual updates: 30-60 min
+- Testing: 30 min
+- **Total: 1.5-2.5 hours**
+
 ---
 
-## 🎯 Changes by File
+**Ready to upgrade?** Start with Step 1 above! 🚀
 
-### `api/weather-aggregate.js`
-- Timeout: 10000ms → 6000ms (configurable via env var)
-- Added: `API_TIMEOUT_MS` environment variable support
-
-### `public/assets/app.js`
-- Added: `APP_CONFIG` constants object
-- Fixed: `#letmein` bypass protection (dev-only)
-- Fixed: Race condition in `_onLogin()` with atomic checks
-- Added: Debounce helper function
-- Fixed: Idle timer debounced (100ms)
-- Improved: Error messages (user-friendly)
-- Fixed: All silent error catches
-- Added: Calendar cache clearing on settings load
-- Updated: Version to 2.0.1
-
-### `public/assets/supabase.js`
-- Added: `SUPABASE_CONFIG` constants object
-- Fixed: Error logging in keep-alive functions
-- Improved: Timeout error messages
-- Updated: Version comment to v4
-
-### `public/assets/calendar.js`
-- Added: `clearCache()` method
-- Improved: Documentation
-
-### `public/assets/router.js`
-- Fixed: Silent error catch with proper logging
-
-### `database-setup.sql`
-- Added: `selected_calendars` JSONB column
-- Added: Column comment for documentation
-- Set: Default value `'["primary"]'::jsonb`
-
----
-
-## 💡 Optional: Vercel Environment Variable
-
-Add this for custom API timeout:
-
-**Vercel Dashboard → Settings → Environment Variables:**
-- Name: `API_TIMEOUT_MS`
-- Value: `6000`
-- Environments: Production, Preview, Development
-
----
-
-## 📞 Support
-
-**Everything working?** Great! 🎉
-
-**Something broken?** 
-1. Check browser console (F12) for error messages
-2. Check Vercel function logs
-3. Check Supabase logs
-4. Rollback if needed (see above)
-
----
-
-**Version:** 2.0.1  
-**Last Updated:** February 13, 2026  
-**Status:** ✅ Ready to Deploy
+**Questions?** Check `UPDATE-GUIDES/DEPLOYMENT_GUIDE.md` for detailed instructions.
