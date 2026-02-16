@@ -9,7 +9,7 @@ Hub.music = {
   load() {
     // Called on page enter
     if (this._initDone) {
-      Hub.player?.renderDashboardWidget?.();
+      if (Hub.player && typeof Hub.player.renderDashboardWidget === 'function') Hub.player.renderDashboardWidget();
       return;
     }
     this._initDone = true;
@@ -22,8 +22,8 @@ Hub.music = {
 
     if (btnPP) btnPP.onclick = () => Hub.player.toggle();
     if (btnStop) btnStop.onclick = () => Hub.player.stopYouTube();
-    if (btnPrev) btnPrev.onclick = () => { try { this._player?.previousVideo?.(); } catch (_) {} Hub.player?._updateFromYouTube?.(); };
-    if (btnNext) btnNext.onclick = () => { try { this._player?.nextVideo?.(); } catch (_) {} Hub.player?._updateFromYouTube?.(); };
+    if (btnPrev) btnPrev.onclick = () => { try { this._player?.previousVideo?.(); } catch (_) {} if (Hub.player && typeof Hub.player._updateFromYouTube === 'function') Hub.player._updateFromYouTube(); };
+    if (btnNext) btnNext.onclick = () => { try { this._player?.nextVideo?.(); } catch (_) {} if (Hub.player && typeof Hub.player._updateFromYouTube === 'function') Hub.player._updateFromYouTube(); };
 
     // If config doesn't have playlist/video, show iframe fallback
     const cfg = (window.HOME_HUB_CONFIG && window.HOME_HUB_CONFIG.youtubeMusic) ? window.HOME_HUB_CONFIG.youtubeMusic : null;
