@@ -34,41 +34,164 @@ Hub.app = {
   _loginInProgress: false,
 
   async init() {
-    console.log('[App] init()');
-    this._bindUI();
-    Hub.router.init();
-    Hub.player?.init?.();
-    Hub.treats.init();
-    Hub.control?.init?.();
+  console.log('[App] init()');
+  this._bindUI();
+  Hub.router.init();
+  Hub.player?.init?.();
+  Hub.treats.init();
+  Hub.control?.init?.();
 
-    // ── TEST BYPASS: visit /#letmein (DEV ONLY) ──
-    if (window.location.hash === '#letmein') {
-      // Only allow in development/preview environments
-      const isDev = window.location.hostname === 'localhost' || 
-                    window.location.hostname.includes('preview') ||
-                    window.location.hostname.includes('127.0.0.1') ||
-                    window.location.hostname.includes('.vercel.app');
-      
-      if (!isDev) {
-        console.warn('[Auth] ⚠️ Bypass attempt in PRODUCTION - BLOCKED');
-        alert('Debug mode is disabled in production');
-        window.location.hash = '';
-        return;
-      }
-      
-      console.log('[Auth] ⚠️ BYPASS MODE (dev only)');
-      this._loggedIn = true;
-      this._authHandled = true;
-      Hub.state.user = { id: 'test', email: 'bypass@test' };
-      Hub.state.household_id = 'd49c4c5b-1ffd-42db-9b3e-bec70545bf87';
-      Hub.state.userRole = 'admin';
-      Hub.state.settings = {};
-      document.getElementById('loadingScreen').style.display = 'none';
-      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-      document.getElementById('dashboardPage').classList.add('active');
-      console.log('[Auth] ⚠️ Dashboard forced via bypass');
+  // ── TEST BYPASS: visit /#letmein (DEV ONLY) ──
+  if (window.location.hash === '#letmein') {
+    const isDev = window.location.hostname === 'localhost' ||
+      window.location.hostname.includes('preview') ||
+      window.location.hostname.includes('127.0.0.1') ||
+      window.location.hostname.includes('.vercel.app');
+
+    if (!isDev) {
+      console.warn('[Auth] ⚠️ Bypass attempt in PRODUCTION - BLOCKED');
+      alert('Debug mode is disabled in production');
+      window.location.hash = '';
       return;
     }
+
+    console.log('[Auth] ⚠️ BYPASS MODE (dev only)');
+    this._loggedIn = true;
+    this._authHandled = true;
+    Hub.state.user = { id: 'test', email: 'bypass@test' };
+    Hub.state.household_id = 'd49c4c5b-1ffd-42db-9b3e-bec70545bf87';
+    Hub.state.userRole = 'admin';
+    Hub.state.settings = {};
+    document.getElementById('loadingScreen').style.display = 'none';
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('dashboardPage').classList.add('active');
+    console.log('[Auth] ⚠️ Dashboard forced via bypass');
+    return;
+  }
+
+  Hub.auth.onAuthChange(async (event, session) => {
+    console.log('[Auth] Event:', event, session?.user?.email || 'no-user', 'loggedIn:', this._loggedIn);
+
+    // During PKCE exchange, Supabase may briefly show no session while ?code= is present.
+    const oauthExchangeInProgress = window.location.search.includes('code=') || this._oauthInProgress;
+    if (window.location.search.includes('code=')) this._oauthInProgress = true;
+
+    if (this._loggedIn && event !== 'SIGNED_OUT') {
+      console.log('[Auth] ✓ Already logged in - ignoring', event);
+      const loginScreen = document.getElementById('loginScreen');
+      if (loginScreen && loginScreen.classList.contains('active')) {
+        console.warn('[Auth] FORCING login screen to hide');
+        loginScreen.classList.remove('active');
+        loginScreen.style.display = 'none';
+      }
+      return;
+    }
+
+    if (event === 'SIGNED_OUT') {
+      if (this._loginInProgress) {
+        console.warn('[Auth] SIGNED_OUT during login - ignoring');
+        return;
+      }
+
+      try {
+        const s = await Hub.auth.getSession();
+        if (s?.user) {
+          console.warn('[Auth] SIGNED_OUT event but session still exists — ignoring');
+          return;
+        }
+      } catch (e) {}
+
+      this._loggedIn = false;
+      this._authHandled = true;
+      this._loginInProgress = false;
+      Hub.state.user = null;
+      Hub.router.showScreen('login');
+      return;
+    }
+
+    // IMPORTANT: Handle SIGNED_IN (often the first good event after OAuth exchange)
+    if (event === 'SIGNED_IN' && session?.user) {
+      console.log('[Auth] SIGNED_IN received — proceeding to login');
+      this._authHandled = true;
+      await this._onLogin(session.user);
+      return;
+    }
+
+    if (event === 'TOKEN_REFRESH_FAILED') {
+      console.warn('[Auth] TOKEN_REFRESH_FAILED — keeping session, will retry when tab is active/online');
+      try { Hub.ui.toast('Session refresh failed. Keeping you signed in…', 'error'); } catch (e) {}
+      return;
+    }
+
+    if ((event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') && session?.user) {
+      this._authHandled = true;
+      await this._onLogin(session.user);
+      return;
+    }
+
+    if (event === 'INITIAL_SESSION' && !session) {
+      // If we're in OAuth exchange, DO NOT show login yet.
+      if (oauthExchangeInProgress) {
+        console.log('[Auth] INITIAL_SESSION: no user BUT ?code= present — waiting for PKCE exchange');
+        const loading = document.getElementById('loadingScreen');
+        if (loading) loading.style.display = 'flex';
+        return;
+      }
+
+      this._authHandled = true;
+      console.log('[Auth] INITIAL_SESSION: no user → login');
+      Hub.router.showScreen('login');
+    }
+  });
+
+  // Fallback 1: 3s — try getSession manually
+  setTimeout(async () => {
+    if (this._loggedIn) {
+      console.log('[Auth] 3s fallback skipped (already logged in)');
+      return;
+    }
+    console.log('[Auth] 3s fallback — getSession()');
+
+    try {
+      const session = await Hub.auth.getSession();
+      console.log('[Auth] 3s fallback session:', session?.user?.email || 'none');
+
+      if (session?.user && !this._loggedIn && !this._loginInProgress) {
+        await this._onLogin(session.user);
+      } else if (!this._loggedIn && !this._loginInProgress) {
+        if (!window.location.search.includes('code=')) {
+          Hub.router.showScreen('login');
+        } else {
+          console.log('[Auth] 3s fallback: still exchanging OAuth code — waiting');
+        }
+      }
+    } catch (e) {
+      console.error('[Auth] 3s fallback error:', e);
+      if (!this._loggedIn && !this._loginInProgress) Hub.router.showScreen('login');
+    }
+  }, APP_CONFIG.AUTH_FALLBACK_TIMEOUT_MS);
+
+  // Fallback 2: 8s — absolute safety net
+  setTimeout(() => {
+    if (this._loggedIn) return;
+
+    if (!this._loggedIn && !this._loginInProgress) {
+      const el = document.getElementById('loadingScreen');
+      if (el && el.style.display !== 'none') {
+        console.warn('[Auth] 8s HARD fallback → login');
+        Hub.router.showScreen('login');
+      }
+    }
+
+    if (!this._loggedIn && window.location.search.includes('code=')) {
+      console.warn('[Auth] OAuth exchange timed out — showing login');
+      this._oauthInProgress = false;
+      Hub.router.showScreen('login');
+    }
+  }, APP_CONFIG.AUTH_HARD_FALLBACK_MS);
+
+  this._startIdleTimer();
+},
 
     // ── Auth listener ──
     // ONLY act on INITIAL_SESSION (fires AFTER pkce code exchange)
