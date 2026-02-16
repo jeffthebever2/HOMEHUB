@@ -1,728 +1,654 @@
-// ============================================================
-// assets/app.js — Main application init & orchestration (v4)
-//
-// - Handles ALL auth events (SIGNED_IN, INITIAL_SESSION, etc.)
-// - _loggedIn guard prevents duplicate execution
-// - #letmein bypass for testing (dev only)
-// - 3s getSession fallback + 8s hard fallback
-// - Race condition protection
-// - Performance optimizations
-// ============================================================
-window.Hub = window.Hub || {};
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🏠 Home Hub</title>
 
-// Configuration constants
-const APP_CONFIG = {
-  VERSION: '2.0.1',
-  SECRET_CLICK_COUNT: 7,
-  SECRET_KEY_TIMEOUT_MS: 1500,
-  AUTH_FALLBACK_TIMEOUT_MS: 3000,
-  AUTH_HARD_FALLBACK_MS: 8000,
-  IDLE_DEBOUNCE_MS: 100
-};
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
 
-Hub.state = {
-  user: null,
-  household_id: null,
-  userRole: null,
-  settings: {}
-};
+  <!-- Supabase JS v2 -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-Hub.app = {
-  _idleTimer: null,
-  _loggedIn: false,
-  _authHandled: false,
-  _loginInProgress: false,
+  <!-- Firebase compat SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.2/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.2/firebase-auth-compat.js"></script>
 
-  async init() {
-    console.log('[App] init()');
-    this._bindUI();
-    Hub.router.init();
-    Hub.treats.init();
-    Hub.player?.init?.();
-    Hub.radio?.init?.();
-    Hub.music?.init?.();
-    Hub.control?.init?.();
+  <!-- Firebase Config for Dog Tracker -->
+  <script>
+    window.HOME_HUB_CONFIG = window.HOME_HUB_CONFIG || {};
+    window.HOME_HUB_CONFIG.firebase = {
+      apiKey: "AIzaSyBISAQF9xw2ifb9HllNj4LniyMLD6OhclU",
+      authDomain: "dog-calorie-counter.firebaseapp.com",
+      databaseURL: "https://dog-calorie-counter-default-rtdb.firebaseio.com",
+      projectId: "dog-calorie-counter",
+      storageBucket: "dog-calorie-counter.firebasestorage.app",
+      messagingSenderId: "835874316228",
+      appId: "1:835874316228:web:cbebd7e0ad3b071352ce91"
+    };
+  </script>
 
-    // ── TEST BYPASS: visit /#letmein (DEV ONLY) ──
-    if (window.location.hash === '#letmein') {
-      // Only allow in development/preview environments
-      const isDev = window.location.hostname === 'localhost' || 
-                    window.location.hostname.includes('preview') ||
-                    window.location.hostname.includes('127.0.0.1') ||
-                    window.location.hostname.includes('.vercel.app');
-      
-      if (!isDev) {
-        console.warn('[Auth] ⚠️ Bypass attempt in PRODUCTION - BLOCKED');
-        alert('Debug mode is disabled in production');
-        window.location.hash = '';
-        return;
-      }
-      
-      console.log('[Auth] ⚠️ BYPASS MODE (dev only)');
-      this._loggedIn = true;
-      this._authHandled = true;
-      Hub.state.user = { id: 'test', email: 'bypass@test' };
-      Hub.state.household_id = 'd49c4c5b-1ffd-42db-9b3e-bec70545bf87';
-      Hub.state.userRole = 'admin';
-      Hub.state.settings = {};
-      document.getElementById('loadingScreen').style.display = 'none';
-      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-      document.getElementById('dashboardPage').classList.add('active');
-      console.log('[Auth] ⚠️ Dashboard forced via bypass');
-      return;
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- App config (must come before app scripts) -->
+  <script src="config.js"></script>
+
+  <style>
+        :root {
+      --bg-base: #0B0F19; --bg-surface-1: #151B2B; --bg-card: #1A2235;
+      --accent-primary: #3B82F6; --accent-glow: rgba(59, 130, 246, 0.2);
     }
-
-    // ── Auth listener ──
-    // ONLY act on INITIAL_SESSION (fires AFTER pkce code exchange)
-    // Skip SIGNED_IN — it fires DURING exchange when JWT isn't ready
-    Hub.auth.onAuthChange(async (event, session) => {
-      console.log('[Auth] Event:', event, session?.user?.email || 'no-user', 'loggedIn:', this._loggedIn);
-
-      // CRITICAL: If already logged in, ignore all events except SIGNED_OUT
-      if (this._loggedIn && event !== 'SIGNED_OUT') {
-        console.log('[Auth] ✓ Already logged in - ignoring', event);
-        // FORCE hide login screen if visible
-        const loginScreen = document.getElementById('loginScreen');
-        if (loginScreen && loginScreen.classList.contains('active')) {
-          console.warn('[Auth] FORCING login screen to hide');
-          loginScreen.classList.remove('active');
-        }
-        return;
-      }
-
-      if (event === 'SIGNED_OUT') {
-        // Don't sign out if login in progress
-        if (this._loginInProgress) {
-          console.warn('[Auth] SIGNED_OUT during login - ignoring');
-          return;
-        }
-
-        // Safety net: if a session still exists in storage, ignore the SIGNED_OUT event
-        // (can happen in edge cases when the browser throttles background timers).
-        try {
-          const s = await Hub.auth.getSession();
-          if (s?.user) {
-            console.warn('[Auth] SIGNED_OUT event but session still exists — ignoring');
-            return;
-          }
-        } catch (e) {}
-        this._loggedIn = false;
-        this._authHandled = true;
-        this._loginInProgress = false;
-        Hub.state.user = null;
-        Hub.router.showScreen('login');
-        return;
-      }
-
-      // Skip SIGNED_IN — wait for INITIAL_SESSION
-      if (event === 'SIGNED_IN') {
-        console.log('[Auth] Ignoring SIGNED_IN (waiting for INITIAL_SESSION)');
-        return;
-      }
-
-      // If refresh fails (often due to network sleep), don't instantly dump the user to login.
-      if (event === 'TOKEN_REFRESH_FAILED') {
-        console.warn('[Auth] TOKEN_REFRESH_FAILED — keeping session, will retry when tab is active/online');
-        try { 
-          Hub.ui.toast('Session refresh failed (network sleep?). Keeping you signed in…', 'error'); 
-        } catch (e) {
-          console.warn('[Auth] Failed to show toast:', e.message);
-        }
-        return;
-      }
-
-      if ((event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') && session?.user) {
-        if (this._loggedIn) {
-          console.log('[Auth] Already logged in, ignoring event');
-          return;
-        }
-        this._authHandled = true;
-        await this._onLogin(session.user);
-        return;
-      }
-
-      if (event === 'INITIAL_SESSION' && !session) {
-        this._authHandled = true;
-        console.log('[Auth] INITIAL_SESSION: no user → login');
-        Hub.router.showScreen('login');
-      }
-    });
-
-    // Fallback 1: 3s — try getSession manually
-    setTimeout(async () => {
-      if (this._loggedIn || this._authHandled || this._loginInProgress) {
-        console.log('[Auth] 3s fallback skipped (already handled)');
-        return;
-      }
-      console.log('[Auth] 3s fallback — getSession()');
-      try {
-        const session = await Hub.auth.getSession();
-        console.log('[Auth] 3s fallback session:', session?.user?.email || 'none');
-        if (session?.user && !this._loggedIn && !this._loginInProgress) {
-          await this._onLogin(session.user);
-        } else if (!this._loggedIn && !this._loginInProgress) {
-          Hub.router.showScreen('login');
-        }
-      } catch (e) {
-        console.error('[Auth] 3s fallback error:', e);
-        if (!this._loggedIn && !this._loginInProgress) Hub.router.showScreen('login');
-      }
-    }, APP_CONFIG.AUTH_FALLBACK_TIMEOUT_MS);
-
-    // Fallback 2: 8s — absolute safety net
-    setTimeout(() => {
-      if (this._loggedIn) {
-        console.log('[Auth] 8s fallback skipped - already logged in');
-        return;
-      }
-      if (!this._loggedIn && !this._loginInProgress) {
-        const el = document.getElementById('loadingScreen');
-        if (el && el.style.display !== 'none') {
-          console.warn('[Auth] 8s HARD fallback → login');
-          Hub.router.showScreen('login');
-        }
-      }
-    }, APP_CONFIG.AUTH_HARD_FALLBACK_MS);
-
-    this._startIdleTimer();
-  },
-
-  async _onLogin(user) {
-    // Atomic check and set - prevent concurrent login attempts
-    if (this._loginInProgress || this._loggedIn) {
-      console.log('[Auth] Login already in progress or completed, skip');
-      return;
-    }
+    @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+    @keyframes kenBurns { 0% { transform: scale(1); } 50% { transform: scale(1.1) translate(-5%, -5%); } 100% { transform: scale(1); } }
+    body { background: var(--bg-base); color: #f9fafb; font-family: 'Inter', system-ui, sans-serif; margin: 0; line-height: 1.5; }
+    .card { background: linear-gradient(145deg, var(--bg-surface-1), var(--bg-card)); border-radius: 1rem; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 4px 6px rgba(0,0,0,.3); }
+    .btn { padding: .5rem 1rem; border-radius: .5rem; font-weight: 500; cursor: pointer; transition: all .2s; border: none; display: inline-flex; align-items: center; gap: .4rem; }
+    .btn-primary { background: #3b82f6; color: #fff; } .btn-primary:hover { background: #2563eb; }
+    .btn-secondary { background: #374151; color: #fff; } .btn-secondary:hover { background: #4b5563; }
+    .btn-danger { background: #ef4444; color: #fff; } .btn-danger:hover { background: #dc2626; }
+    .btn-success { background: #10b981; color: #fff; } .btn-success:hover { background: #059669; }
+    .input { background: #374151; border: 1px solid #4b5563; border-radius: .5rem; padding: .5rem 1rem; color: #fff; width: 100%; box-sizing: border-box; }
+    .input:focus { outline: none; border-color: #3b82f6; }
+    .hidden { display: none !important; }
+    .page { display: none; } .page.active { display: block; }
+    .standby-clock { font-variant-numeric: tabular-nums; letter-spacing: -.05em; }
+    .photo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+    .photo-item { aspect-ratio: 16/9; background: #1f2937; border-radius: .5rem; overflow: hidden; }
+    .photo-item img { width: 100%; height: 100%; object-fit: cover; transition: opacity 1s; }
+    .alert-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 50; padding: .75rem 1rem; text-align: center; font-weight: 700; }
+    .alert-banner.warning { background: #ef4444; } .alert-banner.watch { background: #f59e0b; color: #000; } .alert-banner.advisory { background: #eab308; color: #000; }
+    .status-dot { display: inline-block; width: .75rem; height: .75rem; border-radius: 50%; }
+    .status-dot.green { background: #10b981; } .status-dot.red { background: #ef4444; } .status-dot.yellow { background: #f59e0b; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 60; padding: 1rem; }
+    .progress-bar { height: 1rem; background: #374151; border-radius: 9999px; overflow: hidden; }
+    .progress-fill { height: 100%; border-radius: 9999px; transition: width .4s; }
+    select.input { appearance: auto; }
     
-    this._loginInProgress = true;
-
-    try {
-      console.log('[Auth] _onLogin:', user.email);
-      
-      // Double-check after setting flag
-      if (this._loggedIn) {
-        console.log('[Auth] Already logged in (detected after flag set), skip');
-        return;
-      }
-      
-      const allowed = await Hub.auth.checkAccess(user);
-      console.log('[Auth] checkAccess →', allowed);
-
-      // Triple check - another tab could have completed login
-      if (this._loggedIn) {
-        console.log('[Auth] Already logged in (detected after checkAccess), skip');
-        return;
-      }
-
-      if (!allowed) {
-        console.warn('[Auth] DENIED:', user.email);
-        Hub.utils.$('deniedEmail').textContent = user.email;
-        Hub.router.showScreen('accessDenied');
-        return;
-      }
-
-      // Set logged in BEFORE any async operations
-      this._loggedIn = true;
-      Hub.state.user = user;
-
+    /* Standby photo transitions */
+    #standbyCurrentPhoto { transition: opacity 0.5s ease-in-out; }
+    
+    /* Responsive utilities */
+    @media (max-width: 640px) {
+      .card { padding: 1rem; margin-bottom: 1rem; }
+      .standby-clock { font-size: 4rem !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- Loading Screen -->
+    <div id="loadingScreen" class="min-h-screen flex items-center justify-center">
+      <div class="text-center">
+        <div class="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-500 mx-auto mb-4"></div>
+        <p class="text-xl text-gray-400" id="loadingText">Loading Home Hub…</p>
+      </div>
+    </div>
+    <script>
+      // Instant check: does localStorage have a saved Supabase session?
       try {
-        const s = await Hub.db.loadSettings(user.id);
-        Hub.state.settings = s || {};
+        const key = Object.keys(localStorage).find(k => k.startsWith('sb-') && k.endsWith('-auth-token'));
+        if (key) {
+          const stored = JSON.parse(localStorage.getItem(key));
+          const email = stored?.user?.email;
+          const el = document.getElementById('loadingText');
+          if (email && el) el.textContent = 'Welcome back, ' + email.split('@')[0] + '! Signing in…';
+        }
+      } catch (e) { /* ignore */ }
+    </script>
+
+    <!-- Login Screen -->
+    <div id="loginScreen" class="page min-h-screen flex items-center justify-center">
+      <div class="card max-w-md w-full text-center mx-4">
+        <h1 class="text-5xl font-bold mb-4">🏠 Home Hub</h1>
+        <p class="text-gray-400 mb-8">Your family command center</p>
+        <button id="btnGoogleLogin" class="btn btn-primary w-full text-lg py-3">Sign in with Google</button>
+        <p class="text-xs text-gray-500 mt-4">
+          By signing in, you agree to our 
+          <a href="/tos.html" target="_blank" class="text-blue-400 hover:text-blue-300 underline">Terms of Service</a> and 
+          <a href="/privacy.html" target="_blank" class="text-blue-400 hover:text-blue-300 underline">Privacy Policy</a>
+        </p>
+        <button id="btnCheckSupabase" class="btn btn-secondary w-full text-sm py-2 mt-4">🔍 Check Supabase</button>
+        <pre id="debugOutput" style="display:none; text-align:left; font-size:0.7rem; line-height:1.4; background:#0f172a; color:#94a3b8; padding:1rem; border-radius:0.5rem; margin-top:1rem; max-height:400px; overflow:auto; white-space:pre-wrap; word-break:break-all;"></pre>
+      </div>
+    </div>
+
+    <!-- Access Denied Screen -->
+    <div id="accessDeniedScreen" class="page min-h-screen flex items-center justify-center">
+      <div class="card max-w-md w-full text-center mx-4">
+        <div class="text-7xl mb-6">🚫</div>
+        <h1 class="text-4xl font-bold mb-4">Access Denied</h1>
+        <p class="text-gray-400 mb-4">Your account is not authorized.</p>
+        <p class="text-gray-500 text-sm mb-8" id="deniedEmail"></p>
+        <button id="btnSignOutDenied" class="btn btn-secondary w-full">Sign Out</button>
+      </div>
+    </div>
+
+    <!-- Alert Banner (fixed top) -->
+    <div id="alertBanner" class="alert-banner hidden"></div>
+
+    <!-- Alert Popup Modal -->
+    <div id="alertPopup" class="modal-overlay hidden">
+      <div class="card max-w-2xl w-full text-center">
+        <div class="text-7xl mb-4">⚠️</div>
+        <h2 class="text-3xl font-bold mb-4">Weather Alert</h2>
+        <p id="alertPopupText" class="text-xl mb-6"></p>
+        <button id="btnDismissAlert" class="btn btn-primary px-8 py-3">Acknowledged</button>
+      </div>
+    </div>
+
+    <!-- ========== DASHBOARD ========== -->
+    <div id="dashboardPage" class="page">
+      <div class="max-w-7xl mx-auto p-4 md:p-6">
+        <!-- Header -->
+        <header class="mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+          <div>
+            <h1 class="text-4xl md:text-5xl font-bold">🏠 Home Hub</h1>
+            <p class="text-gray-400 mt-2 text-base" id="dashboardDate"></p>
+            <p class="text-blue-400 text-base mt-1" id="dashboardGreeting"></p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="Hub.router.go('standby')" class="btn btn-secondary text-sm py-2 px-4">🖥 Standby</button>
+            <button onclick="Hub.router.go('status')" class="btn btn-secondary text-sm py-2 px-4">📊 Status</button>
+            <button onclick="Hub.router.go('settings')" class="btn btn-secondary text-sm py-2 px-4">⚙️ Settings</button>
+            <button id="btnSignOut" class="btn btn-secondary text-sm py-2 px-4">Sign Out</button>
+          </div>
+        </header>
+
+        <!-- Main Grid - 2 Column Layout -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          
+          <!-- Left Column -->
+          <div class="space-y-6">
+            
+            <!-- Calendar Widget -->
+            <div class="card">
+              <div id="calendarWidget">
+                <p class="text-gray-400 text-sm">Loading calendar...</p>
+              </div>
+            </div>
+
+            <!-- Weather Card -->
+            <div class="card">
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold">☀️ Weather</h2>
+                <button onclick="Hub.router.go('weather')" class="text-blue-400 hover:text-blue-300 text-sm">
+                  Full Forecast →
+                </button>
+              </div>
+              <div id="dashboardWeather">
+                <p class="text-gray-400 text-sm">Loading weather…</p>
+              </div>
+            </div>
+
+          </div>
+          
+          <!-- Right Column -->
+          <div class="space-y-6">
+            
+            <!-- Dog Treat Status Widget -->
+            <div class="card">
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="font-bold text-xl">🐕 Barker</h3>
+                <button onclick="Hub.treats.showQuickAdd()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg font-semibold transition-colors">
+                  + Treat
+                </button>
+              </div>
+              <div id="dogStatusWidget">
+                <p class="text-gray-400 text-sm">Loading...</p>
+              </div>
+            </div>
+
+            <!-- Chores Preview -->
+            <div class="card">
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold">Today's Chores</h2>
+                <button onclick="Hub.router.go('chores')" class="text-blue-400 hover:text-blue-300 text-sm">
+                  View All →
+                </button>
+              </div>
+              <div id="dashboardChores" class="space-y-2">
+                <p class="text-gray-400 text-sm">Loading chores...</p>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Photos Widget - Full Width -->
+          <div class="card lg:col-span-2">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-bold text-xl">📸 Family Photos</h3>
+            </div>
+            <div id="immichDashboardWidget" class="min-h-[200px]">
+              <p class="text-gray-400 text-sm text-center py-8">Loading photos...</p>
+            </div>
+          
+
+            <!-- Now Playing -->
+            <div class="card">
+              <h2 class="text-xl font-bold mb-4">🎵 Now Playing</h2>
+              <div id="nowPlayingWidget"></div>
+            </div>
+
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== STANDBY ========== -->
+    <div id="standbyPage" class="page min-h-screen bg-black text-white relative overflow-hidden cursor-pointer">
+      <!-- Full screen photo background - rotating -->
+      <div id="standbyPhotoBackground" class="absolute inset-0 transition-opacity duration-1000">
+        <img id="standbyCurrentPhoto" class="w-full h-full object-cover" alt="" />
+      </div>
+      
+      <!-- Dark overlay for readability -->
+      <div class="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/20"></div>
+      
+      <!-- Content overlay - responsive -->
+      <div class="relative z-10 min-h-screen p-4 sm:p-6 md:p-8 flex flex-col justify-end" id="standbyContent">
         
-        // Clear caches when loading new settings
-        if (s?.selected_calendars) {
-          if (Hub.calendar?.clearCache) Hub.calendar.clearCache();
-        }
-      } catch (e) {
-        console.warn('[Auth] Settings load failed:', e.message);
-        Hub.state.settings = {};
-      }
+        <!-- Time and Date - Bottom Left Corner -->
+        <div class="mb-4">
+          <!-- Clock -->
+          <div id="standbyClock" class="text-5xl sm:text-6xl md:text-7xl font-bold tracking-tight mb-1"></div>
+          <!-- Date -->
+          <div id="standbyDate" class="text-base sm:text-lg md:text-xl text-gray-300 font-light"></div>
+        </div>
 
-      console.log('[Auth] ✓ Showing app');
-      
-      // Call chore reset fallback (non-blocking)
-      this._callChoreResetEndpoint().catch(e => 
-        console.warn('[App] Chore reset fallback failed:', e.message)
-      );
-      
-      this._showApp();
-    } catch (e) {
-      console.error('[Auth] _onLogin error:', e);
-      this._loggedIn = false;
-      Hub.router.showScreen('login');
-    } finally {
-      this._loginInProgress = false;
-    }
-  },
+        <!-- Info Cards - compact and responsive -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 max-w-6xl w-full mb-4">
+          
+          <!-- Calendar Events - compact -->
+          <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10">
+            <h3 class="text-sm font-semibold mb-2 text-blue-400">📅 Upcoming Events</h3>
+            <div id="standbyCalendar" class="space-y-2 text-xs sm:text-sm max-h-32 overflow-hidden">
+              <p class="text-gray-400">Loading...</p>
+            </div>
+          </div>
 
-  _showApp() {
-    console.log('[Auth] _showApp called');
-    
-    // FORCE hide loading screen
-    const loadingScreen = document.getElementById('loadingScreen');
-    if (loadingScreen) {
-      loadingScreen.style.display = 'none';
-      console.log('[Auth] Loading screen hidden');
-    }
-    
-    // FORCE hide all pages including login
-    document.querySelectorAll('.page').forEach(p => {
-      p.classList.remove('active');
-      p.style.display = 'none'; // EXTRA: force display none
-    });
-    console.log('[Auth] All pages hidden');
+          <!-- Due Chores - compact -->
+          <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10">
+            <h3 class="text-sm font-semibold mb-2 text-green-400">✅ Chores Due</h3>
+            <div id="standbyChores" class="space-y-2 text-xs sm:text-sm max-h-32 overflow-hidden">
+              <p class="text-gray-400">Loading...</p>
+            </div>
+          </div>
 
-    // CRITICAL: Clear OAuth code from URL to prevent reprocessing
-    if (window.location.search.includes('code=')) {
-      const cleanUrl = window.location.origin + window.location.pathname + window.location.hash;
-      window.history.replaceState({}, document.title, cleanUrl);
-      console.log('[Auth] OAuth code cleared from URL');
-    }
+          <!-- Weather - compact -->
+          <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10 sm:col-span-2 lg:col-span-1">
+            <h3 class="text-sm font-semibold mb-2 text-yellow-400">🌤️ Weather</h3>
+            <div id="standbyWeather" class="text-xs sm:text-sm">
+              <p class="text-gray-400">Loading...</p>
+            </div>
+          </div>
+          
+        </div>
 
-    const hash = window.location.hash.replace('#/', '').replace('#', '');
-    const page = Hub.router.VALID_PAGES.includes(hash) ? hash : 'dashboard';
-    const el = Hub.utils.$(page + 'Page');
-    
-    if (el) {
-      el.classList.add('active');
-      el.style.display = 'block'; // EXTRA: force display block
-      console.log('[Auth] Showing page:', page);
-    } else {
-      const dashboard = document.getElementById('dashboardPage');
-      dashboard.classList.add('active');
-      dashboard.style.display = 'block'; // EXTRA: force display block
-      console.log('[Auth] Showing dashboard (fallback)');
-    }
+        <!-- Tap to wake hint - always at very bottom -->
+        <div class="text-center mt-4 sm:mt-6">
+          <p class="text-gray-500 text-xs">Tap anywhere to wake</p>
+        </div>
 
-    Hub.router.current = page;
-    console.log('[Auth] Page:', page);
-    this.onPageEnter(page);
-  },
+      </div>
+    </div>
 
-  onPageEnter(page) {
-    this._resetIdleTimer();
-    // Stop radar animation when leaving weather page
-    if (page !== 'weather' && Hub.weather) {
-      Hub.weather.stopRadarAnimation();
-    }
-    switch (page) {
-      case 'dashboard': this._loadDashboard(); break;
-      case 'weather':   this._loadWeatherPage(); break;
-      case 'chores':
-        Hub.chores.load();
-        Hub.chores.renderStats?.('choresStats', 7).catch?.(() => {});
-        break;
-      case 'treats':    Hub.treats.loadDogs(); break;
-      case 'standby':   Hub.standby.start(); break;
-      case 'music': Hub.music?.onEnter?.(); Hub.music?.renderBluetoothHelp?.(); break;
-      case 'radio': Hub.radio?.onEnter?.(); break;
-      case 'settings':  this._loadSettingsForm(); break;
-      case 'status':    this._loadStatusPage(); break;
-      case 'control':   Hub.control?.load?.(); break;
-    }
-  },
-
-  async _loadDashboard() {
-    Hub.ui.updateDashboardDate();
-    Hub.ui.updateDashboardGreeting();
-    
-    // Load chores for dashboard
-    if (Hub.chores && typeof Hub.chores.renderDashboard === 'function') {
-      Hub.chores.renderDashboard().catch(e => console.warn('[Dashboard] Chores error:', e));
-    }
-
-    // Load chore stats (leaderboard)
-    if (Hub.chores && typeof Hub.chores.renderStats === 'function') {
-      Hub.chores.renderStats('dashboardChoreStats', 7, { compact: true }).catch(e => console.warn('[Dashboard] Chore stats error:', e));
-    }
-    
-    this._loadDashboardWeather();
-    
-    // Load calendar widget
-    if (Hub.calendar && typeof Hub.calendar.renderDashboard === 'function') {
-      Hub.calendar.renderDashboard().catch(e => console.warn('[Dashboard] Calendar error:', e));
-    }
-    
-    // Load dog status widget
-    if (Hub.treats && typeof Hub.treats.renderDashboardWidget === 'function') {
-      Hub.treats.renderDashboardWidget().catch(e => console.warn('[Dashboard] Dog status error:', e));
-    }
-    
-    // Load Immich photos widget
-    if (Hub.immich && typeof Hub.immich.renderDashboardWidget === 'function') {
-      Hub.immich.renderDashboardWidget().catch(e => console.warn('[Dashboard] Photos error:', e));
-    }
-    if (Hub.player) Hub.player.updateUI();
-  },
-
-  async _loadDashboardWeather() {
-    try {
-      await Hub.weather.renderDashboard();
-      // Check for alerts (still works without AI)
-      const alerts = await Hub.weather.fetchAlerts();
-      if (alerts.length > 0) {
-        const alert = alerts[0];
-        Hub.ui.showBanner(alert.headline || 'Weather Alert', alert.severity || 'warning');
-      } else {
-        Hub.ui.hideBanner();
-      }
-    } catch (e) {
-      console.error('Dashboard weather error:', e);
-    }
-  },
-
-  async _loadWeatherPage() {
-    try {
-      await Hub.weather.renderWeatherPage();
-    } catch (e) {
-      console.error('Weather page error:', e);
-      const el = Hub.utils.$('weatherContent');
-      if (el) el.innerHTML = '<p class="text-yellow-400">Error loading weather data.</p>';
-    }
-  },
-
-  async _loadStatusPage() {
-    const el = Hub.utils.$('statusContent');
-    if (!el) return;
-    el.innerHTML = '<p class="text-gray-400">Checking services…</p>';
-    const base = Hub.utils.apiBase();
-    const checks = [
-      { name: 'Supabase', key: 'supabase' },
-      { name: 'Weather Aggregate', key: 'weather' },
-      { name: 'AI Summary', key: 'ai' },
-      { name: 'Immich Album', key: 'immich' }
-    ];
-    try {
-      const resp = await fetch(`${base}/api/health`);
-      const data = resp.ok ? await resp.json() : {};
-      const svcData = data.services || data;
-      el.innerHTML = '<div class="space-y-4">' + checks.map(c => {
-        const svc = svcData[c.key]; const ok = svc?.status === 'ok'; const cls = ok ? 'green' : 'red';
-        return `<div class="card flex items-center justify-between"><div class="flex items-center gap-3"><span class="status-dot ${cls}"></span><span class="font-medium">${Hub.utils.esc(c.name)}</span></div><div class="text-right"><span class="text-sm ${ok ? 'text-green-400' : 'text-red-400'}">${ok ? 'OK' : svc?.error || 'Error'}</span>${svc?.latency_ms ? `<span class="text-xs text-gray-500 ml-2">${svc.latency_ms}ms</span>` : ''}</div></div>`;
-      }).join('') + '</div>' + `<p class="text-xs text-gray-500 mt-4">Last checked: ${new Date().toLocaleTimeString()}</p>`;
-    } catch (e) { el.innerHTML = '<div class="card"><p class="text-red-400">Unable to reach health endpoint</p></div>'; }
-  },
-
-  _loadSettingsForm() {
-    const s = Hub.state.settings || {}; const cfg = window.HOME_HUB_CONFIG || {};
-    Hub.utils.$('settingLocationName').value = s.location_name || cfg.defaultLocation?.name || '';
-    Hub.utils.$('settingLat').value          = s.location_lat  || cfg.defaultLocation?.lat || '';
-    Hub.utils.$('settingLon').value          = s.location_lon  || cfg.defaultLocation?.lon || '';
-    Hub.utils.$('settingImmichUrl').value    = s.immich_base_url || cfg.immichBaseUrl || '';
-    Hub.utils.$('settingImmichKey').value    = s.immich_api_key  || cfg.immichSharedAlbumKeyOrToken || '';
-    Hub.utils.$('settingImmichAlbum').value  = s.immich_album_id || '';
-    Hub.utils.$('settingIdleTimeout').value  = s.standby_timeout_min || 10;
-    Hub.utils.$('settingQuietStart').value   = s.quiet_hours_start || '22:00';
-    Hub.utils.$('settingQuietEnd').value     = s.quiet_hours_end   || '07:00';
-    
-    // Load calendar selection if calendars available
-    this._loadCalendarSelection();
-  },
-
-  async _loadCalendarSelection() {
-    const container = Hub.utils.$('calendarCheckboxes');
-    if (!container) return;
-
-    const savedCalendars = Hub.state?.settings?.selected_calendars || ['primary'];
-    
-    // Show loading state
-    container.innerHTML = '<p class="text-gray-400 text-sm">Click "Load My Calendars" to select which calendars to display</p>';
-  },
-
-  async _fetchAndDisplayCalendars() {
-    const container = Hub.utils.$('calendarCheckboxes');
-    const btn = Hub.utils.$('btnLoadCalendars');
-    if (!container) {
-      console.error('[App] Calendar container not found');
-      return;
-    }
-
-    console.log('[App] Fetching calendars...');
-    btn.disabled = true;
-    btn.textContent = 'Loading...';
-    container.innerHTML = '<p class="text-gray-400 text-sm animate-pulse">Fetching your calendars...</p>';
-
-    const calendars = await Hub.calendar.getCalendarList();
-    btn.disabled = false;
-    btn.textContent = 'Reload Calendars';
-
-    console.log('[App] Calendar fetch result:', calendars);
-
-    if (calendars.error) {
-      console.error('[App] Calendar fetch error:', calendars.error);
-      container.innerHTML = `
-        <div class="text-red-400 text-sm">
-          <p class="font-semibold mb-2">⚠️ Error loading calendars</p>
-          <p class="text-xs mb-3">${Hub.utils.esc(calendars.error)}</p>
-          <div class="bg-red-900 bg-opacity-20 p-3 rounded text-xs space-y-2">
-            <p><strong>Troubleshooting:</strong></p>
-            <ul class="list-disc pl-4 space-y-1">
-              <li>Make sure you signed in with calendar permissions</li>
-              <li>Try signing out and back in</li>
-              <li>Check browser console (F12) for detailed errors</li>
-              <li>Verify Calendar API is enabled in Google Cloud</li>
-            </ul>
-            <button onclick="Hub.auth.signOut()" class="btn btn-sm btn-secondary mt-2">
-              Sign Out & Reconnect
-            </button>
+    <!-- ========== WEATHER ========== -->
+    <div id="weatherPage" class="page">
+      <div class="max-w-7xl mx-auto p-4 md:p-6">
+        <header class="flex items-center justify-between mb-6">
+          <h1 class="text-3xl font-bold">🌤️ Weather Center</h1>
+          <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
+        </header>
+        <div id="weatherContent"><p class="text-gray-400">Loading detailed weather…</p></div>
+        <div class="card mt-6">
+          <h2 class="text-xl font-bold mb-4">🌧 Rain Radar</h2>
+          <div id="rainRadar" class="bg-gray-800 rounded-lg p-4 text-center">
+            <p class="text-gray-400 text-sm">Loading radar…</p>
           </div>
         </div>
-      `;
-      Hub.ui.toast('Failed to load calendars', 'error');
-      return;
-    }
+      </div>
+    </div>
 
-    if (!calendars || calendars.length === 0) {
-      container.innerHTML = `
-        <div class="text-gray-400 text-sm">
-          <p class="mb-2">No calendars found</p>
-          <p class="text-xs">This might mean:</p>
-          <ul class="list-disc pl-4 text-xs space-y-1 mt-2">
-            <li>You don't have any Google Calendars</li>
-            <li>Calendar permissions weren't granted</li>
-          </ul>
-          <button onclick="Hub.auth.signOut()" class="btn btn-sm btn-secondary mt-2">
-            Sign Out & Reconnect
-          </button>
-        </div>
-      `;
-      return;
-    }
-
-    const savedCalendars = Hub.state?.settings?.selected_calendars || ['primary'];
-    console.log('[App] Saved calendars:', savedCalendars);
-    console.log('[App] Available calendars:', calendars.map(c => c.id));
-    
-    // Create checkboxes for each calendar
-    container.innerHTML = calendars.map((cal, idx) => {
-      const isChecked = savedCalendars.includes(cal.id);
-      const colorStyle = cal.backgroundColor ? `background-color: ${cal.backgroundColor}` : 'background-color: #3b82f6';
-      
-      return `
-        <label class="flex items-center gap-3 p-2 rounded hover:bg-gray-700 cursor-pointer">
-          <input 
-            type="checkbox" 
-            class="calendar-checkbox w-4 h-4" 
-            data-calendar-id="${Hub.utils.esc(cal.id)}"
-            ${isChecked ? 'checked' : ''}
-          >
-          <div class="w-3 h-3 rounded-full flex-shrink-0" style="${colorStyle}"></div>
-          <div class="flex-1 min-w-0">
-            <p class="font-medium text-sm truncate">${Hub.utils.esc(cal.summary || 'Untitled')}</p>
-            ${cal.description ? `<p class="text-xs text-gray-400 truncate">${Hub.utils.esc(cal.description)}</p>` : ''}
-            <p class="text-xs text-gray-500 mt-1">ID: ${Hub.utils.esc(cal.id)}</p>
+    <!-- ========== CHORES ========== -->
+    <div id="choresPage" class="page">
+      <div class="max-w-7xl mx-auto p-4 md:p-6">
+        <header class="flex items-center justify-between mb-6">
+          <h1 class="text-3xl font-bold">✅ Chores</h1>
+          <div class="flex gap-3">
+            <button id="btnAddChore" class="btn btn-primary">+ Add Chore</button>
+            <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
           </div>
-        </label>
-      `;
-    }).join('');
+        </header>
+        <div id="choresList"></div>
+      </div>
+    </div>
 
-    Hub.ui.toast(`Loaded ${calendars.length} calendars! Select which ones to show`, 'success');
-    console.log('[App] Calendar checkboxes rendered');
-  },
+    <!-- ========== TREATS ========== -->
+    <div id="treatsPage" class="page">
+      <div class="max-w-7xl mx-auto p-4 md:p-6">
+        <header class="flex items-center justify-between mb-6">
+          <h1 class="text-3xl font-bold">🐕 Dog Treats</h1>
+          <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
+        </header>
+        <div id="dogSelector" class="mb-6"></div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div class="card md:col-span-2">
+            <h2 class="text-2xl font-bold mb-4" id="selectedDogName">Select a dog</h2>
+            <div id="calorieProgress" class="mb-6"></div>
+            <div id="todayTreats"></div>
+            <div id="weekHistory" class="mt-6"></div>
+          </div>
+          <div class="card">
+            <button id="btnAddTreat" class="btn btn-primary w-full mb-4">+ Log Treat</button>
+            <button id="btnAddDog" class="btn btn-secondary w-full">+ Add Dog</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
-  async _saveSettings() {
-    if (!Hub.state.user || !Hub.state.household_id) return;
-    
-    // Get selected calendar IDs from checkboxes
-    const selectedCalendars = [];
-    document.querySelectorAll('.calendar-checkbox:checked').forEach(cb => {
-      selectedCalendars.push(cb.dataset.calendarId);
-    });
-    
-    const payload = {
-      location_name: Hub.utils.$('settingLocationName').value.trim(),
-      location_lat: parseFloat(Hub.utils.$('settingLat').value) || 40.029059,
-      location_lon: parseFloat(Hub.utils.$('settingLon').value) || -82.863462,
-      standby_timeout_min: parseInt(Hub.utils.$('settingIdleTimeout').value) || 10,
-      quiet_hours_start: Hub.utils.$('settingQuietStart').value || '22:00',
-      quiet_hours_end: Hub.utils.$('settingQuietEnd').value || '07:00',
-      immich_base_url: Hub.utils.$('settingImmichUrl').value.trim(),
-      immich_api_key: Hub.utils.$('settingImmichKey').value.trim(),
-      immich_album_id: Hub.utils.$('settingImmichAlbum').value.trim(),
-      selected_calendars: selectedCalendars.length > 0 ? selectedCalendars : ['primary']
-    };
-    try {
-      const saved = await Hub.db.saveSettings(Hub.state.user.id, Hub.state.household_id, payload);
-      Hub.state.settings = saved; 
-      
-      // ALSO save to localStorage as backup
-      if (selectedCalendars.length > 0) {
-        localStorage.setItem('selected_calendars', JSON.stringify(selectedCalendars));
-        console.log('[App] Saved to localStorage backup:', selectedCalendars);
-      }
-      
-      // Clear caches so new settings take effect immediately
-      Hub.weather._cache = null; 
-      Hub.ai._cache = null;
-      Hub.calendar._cache = null; // Clear calendar cache!
-      
-      console.log('[App] Settings saved, calendars selected:', saved.selected_calendars);
-      
-      Hub.ui.toast('Settings saved! Refreshing calendar...', 'success'); 
-      
-      // Refresh dashboard to show new calendar selection
-      Hub.router.go('dashboard');
-    } catch (e) { 
-      console.error('[Settings] Save error:', e.message);
-      Hub.ui.toast('Failed to save settings. Please check your internet connection and try again.', 'error');
-    }
-  },
+    <!-- ========== STATUS ========== -->
+    <div id="statusPage" class="page">
+      <div class="max-w-4xl mx-auto p-4 md:p-6">
+        <header class="flex items-center justify-between mb-6">
+          <h1 class="text-3xl font-bold">📊 System Status</h1>
+          <div class="flex gap-3">
+            <button id="btnRefreshStatus" class="btn btn-primary">Refresh</button>
+            <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
+          </div>
+        </header>
+        <div id="statusContent"><p class="text-gray-400">Checking services…</p></div>
+      </div>
+    </div>
 
-  _useCurrentLocation() {
-    navigator.geolocation.getCurrentPosition(
-      pos => { Hub.utils.$('settingLat').value = pos.coords.latitude.toFixed(6); Hub.utils.$('settingLon').value = pos.coords.longitude.toFixed(6); Hub.ui.toast('Location updated'); },
-      () => Hub.ui.toast('Location access denied', 'error')
-    );
-  },
+    <!-- ========== SETTINGS ========== -->
+<!-- ========== CONTROL / ADMIN PANEL ========== -->
+<!-- Add this BEFORE the settingsPage section in your index.html -->
 
-  _bindUI() {
-    Hub.utils.$('btnGoogleLogin')?.addEventListener('click', () => Hub.auth.signInGoogle());
-    Hub.utils.$('btnCheckSupabase')?.addEventListener('click', () => Hub.debug.checkSupabase());
-    Hub.utils.$('btnSignOut')?.addEventListener('click', () => Hub.auth.signOut());
-    Hub.utils.$('btnSignOutDenied')?.addEventListener('click', () => Hub.auth.signOut());
-    Hub.utils.$('btnDismissAlert')?.addEventListener('click', () => Hub.ui.dismissAlert());
-    Hub.utils.$('btnAddChore')?.addEventListener('click', () => Hub.chores.showAdd());
-    Hub.utils.$('btnSaveChore')?.addEventListener('click', () => Hub.chores.add());
-    Hub.utils.$('btnAddTreat')?.addEventListener('click', () => Hub.treats.showAddTreat());
-    Hub.utils.$('btnSaveTreat')?.addEventListener('click', () => Hub.treats.logTreat());
-    Hub.utils.$('btnAddDog')?.addEventListener('click', () => Hub.treats.showAddDog());
-    Hub.utils.$('btnSaveDog')?.addEventListener('click', () => Hub.treats.addDog());
-    Hub.utils.$('btnSaveSettings')?.addEventListener('click', () => Hub.app._saveSettings());
-    Hub.utils.$('btnUseLocation')?.addEventListener('click', () => Hub.app._useCurrentLocation());
-    Hub.utils.$('btnRefreshStatus')?.addEventListener('click', () => Hub.app._loadStatusPage());
-    Hub.utils.$('btnLoadCalendars')?.addEventListener('click', () => Hub.app._fetchAndDisplayCalendars());
+    <div id="controlPage" class="page">
+      <div class="max-w-4xl mx-auto p-4 md:p-6">
+        <header class="flex items-center justify-between mb-6">
+          <h1 class="text-3xl font-bold">🛰️ Site Control Center</h1>
+          <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
+        </header>
 
-    // Hidden: secret admin-only control center entry
-    this._bindSecretControlEntry();
-  },
+        <div id="controlAdminGate" class="card mb-6 hidden">
+          <h2 class="text-xl font-bold mb-2">🔒 Admin only</h2>
+          <p class="text-gray-400 text-sm">This page is restricted to household admins.</p>
+        </div>
 
-  _bindSecretControlEntry() {
-    const title = document.getElementById('homeHubTitle');
-    if (title && !title._controlBound) {
-      title._controlBound = true;
-      let clicks = 0;
-      let timer = null;
-      title.addEventListener('click', () => {
-        clicks++;
-        clearTimeout(timer);
-        timer = setTimeout(() => { clicks = 0; }, 1200);
-        if (clicks >= APP_CONFIG.SECRET_CLICK_COUNT) {
-          clicks = 0;
-          if (Hub.state?.userRole === 'admin') {
-            Hub.router.go('control');
-            try { Hub.ui.toast('Control Center unlocked', 'success'); } catch (e) {
-              console.warn('[App] Failed to show toast:', e.message);
-            }
-          } else {
-            try { Hub.ui.toast('Admin only', 'error'); } catch (e) {
-              console.warn('[App] Failed to show toast:', e.message);
-            }
-          }
-        }
-      });
-    }
+        <div id="controlContent" class="space-y-6">
+          <!-- Admin controls will be added here by control.js -->
+          
+          <!-- Original Site Control Features -->
+          <div class="card">
+            <div class="flex items-center justify-between gap-4 mb-4">
+              <h2 class="text-xl font-bold">Remote Banner & Maintenance</h2>
+              <span class="text-xs text-gray-500">Controls a different site via Supabase</span>
+            </div>
 
-    // Optional extra: type "control" anywhere to open (admin-only)
-    if (!window._hubControlKeySeqBound) {
-      window._hubControlKeySeqBound = true;
-      let buf = '';
-      let last = 0;
-      window.addEventListener('keydown', (e) => {
-        if (!Hub.state?.user) return;
-        const now = Date.now();
-        if (now - last > APP_CONFIG.SECRET_KEY_TIMEOUT_MS) buf = '';
-        last = now;
-        const k = (e.key || '').toLowerCase();
-        if (k.length !== 1) return;
-        buf = (buf + k).slice(-7);
-        if (buf === 'control') {
-          buf = '';
-          if (Hub.state?.userRole === 'admin') {
-            Hub.router.go('control');
-            try { Hub.ui.toast('Control Center unlocked', 'success'); } catch (e) {
-              console.warn('[App] Failed to show toast:', e.message);
-            }
-          } else {
-            try { Hub.ui.toast('Admin only', 'error'); } catch (e) {
-              console.warn('[App] Failed to show toast:', e.message);
-            }
-          }
-        }
-      });
-    }
-  },
+            <div class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium mb-2">Site Name (key)</label>
+                <input id="controlSiteName" type="text" class="input" placeholder="main" value="main">
+                <p class="text-xs text-gray-500 mt-1">Use multiple names if you want multiple controlled sites.</p>
+              </div>
 
-  // Debounce helper to avoid excessive function calls
-  _debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-      const later = () => {
-        clearTimeout(timeout);
-        func.apply(this, args);
-      };
-      clearTimeout(timeout);
-      timeout = setTimeout(later, wait);
-    };
-  },
+              <div>
+                <label class="block text-sm font-medium mb-2">Controlled Site Base URL (optional)</label>
+                <input id="controlBaseUrl" type="url" class="input" placeholder="https://example.com">
+              </div>
 
-  _startIdleTimer() {
-    this._resetIdleTimer();
-    
-    // Debounce the reset to avoid excessive calls (especially for mousemove)
-    const debouncedReset = this._debounce(() => this._resetIdleTimer(), APP_CONFIG.IDLE_DEBOUNCE_MS);
-    
-    ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'].forEach(ev =>
-      window.addEventListener(ev, debouncedReset, { passive: true })
-    );
-  },
+              <div class="flex items-center gap-3">
+                <input id="controlMaintenance" type="checkbox" class="w-4 h-4">
+                <label for="controlMaintenance" class="text-sm font-medium">Maintenance mode</label>
+                <span class="text-xs text-gray-500">(your other site can hide features)</span>
+              </div>
 
-  _resetIdleTimer() {
-    if (this._idleTimer) clearTimeout(this._idleTimer);
-    const timeout = ((Hub.state.settings?.standby_timeout_min) || 10) * 60 * 1000;
-    this._idleTimer = setTimeout(() => {
-      if (Hub.router.current !== 'standby' && Hub.state.user) Hub.router.go('standby');
-    }, timeout);
-  },
+              <div>
+                <label class="block text-sm font-medium mb-2">Banner message</label>
+                <input id="controlBannerMessage" type="text" class="input" placeholder="We'll be back soon…">
+              </div>
 
-  /** Call chore reset endpoint (client fallback) */
-  async _callChoreResetEndpoint() {
-    if (!Hub.state.household_id) {
-      console.log('[App] Skip chore reset - no household');
-      return;
-    }
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-sm font-medium mb-2">Banner severity</label>
+                  <select id="controlBannerSeverity" class="input">
+                    <option value="info">Info</option>
+                    <option value="warning">Warning</option>
+                    <option value="critical">Critical</option>
+                  </select>
+                </div>
+                <div class="flex items-center gap-3 mt-7 sm:mt-0 sm:items-end">
+                  <input id="controlPublicRead" type="checkbox" class="w-4 h-4">
+                  <label for="controlPublicRead" class="text-sm font-medium">Public read</label>
+                </div>
+              </div>
 
-    try {
-      // Get auth token
-      const { data } = await Hub.sb.auth.getSession();
-      const token = data?.session?.access_token;
-      
-      if (!token) {
-        console.log('[App] No token, skip chore reset');
-        return;
-      }
+              <div>
+                <label class="block text-sm font-medium mb-2">Disabled paths (one per line)</label>
+                <textarea id="controlDisabledPaths" class="input" rows="5" placeholder="/games\n/admin\n/some-page"></textarea>
+                <p class="text-xs text-gray-500 mt-1">Your other site can block or hide these pages/links.</p>
+              </div>
 
-      console.log('[App] Calling chore reset endpoint...');
-      const response = await fetch('/api/chores-reset-my-household', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ tz: 'America/New_York' })
-      });
-      
-      const result = await response.json();
-      console.log('[App] Chore reset result:', result);
-      
-      // If chores were reset, refresh chores page if we're on it
-      if (result.resetCount > 0 && Hub.router.current === 'chores') {
-        Hub.chores?.load?.();
-      }
-    } catch (error) {
-      console.error('[App] Chore reset endpoint error:', error);
-      // Don't throw - this is a fallback, cron is primary
-    }
-  }
-};
+              <div class="flex flex-wrap gap-3">
+                <button id="btnControlLoad" class="btn btn-secondary">Reload</button>
+                <button id="btnControlSave" class="btn btn-primary">💾 Save</button>
+              </div>
+              <p id="controlStatus" class="text-xs text-gray-500"></p>
+            </div>
+          </div>
 
-window.addEventListener('DOMContentLoaded', () => Hub.app.init());
+          <div class="card">
+            <div class="flex items-center justify-between mb-3">
+              <h2 class="text-xl font-bold">JSON Preview</h2>
+              <button id="btnControlCopyJson" class="btn btn-secondary text-sm">Copy</button>
+            </div>
+            <pre id="controlJsonPreview" class="bg-gray-900 rounded-lg p-4 text-xs overflow-auto max-h-64">Loading…</pre>
+          </div>
+
+          <div class="card">
+            <h2 class="text-xl font-bold mb-3">Integration Snippet (paste into your other site)</h2>
+            <pre id="controlSnippet" class="bg-gray-900 rounded-lg p-4 text-xs overflow-auto">Loading…</pre>
+            <p class="text-xs text-gray-500 mt-2">If this page says the table is missing, run the new SQL migration in this repo.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="settingsPage" class="page">
+      <div class="max-w-4xl mx-auto p-4 md:p-6">
+        <header class="flex items-center justify-between mb-6">
+          <h1 class="text-3xl font-bold">⚙️ Settings</h1>
+          <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
+        </header>
+        <div class="space-y-6">
+          <!-- Location -->
+          <div class="card">
+            <h2 class="text-xl font-bold mb-4">📍 Location</h2>
+            <div class="space-y-4">
+              <div><label class="block text-sm font-medium mb-2">Location Name</label><input id="settingLocationName" type="text" class="input" placeholder="Home"></div>
+              <div class="grid grid-cols-2 gap-4">
+                <div><label class="block text-sm font-medium mb-2">Latitude</label><input id="settingLat" type="number" step="0.000001" class="input"></div>
+                <div><label class="block text-sm font-medium mb-2">Longitude</label><input id="settingLon" type="number" step="0.000001" class="input"></div>
+              </div>
+              <button id="btnUseLocation" class="btn btn-secondary text-sm">📍 Use Current Location</button>
+            </div>
+          </div>
+          <!-- Immich -->
+          <div class="card">
+            <h2 class="text-xl font-bold mb-4">📸 Immich Photos</h2>
+            <div class="space-y-4">
+              <div><label class="block text-sm font-medium mb-2">Immich Base URL</label><input id="settingImmichUrl" type="url" class="input" placeholder="http://192.168.1.100:2283"></div>
+              <div><label class="block text-sm font-medium mb-2">API Key / Shared Token</label><input id="settingImmichKey" type="password" class="input" placeholder="Your Immich API key or shared link key"></div>
+              <div><label class="block text-sm font-medium mb-2">Album ID</label><input id="settingImmichAlbum" type="text" class="input" placeholder="Shared album ID"></div>
+            </div>
+          </div>
+          <!-- Standby -->
+          <div class="card">
+            <h2 class="text-xl font-bold mb-4">💤 Standby Mode</h2>
+            <div class="space-y-4">
+              <div><label class="block text-sm font-medium mb-2">Auto-enter after (minutes)</label><input id="settingIdleTimeout" type="number" class="input" value="10" min="1" max="60"></div>
+              <div class="grid grid-cols-2 gap-4">
+                <div><label class="block text-sm font-medium mb-2">Quiet Hours Start</label><input id="settingQuietStart" type="time" class="input" value="22:00"></div>
+                <div><label class="block text-sm font-medium mb-2">Quiet Hours End</label><input id="settingQuietEnd" type="time" class="input" value="07:00"></div>
+              </div>
+            </div>
+          </div>
+          <!-- Calendar Selection -->
+          <div class="card">
+            <h2 class="text-xl font-bold mb-4">📅 Calendar Selection</h2>
+            <div id="calendarSelectionContainer">
+              <p class="text-gray-400 text-sm mb-3">Choose which Google Calendars to display on your dashboard</p>
+              <button id="btnLoadCalendars" class="btn btn-secondary text-sm mb-3">Load My Calendars</button>
+              <div id="calendarCheckboxes" class="space-y-2"></div>
+            </div>
+          </div>
+          
+          <!-- Changelog -->
+          <div class="card">
+            <h2 class="text-xl font-bold mb-4">📋 What's New</h2>
+            <div class="space-y-3 text-sm">
+              <div class="border-l-4 border-blue-500 pl-4 py-2">
+                <p class="font-semibold text-blue-400">v2.0.0 - February 9, 2026</p>
+                <ul class="list-disc pl-5 mt-2 space-y-1 text-gray-400">
+                  <li>✨ Multi-calendar selection - choose which calendars to display</li>
+                  <li>📅 Automatic Google Calendar permission requests</li>
+                  <li>👤 Personalization - greetings and chore attribution</li>
+                  <li>🌤️ Redesigned weather center with animated radar</li>
+                  <li>🎨 Color-coded calendar indicators</li>
+                  <li>💾 Settings now persist forever</li>
+                </ul>
+              </div>
+              <div class="border-l-4 border-gray-500 pl-4 py-2">
+                <p class="font-semibold text-gray-300">v1.5.0 - February 8, 2026</p>
+                <ul class="list-disc pl-5 mt-2 space-y-1 text-gray-400">
+                  <li>Fixed navigation tabs</li>
+                  <li>Added standby mode improvements</li>
+                  <li>Google Calendar integration</li>
+                </ul>
+              </div>
+              <div class="border-l-4 border-gray-500 pl-4 py-2">
+                <p class="font-semibold text-gray-300">v1.0.0 - January 2026</p>
+                <ul class="list-disc pl-5 mt-2 space-y-1 text-gray-400">
+                  <li>Initial release</li>
+                  <li>Chores tracking</li>
+                  <li>Dog treat tracker</li>
+                  <li>Weather integration</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <!-- Legal & Privacy -->
+          <div class="card bg-gray-800">
+            <h2 class="text-xl font-bold mb-4">⚖️ Legal & Privacy</h2>
+            <div class="space-y-3 text-sm">
+              <p class="text-gray-400">Your settings and data are stored securely and persist indefinitely while your account is active.</p>
+              <div class="flex flex-wrap gap-4">
+                <a href="/privacy.html" target="_blank" class="text-blue-400 hover:text-blue-300 underline">
+                  📜 Privacy Policy
+                </a>
+                <a href="/tos.html" target="_blank" class="text-blue-400 hover:text-blue-300 underline">
+                  📋 Terms of Service
+                </a>
+                <a href="https://myaccount.google.com/permissions" target="_blank" class="text-blue-400 hover:text-blue-300 underline">
+                  🔐 Manage Google Permissions
+                </a>
+              </div>
+              <p class="text-xs text-gray-500 mt-3">
+                Home Hub uses Google Calendar API. By using calendar features, you agree to our Terms of Service and Privacy Policy, 
+                and acknowledge our compliance with <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" class="text-blue-400 hover:text-blue-300 underline">Google API Services User Data Policy</a>.
+              </p>
+            </div>
+          </div>
+
+          <button id="btnSaveSettings" class="btn btn-primary w-full py-3">💾 Save All Settings</button>
+          <p class="text-center text-sm text-gray-500 mt-2">Settings are automatically saved to your account and persist forever</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== MODALS ========== -->
+  <div id="addDogModal" class="modal-overlay hidden">
+    <div class="card max-w-lg w-full">
+      <h2 class="text-2xl font-bold mb-4">Add Dog</h2>
+      <div class="space-y-4">
+        <input id="dogName" type="text" placeholder="Name" class="input">
+        <input id="dogCalories" type="number" placeholder="Daily calorie limit" class="input" value="1000">
+        <div class="flex gap-3">
+          <button id="btnSaveDog" class="btn btn-primary flex-1">Add Dog</button>
+          <button onclick="Hub.ui.closeModal('addDogModal')" class="btn btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="addTreatModal" class="modal-overlay hidden">
+    <div class="card max-w-lg w-full">
+      <h2 class="text-2xl font-bold mb-4">Log Treat</h2>
+      <div class="space-y-4">
+        <input id="treatName" type="text" placeholder="Treat name" class="input">
+        <input id="treatCalories" type="number" placeholder="Calories" class="input">
+        <div class="flex gap-3">
+          <button id="btnSaveTreat" class="btn btn-primary flex-1">Log Treat</button>
+          <button onclick="Hub.ui.closeModal('addTreatModal')" class="btn btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="addChoreModal" class="modal-overlay hidden">
+    <div class="card max-w-lg w-full">
+      <h2 class="text-2xl font-bold mb-4">Add Chore</h2>
+      <div class="space-y-4">
+        <input id="choreTitle" type="text" placeholder="Title" class="input">
+        <textarea id="choreDescription" placeholder="Description (optional)" class="input" rows="3"></textarea>
+        <select id="choreCategory" class="input">
+          <option value="Daily">Daily</option>
+          <option value="Monday (Living Room)">Monday (Living Room)</option>
+          <option value="Tuesday (Bathrooms)">Tuesday (Bathrooms)</option>
+          <option value="Wednesday (Entryway)">Wednesday (Entryway)</option>
+          <option value="Thursday (Kitchen)">Thursday (Kitchen)</option>
+          <option value="Friday (Bedrooms)">Friday (Bedrooms)</option>
+          <option value="Saturday (Miscellaneous)">Saturday (Miscellaneous)</option>
+          <option value="Sunday (Grocery/Family)">Sunday (Grocery/Family)</option>
+        </select>
+        <select id="chorePriority" class="input">
+          <option value="low">Low Priority</option>
+          <option value="medium" selected>Medium Priority</option>
+          <option value="high">High Priority</option>
+        </select>
+        <div class="flex gap-3">
+          <button id="btnSaveChore" class="btn btn-primary flex-1">Create Chore</button>
+          <button onclick="Hub.ui.closeModal('addChoreModal')" class="btn btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts (order matters) -->
+  <script src="assets/utils.js"></script>
+  <script src="assets/supabase.js"></script>
+  <script src="assets/router.js"></script>
+  <script src="assets/ui.js"></script>
+  <script src="assets/weather.js"></script>
+  <script src="assets/ai.js"></script>
+  <script src="assets/calendar.js"></script>
+  <script src="assets/treats.js"></script>
+  <script src="assets/chores.js"></script>
+  <script src="assets/control.js"></script>
+  <script src="assets/standby.js"></script>
+  <script src="assets/immich.js"></script>
+  <script src="assets/player.js"></script>
+  <script src="assets/radio.js"></script>
+  <script src="assets/music.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>
