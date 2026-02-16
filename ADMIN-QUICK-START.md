@@ -1,214 +1,220 @@
-# WEATHER.JS UI IMPROVEMENTS - Better Visuals & Animations
+# TREATS.JS UPDATES - Timestamp Support & Recent History
 
-## 1. Add animated weather icons (CSS-only, minimal JS changes)
+## 1. Add timestamp when adding treats (around line 397)
 
-The weather rendering already uses emoji icons. To make them more polished, we can add inline SVG icons with CSS animations.
-
-### Option A: Keep emoji but add CSS animations
-
-Add this CSS to index.html (in the enhanced CSS section):
-
-```css
-/* Animated weather icons */
-.weather-icon {
-  display: inline-block;
-  font-size: 3rem;
-  animation: none;
-}
-
-.weather-icon.sunny {
-  animation: pulse 2s ease-in-out infinite;
-}
-
-.weather-icon.cloudy {
-  animation: float 3s ease-in-out infinite;
-}
-
-.weather-icon.rainy {
-  animation: rain 1s linear infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.1); opacity: 0.9; }
-}
-
-@keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-5px); }
-}
-
-@keyframes rain {
-  0% { transform: translateY(-2px); }
-  100% { transform: translateY(2px); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .weather-icon {
-    animation: none !important;
-  }
-}
+FIND:
+```javascript
+      // Add new item
+      const newItem = {
+        id: Date.now().toString(),
+        catalogId: treatId,
+        name: treatName,
+        kcalPerUnit: calories,
+        qty: 1,
+        unitLabel: treat.unitLabel || 'unit',
+        step: treat.step || 1,
+        type: 'catalog',
+        imageUrl: treat.imageUrl || ''
+      };
 ```
 
-Then in weather.js rendering, add classes to icons:
-
-FIND where weather icons are rendered (likely in a method that generates HTML for current conditions).
-
-CHANGE FROM:
+REPLACE with:
 ```javascript
-'<div class="text-6xl mb-2">' + icon + '</div>'
+      // Add new item with timestamp
+      const newItem = {
+        id: Date.now().toString(),
+        catalogId: treatId,
+        name: treatName,
+        kcalPerUnit: calories,
+        qty: 1,
+        unitLabel: treat.unitLabel || 'unit',
+        step: treat.step || 1,
+        type: 'catalog',
+        imageUrl: treat.imageUrl || '',
+        ts: Date.now()  // ADD TIMESTAMP
+      };
 ```
 
-TO:
+## 2. Update renderDashboardWidget to filter by timestamp and show recent history (around line 220)
+
+FIND:
 ```javascript
-'<div class="text-6xl mb-2"><span class="weather-icon ' + iconClass + '">' + icon + '</span></div>'
+      // Calculate treats from items (these should be automatically added by recurring treats)
+      const items = familyData.items || [];
+      const treatCalories = items.reduce((sum, item) => {
+        const calories = (item.kcalPerUnit || 0) * (item.qty || 0);
+        return sum + calories;
+      }, 0);
 ```
 
-Where `iconClass` is determined by conditions:
+REPLACE with:
 ```javascript
-let iconClass = '';
-if (icon.includes('☀') || icon.includes('🌤')) iconClass = 'sunny';
-else if (icon.includes('☁') || icon.includes('🌥')) iconClass = 'cloudy';
-else if (icon.includes('🌧') || icon.includes('⛈')) iconClass = 'rainy';
+      // Calculate treats from items - only count TODAY's treats
+      const items = familyData.items || [];
+      const todayStart = new Date().setHours(0, 0, 0, 0);
+      
+      // Filter to today's treats using timestamp
+      const todayItems = items.filter(item => {
+        // If item has timestamp, use it
+        if (item.ts) {
+          return item.ts >= todayStart;
+        }
+        // Fallback: try to infer from numeric ID (if ID is timestamp-based)
+        if (item.id && !isNaN(item.id)) {
+          return parseInt(item.id) >= todayStart;
+        }
+        // Old items without timestamp - exclude to be safe
+        return false;
+      });
+      
+      const treatCalories = todayItems.reduce((sum, item) => {
+        const calories = (item.kcalPerUnit || 0) * (item.qty || 0);
+        return sum + calories;
+      }, 0);
 ```
 
-### Option B: Use inline SVG icons (more control)
+## 3. Add recent treats history to dashboard widget (around line 318, before closing div)
 
-Create a helper method for weather icons:
-
+FIND:
 ```javascript
-  /** Get animated SVG icon for weather condition */
-  _getWeatherSVG(condition) {
-    const size = 80;
-    
-    // Sunny
-    if (condition.includes('clear') || condition.includes('sunny')) {
-      return `
-        <svg width="${size}" height="${size}" viewBox="0 0 100 100" class="weather-svg sunny">
-          <circle cx="50" cy="50" r="20" fill="#FDB813">
-            <animate attributeName="r" values="20;22;20" dur="2s" repeatCount="indefinite"/>
-          </circle>
-          ${[0, 45, 90, 135, 180, 225, 270, 315].map(angle => `
-            <line 
-              x1="50" y1="50" 
-              x2="${50 + Math.cos(angle * Math.PI / 180) * 35}" 
-              y2="${50 + Math.sin(angle * Math.PI / 180) * 35}" 
-              stroke="#FDB813" 
-              stroke-width="3" 
-              stroke-linecap="round"
-            >
-              <animate attributeName="opacity" values="1;0.5;1" dur="2s" repeatCount="indefinite"/>
-            </line>
-          `).join('')}
-        </svg>
+            </div>
+          </div>
+        </div>
       `;
-    }
-    
-    // Cloudy
-    if (condition.includes('cloud')) {
-      return `
-        <svg width="${size}" height="${size}" viewBox="0 0 100 100" class="weather-svg cloudy">
-          <path 
-            d="M 25,50 Q 25,35 40,35 Q 40,25 50,25 Q 60,25 65,35 Q 80,35 80,50 Q 80,65 65,65 L 25,65 Q 15,65 15,55 Q 15,45 25,50 Z" 
-            fill="#94a3b8"
-          >
-            <animate attributeName="d" 
-              values="M 25,50 Q 25,35 40,35 Q 40,25 50,25 Q 60,25 65,35 Q 80,35 80,50 Q 80,65 65,65 L 25,65 Q 15,65 15,55 Q 15,45 25,50 Z;
-                      M 25,48 Q 25,33 40,33 Q 40,23 50,23 Q 60,23 65,33 Q 80,33 80,48 Q 80,63 65,63 L 25,63 Q 15,63 15,53 Q 15,43 25,48 Z;
-                      M 25,50 Q 25,35 40,35 Q 40,25 50,25 Q 60,25 65,35 Q 80,35 80,50 Q 80,65 65,65 L 25,65 Q 15,65 15,55 Q 15,45 25,50 Z" 
-              dur="3s" 
-              repeatCount="indefinite"
-            />
-          </path>
-        </svg>
+```
+
+REPLACE with:
+```javascript
+            </div>
+          </div>
+          
+          <!-- Recent Treats History -->
+          ${todayItems.length > 0 ? `
+            <div class="mt-4 pt-4 border-t border-gray-700">
+              <h4 class="font-semibold text-sm mb-2">Recent Treats</h4>
+              <div class="space-y-2">
+                ${todayItems.slice(-5).reverse().map(item => {
+                  const time = item.ts ? new Date(item.ts).toLocaleTimeString('en-US', { 
+                    hour: 'numeric',
+                    minute: '2-digit'
+                  }) : 'Unknown time';
+                  const calories = Math.round((item.kcalPerUnit || 0) * (item.qty || 1));
+                  
+                  return `
+                    <div class="flex items-center justify-between text-xs">
+                      <div class="flex items-center gap-2 flex-1 min-w-0">
+                        <span class="text-gray-500">${time}</span>
+                        <span class="font-medium truncate">${Hub.utils.esc(item.name)}</span>
+                      </div>
+                      <span class="text-gray-400 flex-shrink-0">${calories} cal</span>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+              <a href="#/treats" class="text-blue-400 hover:text-blue-300 text-xs mt-2 inline-block">
+                View full history →
+              </a>
+            </div>
+          ` : ''}
+        </div>
       `;
-    }
+```
+
+## 4. Add helper method for getting time ago (optional enhancement)
+
+Add this method to Hub.treats object:
+
+```javascript
+  /** Format timestamp to relative time */
+  _formatTimeAgo(timestamp) {
+    if (!timestamp) return 'Unknown time';
     
-    // Rainy
-    if (condition.includes('rain')) {
-      return `
-        <svg width="${size}" height="${size}" viewBox="0 0 100 100" class="weather-svg rainy">
-          <path 
-            d="M 25,40 Q 25,25 40,25 Q 40,15 50,15 Q 60,15 65,25 Q 80,25 80,40 Q 80,55 65,55 L 25,55 Q 15,55 15,45 Q 15,35 25,40 Z" 
-            fill="#64748b"
-          />
-          ${[30, 50, 70].map((x, i) => `
-            <line x1="${x}" y1="60" x2="${x}" y2="75" stroke="#3b82f6" stroke-width="2" stroke-linecap="round">
-              <animate attributeName="y1" values="60;65;60" dur="1s" begin="${i * 0.3}s" repeatCount="indefinite"/>
-              <animate attributeName="y2" values="75;80;75" dur="1s" begin="${i * 0.3}s" repeatCount="indefinite"/>
-            </line>
-          `).join('')}
-        </svg>
-      `;
-    }
+    const now = Date.now();
+    const diff = now - timestamp;
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
     
-    // Default - return emoji
-    return '<span class="text-6xl">🌤️</span>';
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    return new Date(timestamp).toLocaleTimeString('en-US', { 
+      hour: 'numeric',
+      minute: '2-digit'
+    });
   },
 ```
 
-Then use it in rendering:
+Then you can use it in the history display:
 ```javascript
-html += this._getWeatherSVG(condition.toLowerCase());
+const time = this._formatTimeAgo(item.ts);
 ```
 
-## 2. Add skeleton loaders for weather loading state
+## 5. Optional: Add 7-day sparkline for calorie tracking
 
-FIND where loading state is shown:
+Add this after the recent treats section:
+
 ```javascript
-el.innerHTML = '<p class="text-gray-400">Loading weather…</p>';
+          <!-- 7-Day Calorie Sparkline -->
+          <div class="mt-4 pt-4 border-t border-gray-700">
+            <h4 class="font-semibold text-sm mb-2">Past Week</h4>
+            <div class="flex items-end gap-1 h-12">
+              ${this._renderWeekSparkline(items, limit)}
+            </div>
+          </div>
 ```
 
-REPLACE with:
+And add the sparkline rendering method:
+
 ```javascript
-el.innerHTML = `
-  <div class="space-y-3">
-    <div class="skeleton" style="height: 80px; width: 80px; border-radius: 50%;"></div>
-    <div class="skeleton" style="height: 24px; width: 60%;"></div>
-    <div class="skeleton" style="height: 16px; width: 80%;"></div>
-  </div>
-`;
+  /** Render 7-day calorie sparkline */
+  _renderWeekSparkline(items, limit) {
+    const days = [];
+    const now = new Date();
+    
+    // Get last 7 days
+    for (let i = 6; i >= 0; i--) {
+      const dayStart = new Date(now);
+      dayStart.setDate(now.getDate() - i);
+      dayStart.setHours(0, 0, 0, 0);
+      
+      const dayEnd = new Date(dayStart);
+      dayEnd.setHours(23, 59, 59, 999);
+      
+      // Calculate calories for this day
+      const dayItems = items.filter(item => {
+        const ts = item.ts || (item.id && !isNaN(item.id) ? parseInt(item.id) : 0);
+        return ts >= dayStart.getTime() && ts <= dayEnd.getTime();
+      });
+      
+      const calories = dayItems.reduce((sum, item) => 
+        sum + ((item.kcalPerUnit || 0) * (item.qty || 1)), 0
+      );
+      
+      days.push({
+        day: dayStart.toLocaleDateString('en-US', { weekday: 'short' }).substring(0, 1),
+        calories,
+        percent: Math.min((calories / limit) * 100, 100)
+      });
+    }
+    
+    return days.map(d => {
+      const color = d.percent >= 100 ? '#ef4444' : 
+                    d.percent >= 80 ? '#f59e0b' : 
+                    d.percent >= 50 ? '#84cc16' : '#22c55e';
+      
+      return `
+        <div class="flex-1 flex flex-col items-center gap-1">
+          <div class="w-full bg-gray-700 rounded" style="height: ${Math.max(d.percent, 5)}%; background: ${color};"></div>
+          <span class="text-xs text-gray-500">${d.day}</span>
+        </div>
+      `;
+    }).join('');
+  },
 ```
 
-The `.skeleton` class is already defined in the enhanced CSS.
-
-## 3. Improve weather alert banner styling
-
-The alert banner CSS is already enhanced in index.html updates. No JS changes needed.
-
-If you want to add a pulse animation to active alerts:
-
-```css
-.alert-banner {
-  animation: slideDown 0.3s ease-out, alertPulse 2s ease-in-out infinite;
-}
-
-@keyframes alertPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.95; }
-}
-```
-
-## 4. Add loading state for radar
-
-FIND where rain radar is rendered:
-```javascript
-'<p class="text-gray-400 text-sm">Loading radar…</p>'
-```
-
-REPLACE with:
-```javascript
-'<div class="skeleton" style="height: 400px;"></div>'
-```
-
-## Summary
-
-Most weather improvements are CSS-based:
-1. Animated icons (pulse for sun, float for clouds, rain drops)
-2. Skeleton loaders instead of text
-3. Enhanced alert banner with pulse
-4. Optional: Inline SVG icons for more control
-
-The weather.js file needs minimal changes - mainly updating the HTML generation to include CSS classes for animations. The heavy lifting is done by CSS animations which are already included in the index.html updates.
-
-If you prefer to keep it simple, just add the CSS classes to existing emoji icons. For more polish, implement the SVG icon helper method.
+These changes will:
+1. Add timestamp to all new treats
+2. Only count today's treats in calorie calculations (using timestamp)
+3. Show last 5 treats in dashboard widget with time
+4. Add optional 7-day calorie sparkline
+5. Provide backward compatibility for old treats without timestamps

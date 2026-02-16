@@ -1,441 +1,599 @@
 // ============================================================
-// assets/supabase.js — Supabase auth + DB helpers  (v4)
-//
-// KEY CHANGES:
-//   - flowType: 'pkce' (server uses PKCE)
-//   - Configurable timeout on ALL DB queries (default 6s)
-//   - Boot diagnostics + debug tool
-//   - Better error logging
+// assets/control.js — Simple Working Admin Control (v4 - FIXED)
 // ============================================================
 window.Hub = window.Hub || {};
 
-// Configuration
-const SUPABASE_CONFIG = {
-  DB_QUERY_TIMEOUT_MS: 6000,
-  KEEPALIVE_MINUTES: 10,
-  REFRESH_IF_EXPIRES_IN_SECONDS: 20 * 60
-};
+Hub.control = {
+  _loaded: null,
+  _resetCheckInterval: null,
 
-(function () {
-  const CFG = window.HOME_HUB_CONFIG || {};
-  const SB_URL = CFG.supabaseUrl || CFG.supabase?.url || '';
-  const SB_KEY = CFG.supabaseAnonKey || CFG.supabase?.anonKey || '';
+  init() {
+    console.log('[Control] Init started');
+    
+    // Bind existing buttons
+    const bind = (id, fn) => {
+      const el = document.getElementById(id);
+      if (!el || el._bound) return;
+      el._bound = true;
+      el.addEventListener('click', fn);
+    };
 
-  console.log('[Boot] href:', window.location.href);
-  console.log('[Boot] has ?code=', window.location.search.includes('code='));
-  console.log('[Boot] has #access_token=', window.location.hash.includes('access_token'));
+    bind('btnControlLoad', () => this.load());
+    bind('btnControlSave', () => this.save());
+    bind('btnControlCopyJson', () => this._copyJson());
+    
+    // Start auto-reset checker
+    this.startAutoResetChecker();
+    
+    // Add admin controls
+    setTimeout(() => this.addAdminControls(), 500);
+  },
 
-  const sb = window.supabase.createClient(SB_URL, SB_KEY, {
-    auth: {
-      flowType: 'pkce',
-      detectSessionInUrl: true,
-      autoRefreshToken: true,
-      persistSession: true
+  // ============================================================
+  // ADD ADMIN CONTROLS TO EXISTING PAGE
+  // ============================================================
+  addAdminControls() {
+    console.log('[Control] Adding admin controls');
+    const controlContent = document.getElementById('controlContent');
+    if (!controlContent) {
+      console.log('[Control] controlContent not found, retrying...');
+      setTimeout(() => this.addAdminControls(), 500);
+      return;
+    }
+
+    // Check if already added
+    if (document.getElementById('adminControlsSection')) {
+      console.log('[Control] Admin controls already added');
+      return;
+    }
+
+    const autoResetEnabled = localStorage.getItem('chore_auto_reset_enabled') === 'true';
+    const lastReset = localStorage.getItem('chore_last_reset_date');
+    
+    const adminHTML = `
+      <div id="adminControlsSection" class="space-y-6 mb-8">
+        <!-- Admin Stats -->
+        <div class="card bg-blue-900 bg-opacity-30">
+          <h2 class="text-xl font-bold mb-4">🔧 Admin Dashboard</h2>
+          <div id="adminStats">
+            <p class="text-gray-400">Loading stats...</p>
+          </div>
+        </div>
+
+        <!-- Chore Reset Control -->
+        <div class="card ${autoResetEnabled ? 'bg-green-900 bg-opacity-20 border border-green-600' : 'bg-gray-800'}">
+          <h2 class="text-xl font-bold mb-4">🔄 Automatic Chore Reset</h2>
+          
+          <div class="mb-4 p-4 bg-gray-900 rounded-lg">
+            <div class="flex items-center justify-between mb-2">
+              <span class="font-semibold">Status:</span>
+              <span class="${autoResetEnabled ? 'text-green-400' : 'text-gray-400'} font-bold">
+                ${autoResetEnabled ? '✓ ENABLED' : '○ DISABLED'}
+              </span>
+            </div>
+            ${lastReset ? `
+              <p class="text-sm text-gray-400">Last reset: ${new Date(lastReset).toLocaleString()}</p>
+            ` : ''}
+          </div>
+
+          <div class="space-y-3">
+            <button id="btnToggleAutoReset" class="btn ${autoResetEnabled ? 'btn-danger' : 'btn-success'} w-full">
+              ${autoResetEnabled ? '⏸️ Disable Auto-Reset' : '▶️ Enable Auto-Reset'}
+            </button>
+            
+            <button id="btnManualResetChores" class="btn btn-primary w-full">
+              🔄 Reset All Chores Now (Manual)
+            </button>
+            
+            <button id="btnViewChoreStats" class="btn btn-secondary w-full">
+              📊 View Completion Statistics
+            </button>
+          </div>
+
+          <div class="mt-4 p-3 bg-gray-900 rounded text-sm text-gray-400">
+            <p class="font-semibold mb-2">How it works:</p>
+            <ul class="list-disc pl-5 space-y-1">
+              <li><strong>Daily chores:</strong> Reset at midnight every day</li>
+              <li><strong>Weekly chores:</strong> Reset on their assigned day</li>
+              <li><strong>Logs preserved:</strong> Completion history never deleted</li>
+              <li><strong>Automatic:</strong> Works even when you're not logged in</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Statistics Display -->
+        <div id="choreStatsSection" class="card bg-gray-800 hidden">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-bold">📊 Chore Statistics</h2>
+            <button id="btnHideStats" class="btn btn-secondary text-sm">← Back</button>
+          </div>
+          <div id="choreStatsContent">
+            <p class="text-gray-400">Loading...</p>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Insert at the top
+    controlContent.insertAdjacentHTML('afterbegin', adminHTML);
+    
+    // Bind new buttons
+    this._bindAdminButtons();
+    
+    // Load stats
+    this.loadStats();
+    
+    console.log('[Control] Admin controls added successfully');
+  },
+
+  _bindAdminButtons() {
+    const bind = (id, fn) => {
+      const el = document.getElementById(id);
+      if (!el || el._bound) return;
+      el._bound = true;
+      el.addEventListener('click', fn);
+      console.log('[Control] Bound button:', id);
+    };
+
+    bind('btnToggleAutoReset', () => this.toggleAutoReset());
+    bind('btnManualResetChores', () => this.manualResetChores());
+    bind('btnViewChoreStats', () => this.showStats());
+    bind('btnHideStats', () => this.hideStats());
+  },
+
+  // ============================================================
+  // LOAD STATS
+  // ============================================================
+  async loadStats() {
+    const el = document.getElementById('adminStats');
+    if (!el) return;
+
+    try {
+      const chores = await Hub.db.loadChores(Hub.state.household_id);
+      const totalChores = chores.length;
+      const pendingChores = chores.filter(c => c.status === 'pending').length;
+      const doneChores = totalChores - pendingChores;
+      const completionRate = totalChores > 0 ? Math.round((doneChores / totalChores) * 100) : 0;
+
+      el.innerHTML = `
+        <div class="grid grid-cols-3 gap-4">
+          <div class="text-center">
+            <p class="text-3xl font-bold text-blue-400">${totalChores}</p>
+            <p class="text-sm text-gray-400">Total Chores</p>
+          </div>
+          <div class="text-center">
+            <p class="text-3xl font-bold text-yellow-400">${pendingChores}</p>
+            <p class="text-sm text-gray-400">Pending</p>
+          </div>
+          <div class="text-center">
+            <p class="text-3xl font-bold text-green-400">${completionRate}%</p>
+            <p class="text-sm text-gray-400">Completed</p>
+          </div>
+        </div>
+      `;
+    } catch (e) {
+      console.error('[Control] Stats error:', e);
+      el.innerHTML = '<p class="text-red-400">Failed to load stats</p>';
+    }
+  },
+
+  // ============================================================
+  // AUTO-RESET FUNCTIONALITY
+  // ============================================================
+  
+  startAutoResetChecker() {
+    console.log('[Control] Starting auto-reset checker');
+    
+    // Clear any existing interval
+    if (this._resetCheckInterval) {
+      clearInterval(this._resetCheckInterval);
+    }
+    
+    // Check every 30 seconds
+    this._resetCheckInterval = setInterval(() => {
+      this.checkAndReset();
+    }, 30000);
+    
+    // Also check immediately
+    setTimeout(() => this.checkAndReset(), 2000);
+  },
+
+  async checkAndReset() {
+    const enabled = localStorage.getItem('chore_auto_reset_enabled') === 'true';
+    if (!enabled) {
+      console.log('[Control] Auto-reset disabled, skipping check');
+      return;
+    }
+
+    const now = new Date();
+    const lastReset = localStorage.getItem('chore_last_reset_date');
+    const lastResetDate = lastReset ? new Date(lastReset) : null;
+    
+    // Check if we need to reset (new day)
+    const needsReset = !lastResetDate || 
+                      lastResetDate.toDateString() !== now.toDateString();
+    
+    if (needsReset) {
+      console.log('[Control] Auto-reset triggered - new day detected');
+      await this.performReset(false);
+    } else {
+      console.log('[Control] Auto-reset check: already reset today');
+    }
+  },
+
+  async performReset(isManual = false) {
+    try {
+      console.log('[Control] Performing chore reset...');
+      
+      if (!Hub.state.household_id) {
+        console.error('[Control] No household_id');
+        if (isManual) Hub.ui.toast('Error: No household ID', 'error');
+        return;
+      }
+
+      // Get all chores
+      const chores = await Hub.db.loadChores(Hub.state.household_id);
+      console.log('[Control] Loaded', chores.length, 'chores');
+      
+      const today = new Date().getDay(); // 0=Sun, 1=Mon, etc.
+      
+      // Filter chores to reset
+      const choresToReset = chores.filter(c => {
+        // Only reset done chores
+        if (c.status !== 'done') return false;
+        
+        // Daily chores
+        if (c.category === 'Daily') return true;
+        
+        // Weekly chores for today
+        if (typeof c.day_of_week === 'number' && c.day_of_week === today) return true;
+        
+        // Fallback: parse category
+        if (c.day_of_week == null && c.category && Hub.chores?.DAY_MAP) {
+          const dayNum = Hub.chores.DAY_MAP[c.category];
+          if (dayNum === today) return true;
+        }
+        
+        return false;
+      });
+
+      console.log('[Control] Resetting', choresToReset.length, 'chores');
+
+      // Reset each chore
+      for (const chore of choresToReset) {
+        await Hub.sb
+          .from('chores')
+          .update({ status: 'pending' })
+          .eq('id', chore.id);
+      }
+
+      // Update last reset time
+      localStorage.setItem('chore_last_reset_date', new Date().toISOString());
+
+      console.log('[Control] Reset complete!');
+      
+      if (isManual) {
+        Hub.ui.toast(`Reset ${choresToReset.length} chores successfully!`, 'success');
+        this.addAdminControls(); // Refresh UI
+        this.loadStats();
+      }
+
+      // Refresh dashboard if visible
+      if (Hub.router?.current === 'dashboard') {
+        setTimeout(() => Hub.chores?.renderDashboard?.(), 500);
+      }
+
+    } catch (e) {
+      console.error('[Control] Reset error:', e);
+      if (isManual) Hub.ui.toast('Reset failed: ' + e.message, 'error');
+    }
+  },
+
+  // ============================================================
+  // USER ACTIONS
+  // ============================================================
+  
+  toggleAutoReset() {
+    const currentState = localStorage.getItem('chore_auto_reset_enabled') === 'true';
+    const newState = !currentState;
+    
+    localStorage.setItem('chore_auto_reset_enabled', newState ? 'true' : 'false');
+    
+    if (newState) {
+      Hub.ui.toast('✓ Auto-reset ENABLED! Chores will reset at midnight.', 'success');
+      // Check if we need to reset now
+      this.checkAndReset();
+    } else {
+      Hub.ui.toast('Auto-reset disabled', 'success');
+    }
+    
+    // Refresh UI
+    this.addAdminControls();
+  },
+
+  async manualResetChores() {
+    if (!confirm('Reset all daily chores to pending now?\n\nCompletion logs will be preserved for statistics.')) {
+      return;
+    }
+    
+    await this.performReset(true);
+  },
+
+  async showStats() {
+    const section = document.getElementById('choreStatsSection');
+    const content = document.getElementById('choreStatsContent');
+    if (!section || !content) return;
+
+    section.classList.remove('hidden');
+    content.innerHTML = '<p class="text-gray-400">Loading statistics...</p>';
+
+    try {
+      // Get completion logs
+      const { data: logs } = await Hub.sb
+        .from('chore_logs')
+        .select('*, chores(title, category)')
+        .eq('household_id', Hub.state.household_id)
+        .order('completed_at', { ascending: false })
+        .limit(50);
+
+      if (!logs || logs.length === 0) {
+        content.innerHTML = '<p class="text-gray-400">No completion history yet</p>';
+        return;
+      }
+
+      const totalCompletions = logs.length;
+      
+      // Last 7 days
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      const last7Days = logs.filter(l => new Date(l.completed_at) >= weekAgo).length;
+
+      // By member
+      const byMember = {};
+      logs.forEach(log => {
+        const member = log.completed_by_name || 'Unknown';
+        byMember[member] = (byMember[member] || 0) + 1;
+      });
+
+      content.innerHTML = `
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <div class="bg-blue-900 bg-opacity-30 rounded-lg p-4 text-center">
+            <p class="text-3xl font-bold text-blue-400">${totalCompletions}</p>
+            <p class="text-sm text-gray-400">Total Completions</p>
+          </div>
+          <div class="bg-green-900 bg-opacity-30 rounded-lg p-4 text-center">
+            <p class="text-3xl font-bold text-green-400">${last7Days}</p>
+            <p class="text-sm text-gray-400">Last 7 Days</p>
+          </div>
+        </div>
+
+        <div class="mb-6">
+          <h3 class="font-bold mb-3">By Family Member</h3>
+          <div class="space-y-2">
+            ${Object.entries(byMember).sort((a, b) => b[1] - a[1]).map(([member, count]) => `
+              <div class="flex items-center justify-between p-3 bg-gray-900 rounded">
+                <span class="font-semibold">${Hub.utils.esc(member)}</span>
+                <span class="text-gray-400">${count} chores</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+
+        <div>
+          <h3 class="font-bold mb-3">Recent Completions</h3>
+          <div class="space-y-2 max-h-64 overflow-y-auto">
+            ${logs.slice(0, 15).map(log => `
+              <div class="p-2 bg-gray-900 rounded text-sm">
+                <p class="font-semibold">${Hub.utils.esc(log.chores?.title || 'Deleted chore')}</p>
+                <p class="text-xs text-gray-400">
+                  ${Hub.utils.esc(log.completed_by_name || 'Unknown')} • 
+                  ${new Date(log.completed_at).toLocaleString()}
+                </p>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+
+    } catch (e) {
+      console.error('[Control] Stats error:', e);
+      content.innerHTML = '<p class="text-red-400">Failed to load statistics</p>';
+    }
+  },
+
+  hideStats() {
+    const section = document.getElementById('choreStatsSection');
+    if (section) section.classList.add('hidden');
+  },
+
+  // ============================================================
+  // EXISTING SITE CONTROL METHODS
+  // ============================================================
+  
+  async load() {
+    const gate = document.getElementById('controlAdminGate');
+    const content = document.getElementById('controlContent');
+    const status = document.getElementById('controlStatus');
+
+    // Gate: admin only
+    if (Hub.state?.userRole !== 'admin') {
+      if (gate) gate.classList.remove('hidden');
+      if (content) content.classList.add('hidden');
+      return;
+    }
+    if (gate) gate.classList.add('hidden');
+    if (content) content.classList.remove('hidden');
+
+    if (status) status.textContent = 'Loading…';
+
+    const siteName = (document.getElementById('controlSiteName')?.value || 'main').trim() || 'main';
+
+    try {
+      const row = await Hub.db.loadSiteControlSettings(Hub.state.household_id, siteName);
+      this._loaded = row || null;
+      this._fillForm(row || { site_name: siteName });
+      this._renderPreview();
+      this._renderSnippet();
+      if (status) status.textContent = `Loaded ${siteName}${row ? '' : ' (new)'}`;
+    } catch (e) {
+      console.error('[Control] load error:', e);
+      this._loaded = null;
+
+      const msg = (e?.message || '').toLowerCase();
+      if (msg.includes('relation') && msg.includes('does not exist')) {
+        if (status) status.textContent = 'Missing table: site_control_settings';
+        this._showMissingTable();
+        return;
+      }
+
+      if (status) status.textContent = 'Load failed: ' + (e.message || 'error');
+      this._renderPreview({ error: e.message || 'error' });
+      this._renderSnippet();
+    }
+  },
+
+  async save() {
+    const status = document.getElementById('controlStatus');
+    if (Hub.state?.userRole !== 'admin') {
+      Hub.ui.toast('Admin only', 'error');
+      return;
+    }
+
+    const siteName = (document.getElementById('controlSiteName')?.value || 'main').trim() || 'main';
+
+    const payload = {
+      base_url: (document.getElementById('controlBaseUrl')?.value || '').trim() || null,
+      maintenance_mode: !!document.getElementById('controlMaintenance')?.checked,
+      banner_message: (document.getElementById('controlBannerMessage')?.value || '').trim() || null,
+      banner_severity: (document.getElementById('controlBannerSeverity')?.value || 'info').trim(),
+      disabled_paths: this._parseLines(document.getElementById('controlDisabledPaths')?.value || ''),
+      public_read: !!document.getElementById('controlPublicRead')?.checked
+    };
+
+    try {
+      if (status) status.textContent = 'Saving…';
+      const saved = await Hub.db.saveSiteControlSettings(Hub.state.household_id, siteName, Hub.state.user?.id, payload);
+      this._loaded = saved;
+      this._fillForm(saved);
+      this._renderPreview();
+      this._renderSnippet();
+      if (status) status.textContent = 'Saved ✓';
+      Hub.ui.toast('Saved control settings', 'success');
+    } catch (e) {
+      console.error('[Control] save error:', e);
+      if (status) status.textContent = 'Save failed: ' + (e.message || 'error');
+      Hub.ui.toast('Save failed', 'error');
+    }
+  },
+
+  _fillForm(row) {
+    const setVal = (id, v) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.value = v == null ? '' : String(v);
+    };
+    const setChk = (id, v) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.checked = !!v;
+    };
+
+    setVal('controlSiteName', row.site_name || 'main');
+    setVal('controlBaseUrl', row.base_url || '');
+    setChk('controlMaintenance', row.maintenance_mode);
+    setVal('controlBannerMessage', row.banner_message || '');
+    setVal('controlBannerSeverity', row.banner_severity || 'info');
+    setChk('controlPublicRead', row.public_read);
+
+    const paths = Array.isArray(row.disabled_paths) ? row.disabled_paths : [];
+    setVal('controlDisabledPaths', paths.join('\n'));
+  },
+
+  _parseLines(text) {
+    return String(text)
+      .split('\n')
+      .map(s => s.trim())
+      .filter(Boolean)
+      .slice(0, 200);
+  },
+
+  _toPublicJson() {
+    const row = this._loaded || {
+      site_name: (document.getElementById('controlSiteName')?.value || 'main').trim() || 'main',
+      base_url: (document.getElementById('controlBaseUrl')?.value || '').trim() || null,
+      maintenance_mode: !!document.getElementById('controlMaintenance')?.checked,
+      banner_message: (document.getElementById('controlBannerMessage')?.value || '').trim() || null,
+      banner_severity: (document.getElementById('controlBannerSeverity')?.value || 'info').trim(),
+      disabled_paths: this._parseLines(document.getElementById('controlDisabledPaths')?.value || ''),
+      public_read: !!document.getElementById('controlPublicRead')?.checked,
+      updated_at: null
+    };
+
+    return {
+      site_name: row.site_name || 'main',
+      base_url: row.base_url || null,
+      maintenance_mode: !!row.maintenance_mode,
+      banner: {
+        message: row.banner_message || null,
+        severity: row.banner_severity || 'info'
+      },
+      disabled_paths: Array.isArray(row.disabled_paths) ? row.disabled_paths : [],
+      public_read: !!row.public_read,
+      updated_at: row.updated_at || null
+    };
+  },
+
+  _renderPreview(objOverride) {
+    const pre = document.getElementById('controlJsonPreview');
+    if (!pre) return;
+    const obj = objOverride || this._toPublicJson();
+    pre.textContent = JSON.stringify(obj, null, 2);
+  },
+
+  _renderSnippet() {
+    const pre = document.getElementById('controlSnippet');
+    if (!pre) return;
+
+    const cfg = window.HOME_HUB_CONFIG || {};
+    const supabaseUrl = cfg.supabaseUrl || '<YOUR_SUPABASE_URL>';
+    const anonKey = cfg.supabaseAnonKey || '<YOUR_SUPABASE_ANON_KEY>';
+    const householdId = Hub.state?.household_id || '<HOUSEHOLD_UUID>';
+    const siteName = (document.getElementById('controlSiteName')?.value || 'main').trim() || 'main';
+
+    const rest = `${supabaseUrl}/rest/v1/site_control_settings?select=*&household_id=eq.${householdId}&site_name=eq.${encodeURIComponent(siteName)}`;
+
+    pre.textContent = `// Remote config fetch
+async function fetchSiteControl() {
+  const url = ${JSON.stringify(rest)};
+  const resp = await fetch(url, {
+    headers: {
+      'apikey': ${JSON.stringify(anonKey)},
+      'Authorization': 'Bearer ' + ${JSON.stringify(anonKey)}
     }
   });
+  if (!resp.ok) return null;
+  const rows = await resp.json();
+  return rows?.[0] || null;
+}`;
+  },
 
-  Hub.sb = sb;
-
-  // ── Keep session alive (prevents idle tab logout) ──
-  // Supabase access tokens expire (~1h). Auto-refresh SHOULD handle it, but
-  // background tabs can get throttled. This adds a lightweight safety net.
-  let _keepAliveStarted = false;
-
-  async function _refreshIfNeeded(reason) {
+  async _copyJson() {
+    const text = document.getElementById('controlJsonPreview')?.textContent || '';
     try {
-      const { data: { session } } = await sb.auth.getSession();
-      if (!session) return null;
-
-      const expiresAt = session.expires_at ? (session.expires_at * 1000) : null;
-      if (!expiresAt) return session;
-
-      const secondsLeft = Math.floor((expiresAt - Date.now()) / 1000);
-      if (secondsLeft > SUPABASE_CONFIG.REFRESH_IF_EXPIRES_IN_SECONDS) return session;
-
-      console.log('[Auth] Refreshing session (' + reason + ') — seconds left:', secondsLeft);
-      const { data, error } = await sb.auth.refreshSession();
-      if (error) {
-        console.warn('[Auth] refreshSession error:', error.message);
-        return session;
-      }
-      if (data?.session) {
-        console.log('[Auth] Session refreshed');
-        return data.session;
-      }
-      return session;
+      await navigator.clipboard.writeText(text);
+      Hub.ui.toast('Copied', 'success');
     } catch (e) {
-      console.warn('[Auth] refreshIfNeeded exception:', e.message);
-      return null;
+      Hub.ui.toast('Copy failed', 'error');
+    }
+  },
+
+  _showMissingTable() {
+    const pre = document.getElementById('controlJsonPreview');
+    if (pre) {
+      pre.textContent = JSON.stringify({
+        error: 'Missing table: site_control_settings',
+        fix: 'Run migration-site-control.sql in Supabase SQL Editor'
+      }, null, 2);
     }
   }
-
-  function _startKeepAlive() {
-    if (_keepAliveStarted) return;
-    _keepAliveStarted = true;
-
-    // Some environments need this explicitly; harmless if unsupported.
-    try { 
-      sb.auth.startAutoRefresh?.(); 
-    } catch (e) {
-      console.warn('[Auth] startAutoRefresh not available:', e.message);
-    }
-
-    // Periodic keepalive (throttled in background, but still helps).
-    setInterval(() => _refreshIfNeeded('interval'), SUPABASE_CONFIG.KEEPALIVE_MINUTES * 60 * 1000);
-
-    // When the tab becomes visible again, refresh immediately if near expiry.
-    document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) _refreshIfNeeded('visibility');
-    });
-
-    // If network comes back, refresh.
-    window.addEventListener('online', () => _refreshIfNeeded('online'));
-  }
-
-  _startKeepAlive();
-
-  // Boot: log session state (non-blocking)
-  sb.auth.getSession().then(({ data }) => {
-    console.log('[Boot] session:', data.session ? data.session.user.email : 'none');
-  }).catch(e => console.warn('[Boot] getSession err:', e.message));
-
-  // ── Helper: DB query with configurable timeout ──
-  function timed(queryBuilder) {
-    return Promise.race([
-      queryBuilder,
-      new Promise((_, rej) => 
-        setTimeout(() => rej(new Error('DB query timeout (' + SUPABASE_CONFIG.DB_QUERY_TIMEOUT_MS + 'ms)')), 
-                   SUPABASE_CONFIG.DB_QUERY_TIMEOUT_MS)
-      )
-    ]);
-  }
-
-  Hub.auth = {
-    async signInGoogle() {
-      console.log('[Auth] signInGoogle (PKCE) with Calendar scopes');
-      const { error } = await sb.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: window.location.origin + '/#/',
-          scopes: 'email profile https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events'
-        }
-      });
-      if (error) console.error('[Auth] OAuth error:', error);
-    },
-
-    async signOut() {
-      console.log('[Auth] signOut()');
-      Hub.app._loggedIn = false;
-      Hub.app._loginInProgress = false;
-      Hub.app._authHandled = false;
-      Hub.state.user = null;
-      Hub.state.household_id = null;
-      Hub.state.userRole = null;
-      await sb.auth.signOut();
-      Hub.router.showScreen('login');
-    },
-
-    async getSession() {
-      try {
-        const { data: { session } } = await sb.auth.getSession();
-        return session;
-      } catch (e) {
-        console.warn('[Auth] getSession err:', e.message);
-        return null;
-      }
-    },
-
-    // Force a refresh if the session is near expiry (and often refreshes Google provider_token too)
-    async ensureFreshSession(reason = 'manual') {
-      return await _refreshIfNeeded(reason);
-    },
-
-    async checkAccess(user) {
-      try {
-        console.log('[Auth] checkAccess:', user.email);
-
-        const t0 = Date.now();
-        const { data, error } = await timed(
-          sb.from('household_members')
-            .select('household_id, role')
-            .eq('email', user.email)
-            .limit(1)
-            .maybeSingle()
-        );
-        console.log('[Auth] household_members (' + (Date.now() - t0) + 'ms):', JSON.stringify({ data, err: error?.message }));
-        if (error || !data) return false;
-
-        const t1 = Date.now();
-        const { data: ae, error: aeErr } = await timed(
-          sb.from('allowed_emails')
-            .select('id')
-            .eq('email', user.email)
-            .limit(1)
-            .maybeSingle()
-        );
-        console.log('[Auth] allowed_emails (' + (Date.now() - t1) + 'ms):', JSON.stringify({ ae, err: aeErr?.message }));
-        if (aeErr || !ae) return false;
-
-        Hub.state.household_id = data.household_id;
-        Hub.state.userRole = data.role;
-        console.log('[Auth] ✓ Granted — household:', data.household_id);
-        return true;
-      } catch (e) {
-        console.error('[Auth] checkAccess error:', e.message);
-        return false;
-      }
-    },
-
-    onAuthChange(cb) {
-      sb.auth.onAuthStateChange((event, session) => cb(event, session));
-    }
-  };
-
-  // ── Debug tool ─────────────────────────────────────────────
-  Hub.debug = {
-    async checkSupabase() {
-      const out = [];
-      const log = (m) => { out.push(m); console.log('[Debug]', m); };
-      const el = document.getElementById('debugOutput');
-      if (el) { el.style.display = 'block'; el.textContent = 'Running…\n'; }
-
-      log('═══ Supabase Diagnostics ═══');
-      log('URL: ' + (SB_URL || 'MISSING'));
-      log('Key: ' + (SB_KEY.length > 20 ? 'yes' : 'MISSING'));
-      log('Page: ' + window.location.href);
-      log('');
-
-      try {
-        const { data: { session }, error } = await sb.auth.getSession();
-        if (error) log('getSession error: ' + error.message);
-        else if (session) {
-          log('✓ Session: ' + session.user.email);
-          log('  ID: ' + session.user.id);
-          log('  Expires: ' + new Date(session.expires_at * 1000).toLocaleString());
-        } else log('✗ No session');
-      } catch (e) { log('getSession exception: ' + e.message); }
-      log('');
-
-      try {
-        const { data: { user }, error } = await sb.auth.getUser();
-        if (error) log('getUser error: ' + error.message);
-        else if (user) log('✓ getUser: ' + user.email);
-        else log('✗ getUser: null');
-      } catch (e) { log('getUser exception: ' + e.message); }
-      log('');
-
-      try {
-        log('DB: household_members…');
-        const t = Date.now();
-        const { data, error } = await timed(sb.from('household_members').select('household_id, email, role').limit(5));
-        log('  ' + (Date.now() - t) + 'ms');
-        if (error) log('✗ ' + error.message);
-        else log('✓ ' + JSON.stringify(data));
-      } catch (e) { log('✗ ' + e.message); }
-      log('');
-
-      try {
-        log('DB: allowed_emails…');
-        const t = Date.now();
-        const { data, error } = await timed(sb.from('allowed_emails').select('email').limit(5));
-        log('  ' + (Date.now() - t) + 'ms');
-        if (error) log('✗ ' + error.message);
-        else log('✓ ' + JSON.stringify(data));
-      } catch (e) { log('✗ ' + e.message); }
-
-      if (el) el.textContent = out.join('\n');
-      return out;
-    }
-  };
-
-  // ── DB helpers (all with timeout) ──────────────────────────
-  Hub.db = {
-    async loadSettings(userId) {
-      const { data } = await timed(sb.from('user_settings').select('*').eq('user_id', userId).maybeSingle());
-      return data;
-    },
-    async saveSettings(userId, householdId, settings) {
-      const payload = {
-        user_id: userId, household_id: householdId,
-        location_name: settings.location_name, location_lat: settings.location_lat,
-        location_lon: settings.location_lon, standby_timeout_min: settings.standby_timeout_min,
-        quiet_hours_start: settings.quiet_hours_start, quiet_hours_end: settings.quiet_hours_end,
-        immich_base_url: settings.immich_base_url, immich_api_key: settings.immich_api_key,
-        immich_album_id: settings.immich_album_id,
-        selected_calendars: settings.selected_calendars || ['primary'], // ADDED: Calendar selection
-        updated_at: new Date().toISOString()
-      };
-      console.log('[DB] Saving settings with selected_calendars:', payload.selected_calendars);
-      const { data, error } = await timed(sb.from('user_settings').upsert(payload, { onConflict: 'user_id' }).select().single());
-      if (error) {
-        console.error('[DB] Error saving settings:', error);
-        throw error;
-      }
-      console.log('[DB] Settings saved successfully:', data);
-      return data;
-    },
-    async loadChores(householdId) {
-      const { data, error } = await timed(sb.from('chores').select('*').eq('household_id', householdId).order('created_at', { ascending: false }));
-      if (error) throw error;
-      return data || [];
-    },
-    async loadChoresWithCompleters(householdId) {
-      // Get chores
-      const { data: chores, error } = await timed(
-        sb.from('chores')
-          .select('*')
-          .eq('household_id', householdId)
-          .order('created_at', { ascending: false })
-      );
-      if (error) throw error;
-      if (!chores) return [];
-
-      // If chores already have completed_by_name (new schema), just return them
-      // Otherwise try to look up completer from logs
-      const needsLookup = chores.filter(c => c.status === 'done' && !c.completed_by_name);
-      if (needsLookup.length === 0) return chores;
-
-      // Try to get completion info from logs for chores without completed_by_name
-      try {
-        const doneIds = needsLookup.map(c => c.id);
-        const { data: logs } = await timed(
-          sb.from('chore_logs')
-            .select('chore_id, completed_by, notes')
-            .in('chore_id', doneIds)
-            .order('completed_at', { ascending: false })
-        );
-
-        if (logs && logs.length > 0) {
-          // Build map: chore_id -> notes (which contains "Completed by Name")
-          const notesMap = {};
-          logs.forEach(function (log) {
-            if (!notesMap[log.chore_id] && log.notes) {
-              notesMap[log.chore_id] = log.notes;
-            }
-          });
-
-          // Add completer info to chores
-          return chores.map(function (chore) {
-            if (chore.status === 'done' && !chore.completed_by_name && notesMap[chore.id]) {
-              // Extract name from "Completed by Name" note
-              var note = notesMap[chore.id];
-              var match = note.match(/Completed by (.+)/);
-              return Object.assign({}, chore, {
-                completed_by_name: match ? match[1] : null
-              });
-            }
-            return chore;
-          });
-        }
-      } catch (e) {
-        console.warn('[DB] Completer lookup failed (non-critical):', e.message);
-      }
-
-      return chores;
-    },
-    async addChore(chore) {
-      const { data, error } = await timed(sb.from('chores').insert(chore).select().single());
-      if (error) throw error;
-      return data;
-    },
-    async updateChore(id, updates) {
-      const { error } = await timed(sb.from('chores').update(updates).eq('id', id));
-      if (error) throw error;
-    },
-    async deleteChore(id) {
-      // Delete logs first (foreign key constraint)
-      await timed(sb.from('chore_logs').delete().eq('chore_id', id));
-      const { error } = await timed(sb.from('chores').delete().eq('id', id));
-      if (error) throw error;
-    },
-    async logChoreCompletion(choreId, householdId, userId, notes) {
-      const { error } = await timed(sb.from('chore_logs').insert({ chore_id: choreId, household_id: householdId, completed_by: userId, notes }));
-      if (error) throw error;
-    },
-    async loadChoreLogs(householdId, sinceIso) {
-      let q = sb.from('chore_logs')
-        .select('completed_at, notes')
-        .eq('household_id', householdId)
-        .order('completed_at', { ascending: false })
-        .limit(1000);
-      if (sinceIso) q = q.gte('completed_at', sinceIso);
-      const { data, error } = await timed(q);
-      if (error) throw error;
-      return data || [];
-    },
-    async markChoreDone(choreId, userId, personName) {
-      // Try updating with completed_by_name (new schema)
-      // Falls back to just status update if column doesn't exist
-      try {
-        const { error: updateError } = await timed(
-          sb.from('chores')
-            .update({ status: 'done', completed_by_name: personName })
-            .eq('id', choreId)
-        );
-        if (updateError) {
-          // Column might not exist — fall back to just status
-          console.warn('[DB] completed_by_name update failed, trying status only:', updateError.message);
-          const { error: fallbackErr } = await timed(
-            sb.from('chores').update({ status: 'done' }).eq('id', choreId)
-          );
-          if (fallbackErr) throw fallbackErr;
-        }
-      } catch (e) {
-        // Last resort: just update status
-        const { error } = await timed(
-          sb.from('chores').update({ status: 'done' }).eq('id', choreId)
-        );
-        if (error) throw error;
-      }
-
-      // Log completion
-      try {
-        const { data: chore } = await timed(sb.from('chores').select('household_id').eq('id', choreId).single());
-        if (chore) {
-          await this.logChoreCompletion(choreId, chore.household_id, userId, 'Completed by ' + personName);
-        }
-      } catch (logErr) {
-        console.warn('[DB] Completion log failed (non-critical):', logErr.message);
-      }
-    },
-
-    // ── Site Control Center (optional table) ─────────────────
-    async loadSiteControlSettings(householdId, siteName) {
-      const { data, error } = await timed(
-        sb.from('site_control_settings')
-          .select('*')
-          .eq('household_id', householdId)
-          .eq('site_name', siteName)
-          .maybeSingle()
-      );
-      if (error) throw error;
-      return data;
-    },
-    async saveSiteControlSettings(householdId, siteName, userId, payload) {
-      const row = Object.assign({}, payload, {
-        household_id: householdId,
-        site_name: siteName,
-        updated_by: userId || null,
-        updated_at: new Date().toISOString()
-      });
-      const { data, error } = await timed(
-        sb.from('site_control_settings')
-          .upsert(row, { onConflict: 'household_id,site_name' })
-          .select()
-          .single()
-      );
-      if (error) throw error;
-      return data;
-    },
-    async markAlertSeen(userId, alertId, severity) {
-      await timed(sb.from('seen_alerts').upsert({ user_id: userId, alert_id: alertId, severity, seen_at: new Date().toISOString() }, { onConflict: 'user_id,alert_id' }));
-    },
-    async isAlertSeen(userId, alertId) {
-      const { data } = await timed(sb.from('seen_alerts').select('id').eq('user_id', userId).eq('alert_id', alertId).maybeSingle());
-      return !!data;
-    },
-    async logSystem(source, service, status, message, latencyMs) {
-      await timed(sb.from('system_logs').insert({ source, service, status, message, latency_ms: latencyMs }).select());
-    }
-  };
-})();
+};

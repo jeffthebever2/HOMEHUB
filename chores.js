@@ -1,248 +1,94 @@
 // ============================================================
-// assets/player.js — Unified Player State Manager
-// Manages Now Playing state for Music & Radio
-// Shows status on Dashboard and Standby pages
+// assets/ui.js — Shared UI helpers
 // ============================================================
-
 window.Hub = window.Hub || {};
 
-Hub.player = {
-  // Player state
-  state: {
-    currentSource: null,      // 'radio' | 'youtube' | null
-    title: '',                // Station name or song title
-    isPlaying: false,         // Playing status
-    startedAt: null,          // Timestamp when started
-    volume: 0.7               // Volume level (0-1)
+Hub.ui = {
+  /** Close a modal by ID */
+  closeModal(id) {
+    Hub.utils.$(id)?.classList.add('hidden');
   },
 
-  // Audio element for radio (single instance)
-  radioAudio: null,
-
-  /** Initialize player */
-  init() {
-    console.log('[Player] Initializing...');
-    
-    // Create radio audio element
-    this.radioAudio = new Audio();
-    this.radioAudio.volume = this.state.volume;
-    
-    // Listen for audio events
-    this.radioAudio.addEventListener('play', () => {
-      this.state.isPlaying = true;
-      this.updateUI();
-    });
-    
-    this.radioAudio.addEventListener('pause', () => {
-      this.state.isPlaying = false;
-      this.updateUI();
-    });
-    
-    this.radioAudio.addEventListener('ended', () => {
-      this.state.isPlaying = false;
-      this.updateUI();
-    });
-
-    this.radioAudio.addEventListener('error', (e) => {
-      console.error('[Player] Audio error:', e);
-      Hub.ui?.toast?.('Playback error. Try another station.', 'error');
-      this.state.isPlaying = false;
-      this.updateUI();
-    });
-
-    // Update Media Session API (for lockscreen controls)
-    this.setupMediaSession();
-
-    console.log('[Player] Ready');
+  /** Open a modal by ID */
+  openModal(id) {
+    Hub.utils.$(id)?.classList.remove('hidden');
   },
 
-  /** Play radio station */
-  playRadio(stationName, streamUrl) {
-    console.log('[Player] Play radio:', stationName);
-    
-    // Stop any current playback
-    this.stop();
-    
-    // Set new state
-    this.state.currentSource = 'radio';
-    this.state.title = stationName;
-    this.state.startedAt = Date.now();
-    
-    // Load and play
-    this.radioAudio.src = streamUrl;
-    this.radioAudio.play().catch(err => {
-      console.error('[Player] Play failed:', err);
-      Hub.ui?.toast?.('Failed to play station', 'error');
-      this.state.isPlaying = false;
-    });
-    
-    this.updateMediaSession();
-    this.updateUI();
+  /** Show alert banner */
+  showBanner(text, severity) {
+    const banner = Hub.utils.$('alertBanner');
+    if (!banner) return;
+    banner.className = 'alert-banner ' + (severity || 'watch');
+    banner.innerHTML = '⚠️ ' + Hub.utils.esc(text);
+    banner.classList.remove('hidden');
   },
 
-  /** Play YouTube Music (called from music.js) */
-  playYouTube(title = 'YouTube Music') {
-    console.log('[Player] Play YouTube:', title);
-    
-    // Stop radio if playing
-    if (this.state.currentSource === 'radio') {
-      this.radioAudio.pause();
+  /** Hide alert banner */
+  hideBanner() {
+    Hub.utils.$('alertBanner')?.classList.add('hidden');
+  },
+
+  /** Show alert popup (respects quiet hours + seen state) */
+  async showAlertPopup(alertData) {
+    if (!alertData?.active) return;
+    const s = Hub.state.settings || {};
+    const isQuiet = Hub.utils.isQuietHours(s.quiet_hours_start, s.quiet_hours_end);
+
+    // During quiet hours, suppress popup unless severity is "warning"
+    if (isQuiet && alertData.severity !== 'warning') return;
+
+    // Check if already seen
+    const alertId = alertData.banner_text || 'unknown';
+    if (Hub.state.user) {
+      const seen = await Hub.db.isAlertSeen(Hub.state.user.id, alertId);
+      if (seen) return;
     }
-    
-    this.state.currentSource = 'youtube';
-    this.state.title = title;
-    this.state.isPlaying = true;
-    this.state.startedAt = Date.now();
-    
-    this.updateMediaSession();
-    this.updateUI();
+
+    Hub.utils.$('alertPopupText').textContent = alertData.banner_text || 'Weather alert active';
+    Hub.utils.$('alertPopup').classList.remove('hidden');
   },
 
-  /** Pause current playback */
-  pause() {
-    console.log('[Player] Pause');
-    
-    if (this.state.currentSource === 'radio') {
-      this.radioAudio.pause();
-    } else if (this.state.currentSource === 'youtube') {
-      // Signal to music.js to pause YouTube
-      window.dispatchEvent(new CustomEvent('player:pause-youtube'));
+  /** Dismiss alert popup and mark as seen */
+  async dismissAlert() {
+    const text = Hub.utils.$('alertPopupText')?.textContent || '';
+    Hub.utils.$('alertPopup').classList.add('hidden');
+    if (Hub.state.user && text) {
+      await Hub.db.markAlertSeen(Hub.state.user.id, text, 'acknowledged');
     }
-    
-    this.state.isPlaying = false;
-    this.updateUI();
   },
 
-  /** Resume playback */
-  resume() {
-    console.log('[Player] Resume');
-    
-    if (this.state.currentSource === 'radio') {
-      this.radioAudio.play();
-    } else if (this.state.currentSource === 'youtube') {
-      // Signal to music.js to resume YouTube
-      window.dispatchEvent(new CustomEvent('player:resume-youtube'));
-    }
-    
-    this.state.isPlaying = true;
-    this.updateUI();
+  /** Render a simple toast message */
+  toast(msg, type) {
+    const el = document.createElement('div');
+    el.style.cssText = 'position:fixed;bottom:2rem;left:50%;transform:translateX(-50%);z-index:100;padding:.75rem 1.5rem;border-radius:.5rem;font-weight:500;transition:opacity .3s;';
+    el.style.background = type === 'error' ? '#ef4444' : '#10b981';
+    el.style.color = '#fff';
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 2500);
   },
 
-  /** Stop all playback */
-  stop() {
-    console.log('[Player] Stop');
-    
-    if (this.state.currentSource === 'radio') {
-      this.radioAudio.pause();
-      this.radioAudio.src = '';
-    } else if (this.state.currentSource === 'youtube') {
-      window.dispatchEvent(new CustomEvent('player:stop-youtube'));
-    }
-    
-    this.state.currentSource = null;
-    this.state.title = '';
-    this.state.isPlaying = false;
-    this.state.startedAt = null;
-    
-    this.updateMediaSession();
-    this.updateUI();
+  /** Update dashboard date */
+  updateDashboardDate() {
+    const el = Hub.utils.$('dashboardDate');
+    if (el) el.textContent = Hub.utils.formatDate(new Date());
   },
 
-  /** Set volume (0-1) */
-  setVolume(level) {
-    this.state.volume = Math.max(0, Math.min(1, level));
-    if (this.radioAudio) {
-      this.radioAudio.volume = this.state.volume;
-    }
-    // YouTube volume would be controlled separately if needed
-  },
-
-  /** Setup Media Session API for lockscreen controls */
-  setupMediaSession() {
-    if (!('mediaSession' in navigator)) return;
-
-    navigator.mediaSession.setActionHandler('play', () => this.resume());
-    navigator.mediaSession.setActionHandler('pause', () => this.pause());
-    navigator.mediaSession.setActionHandler('stop', () => this.stop());
-  },
-
-  /** Update Media Session metadata */
-  updateMediaSession() {
-    if (!('mediaSession' in navigator)) return;
-
-    if (this.state.currentSource) {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: this.state.title,
-        artist: this.state.currentSource === 'radio' ? 'Live Radio' : 'YouTube Music',
-        artwork: [
-          { src: '/favicon.png', sizes: '96x96', type: 'image/png' }
-        ]
-      });
+  /** Update dashboard greeting with user's name */
+  updateDashboardGreeting() {
+    const el = Hub.utils.$('dashboardGreeting');
+    if (!el) return;
+    
+    const firstName = Hub.utils.getUserFirstName();
+    if (firstName) {
+      const hour = new Date().getHours();
+      let greeting = 'Good morning';
+      if (hour >= 12 && hour < 17) greeting = 'Good afternoon';
+      else if (hour >= 17) greeting = 'Good evening';
+      
+      el.textContent = `${greeting}, ${firstName}! 👋`;
     } else {
-      navigator.mediaSession.metadata = null;
+      el.textContent = '';
     }
-  },
-
-  /** Update all player UI widgets */
-  updateUI() {
-    // Update dashboard widget
-    const dashWidget = document.getElementById('nowPlayingWidget');
-    if (dashWidget) {
-      this.renderWidget(dashWidget);
-    }
-
-    // Update standby widget
-    const standbyWidget = document.getElementById('standbyNowPlaying');
-    if (standbyWidget) {
-      this.renderWidget(standbyWidget);
-    }
-  },
-
-  /** Render player widget */
-  renderWidget(container) {
-    if (!this.state.currentSource) {
-      container.innerHTML = `
-        <div class="text-center text-gray-500 py-4">
-          <div class="text-3xl mb-2">🎵</div>
-          <p class="text-sm">Nothing playing</p>
-        </div>
-      `;
-      return;
-    }
-
-    const icon = this.state.currentSource === 'radio' ? '📻' : '🎵';
-    const sourceLabel = this.state.currentSource === 'radio' ? 'Radio' : 'Music';
-    
-    container.innerHTML = `
-      <div class="flex items-center justify-between gap-4">
-        <div class="flex items-center gap-3 flex-1 min-w-0">
-          <div class="text-3xl">${icon}</div>
-          <div class="flex-1 min-w-0">
-            <p class="text-xs text-gray-400 uppercase tracking-wide">${sourceLabel}</p>
-            <p class="font-semibold truncate">${this.state.title}</p>
-            <p class="text-xs ${this.state.isPlaying ? 'text-green-400' : 'text-gray-400'}">
-              ${this.state.isPlaying ? '▶ Playing' : '⏸ Paused'}
-            </p>
-          </div>
-        </div>
-        <div class="flex gap-2">
-          ${this.state.isPlaying 
-            ? '<button onclick="Hub.player.pause()" class="btn btn-secondary p-2">⏸</button>'
-            : '<button onclick="Hub.player.resume()" class="btn btn-primary p-2">▶</button>'
-          }
-          <button onclick="Hub.player.stop()" class="btn btn-secondary p-2">⏹</button>
-        </div>
-      </div>
-    `;
-  },
-
-  /** Get formatted playback duration */
-  getPlaybackDuration() {
-    if (!this.state.startedAt) return '0:00';
-    
-    const elapsed = Math.floor((Date.now() - this.state.startedAt) / 1000);
-    const mins = Math.floor(elapsed / 60);
-    const secs = elapsed % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
   }
 };

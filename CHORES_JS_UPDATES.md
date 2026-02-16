@@ -1,532 +1,648 @@
-// ============================================================
-// assets/calendar.js — Google Calendar Integration
-// Uses Google Calendar API via Supabase OAuth provider token
-// ============================================================
-window.Hub = window.Hub || {};
+# INDEX.HTML COMPREHENSIVE UPDATES
+# Apply these changes to /home/claude/HOMEHUB-main/public/index.html
 
-Hub.calendar = {
-  _cache: null,
-  _cacheTime: 0,
-  CACHE_TTL: 5 * 60 * 1000, // 5 minutes
+## 1. UPDATE CSS SECTION (Replace lines 36-70)
 
-  // Clear cache manually (e.g., when settings change)
-  clearCache() {
-    this._cache = null;
-    this._cacheTime = 0;
-    console.log('[Calendar] Cache cleared');
-  },
+Replace the <style> section with this enhanced version:
 
-  // --- Token helpers: keep Google Calendar auth alive ---
-  async _getProviderToken() {
-    try {
-      const { data: { session } } = await Hub.sb.auth.getSession();
-      if (session?.provider_token) return session.provider_token;
-
-      // Try refreshing Supabase session; this often refreshes Google provider_token too
-      if (Hub.auth?.ensureFreshSession) await Hub.auth.ensureFreshSession('google-token');
-
-      const { data: { session: s2 } } = await Hub.sb.auth.getSession();
-      return s2?.provider_token || null;
-    } catch (e) {
-      console.warn('[Calendar] Provider token lookup failed:', e.message);
-      return null;
-    }
-  },
-
-  async _googleFetch(url, init = {}, retry = true) {
-    if (!Hub.sb) return { error: 'App not initialized - please refresh the page' };
-    let token = await this._getProviderToken();
-    if (!token) return { error: 'Not authenticated. Please sign out and sign in again to grant calendar access.' };
-
-    const headers = Object.assign({
-      'Authorization': `Bearer ${token}`,
-      'Accept': 'application/json'
-    }, (init.headers || {}));
-
-    let response = await fetch(url, Object.assign({}, init, { headers }));
-
-    // If Google says token expired, refresh session and retry once
-    if (response.status === 401 && retry) {
-      console.warn('[Calendar] 401 from Google — attempting silent refresh');
-      try {
-        if (Hub.auth?.ensureFreshSession) await Hub.auth.ensureFreshSession('google-401');
-      } catch (e) {}
-
-      token = await this._getProviderToken();
-      if (!token) return response;
-      const headers2 = Object.assign({}, headers, { 'Authorization': `Bearer ${token}` });
-      response = await fetch(url, Object.assign({}, init, { headers: headers2 }));
+```html
+  <style>
+    /* ========================================
+       DESIGN SYSTEM - Enhanced Variables
+    ======================================== */
+    :root {
+      /* Colors - Elevated Dark Mode Palette */
+      --bg-base: #0B0F19;
+      --bg-surface-1: #151B2B;
+      --bg-surface-2: #1E2738;
+      --bg-card: #1A2235;
+      --bg-card-hover: #1F2843;
+      --accent-primary: #3B82F6;
+      --accent-glow: rgba(59, 130, 246, 0.2);
+      
+      /* Typography Scale */
+      --font-display: 2.5rem;
+      --font-title: 1.5rem;
+      --font-body: 1rem;
+      --font-caption: 0.875rem;
+      --font-micro: 0.75rem;
+      
+      /* Spacing */
+      --space-xs: 0.5rem;
+      --space-sm: 1rem;
+      --space-md: 1.5rem;
+      --space-lg: 2rem;
+      --space-xl: 3rem;
+      
+      /* Animation */
+      --ease-smooth: cubic-bezier(0.4, 0.0, 0.2, 1);
+      --duration-fast: 150ms;
+      --duration-normal: 300ms;
+      --duration-slow: 500ms;
     }
 
-    return response;
-  },
-
-  /**
-   * Fetch upcoming events from user's primary calendar
-   * @param {number} maxResults - Maximum number of events to fetch
-   * @returns {Array|Object} Array of events or error object
-   */
-  /**
-   * Get list of user's calendars
-   * @returns {Array|Object} Array of calendars or error object
-   */
-  async getCalendarList() {
-    try {
-      console.log('[Calendar] Getting calendar list...');
-
-      const url = 'https://www.googleapis.com/calendar/v3/users/me/calendarList';
-      console.log('[Calendar] Fetching from:', url);
-
-      const response = await this._googleFetch(url);
-      if (response?.error) return response;
-
-      console.log('[Calendar] Response status:', response.status);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('[Calendar] Error response:', errorText);
-
-        if (response.status === 401) {
-          return { error: 'Calendar token expired. Try again; if it keeps happening, sign out and sign in again.' };
-        }
-        if (response.status === 403) {
-          return { error: 'Calendar API access denied (403). Make sure Calendar API is enabled and you granted calendar scopes when signing in.' };
-        }
-        throw new Error(`Calendar list error: ${response.status} - ${errorText}`);
-      }
-
-      const data = await response.json();
-      console.log('[Calendar] Found', data.items?.length || 0, 'calendars:', data.items?.map(c => c.summary));
-
-      return data.items || [];
-    } catch (error) {
-      console.error('[Calendar] Error fetching calendar list:', error);
-      return { error: `Failed to load calendars: ${error.message}` };
-    }
-  },
-
-  /**
-   * Fetch upcoming events from user's selected calendars
-   * @param {number} maxResults - Maximum number of events to fetch per calendar
-   * @returns {Array|Object} Array of events or error object
-   */
-  async getUpcomingEvents(maxResults = 10) {
-    try {
-      // Check cache first
-      const now = Date.now();
-      if (this._cache && (now - this._cacheTime) < this.CACHE_TTL) {
-        console.log('[Calendar] Using cached events');
-        return this._cache;
-      }
-
-      // Get selected calendar IDs with localStorage backup
-      const settings = Hub.state?.settings || {};
-      let calendarIds = settings.selected_calendars || null;
-
-      // If not in settings, try localStorage
-      if (!calendarIds || !Array.isArray(calendarIds) || calendarIds.length === 0) {
-        const stored = localStorage.getItem('selected_calendars');
-        if (stored) {
-          try {
-            calendarIds = JSON.parse(stored);
-            console.log('[Calendar] Loaded from localStorage:', calendarIds);
-          } catch (e) {
-            console.warn('[Calendar] Failed to parse localStorage:', e);
-          }
-        }
-      }
-
-      // Final fallback to primary
-      if (!calendarIds || !Array.isArray(calendarIds) || calendarIds.length === 0) {
-        calendarIds = ['primary'];
-      }
-
-      console.log('[Calendar] ===== FETCHING EVENTS =====');
-      console.log('[Calendar] Settings object:', settings);
-      console.log('[Calendar] Selected calendars from settings:', calendarIds);
-      console.log('[Calendar] Will fetch from', calendarIds.length, 'calendar(s)');
-      calendarIds.forEach((id, i) => console.log(`[Calendar]   ${i + 1}. ${id}`));
-
-      // Fetch events from each selected calendar
-      const timeMin = new Date().toISOString();
-      const allEvents = [];
-
-      for (const calendarId of calendarIds) {
-        try {
-          const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?` +
-            `maxResults=${maxResults}&` +
-            `orderBy=startTime&` +
-            `singleEvents=true&` +
-            `timeMin=${timeMin}`;
-
-          const response = await this._googleFetch(url);
-          if (response?.error) return response;
-
-          if (!response.ok) {
-            if (response.status === 401) {
-              // Usually recoverable; _googleFetch already retried once.
-              return { error: 'Calendar token expired. Try again; if it keeps happening, sign out and sign in again.' };
-            }
-            if (response.status === 403) {
-              return { error: 'Calendar API access denied (403). Make sure the Google Calendar API is enabled and the right scopes were granted.' };
-            }
-            console.warn(`[Calendar] Error fetching from ${calendarId}:`, response.status);
-            continue; // Skip this calendar and try others
-          }
-
-          const data = await response.json();
-          const events = (data.items || []).map(event => ({
-            ...event,
-            calendarId: calendarId // Tag each event with its calendar ID
-          }));
-
-          console.log(`[Calendar] Fetched ${events.length} events from calendar: ${calendarId}`);
-          allEvents.push(...events);
-        } catch (err) {
-          console.error(`[Calendar] Error fetching events from ${calendarId}:`, err);
-          // Continue with other calendars
-        }
-      }
-
-      // Sort all events by start time
-      allEvents.sort((a, b) => {
-        const aTime = a.start.dateTime || a.start.date;
-        const bTime = b.start.dateTime || b.start.date;
-        return new Date(aTime) - new Date(bTime);
-      });
-
-      // Limit to maxResults total events
-      const limitedEvents = allEvents.slice(0, maxResults);
-
-      // Cache the results
-      this._cache = limitedEvents;
-      this._cacheTime = now;
-
-      console.log('[Calendar] ===== FETCH COMPLETE =====');
-      console.log(`[Calendar] Total events fetched: ${limitedEvents.length}`);
-      const calendarCounts = {};
-      limitedEvents.forEach(e => {
-        const cal = e.calendarId || 'unknown';
-        calendarCounts[cal] = (calendarCounts[cal] || 0) + 1;
-      });
-      console.log('[Calendar] Events by calendar:', calendarCounts);
-      console.log('[Calendar] ==========================');
-
-      return this._cache;
-
-    } catch (error) {
-      console.error('[Calendar] Error fetching events:', error);
-      return { error: error.message };
-    }
-  },
-
-  /**
-   * Create a new calendar event
-   * @param {Object} event - Event object following Google Calendar API format
-   * @returns {Object} Success or error object
-   */
-  async createEvent(event) {
-    try {
-      if (!Hub.sb) {
-        return { error: 'App not initialized' };
-      }
-
-      console.log('[Calendar] Creating event:', event.summary);
-
-      const response = await this._googleFetch(
-        'https://www.googleapis.com/calendar/v3/calendars/primary/events',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(event)
-        }
-      );
-
-      if (response?.error) return response;
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          return { error: 'Calendar token expired. Try again; if it keeps happening, sign out and sign in again.' };
-        }
-        const t = await response.text().catch(() => '');
-        throw new Error(`Failed to create event: ${response.status}${t ? ' - ' + t : ''}`);
-      }
-
-      const data = await response.json();
-
-      // Clear cache to force refresh
-      this._cache = null;
-
-      console.log('[Calendar] Event created:', data.id);
-      return { success: true, event: data };
-
-    } catch (error) {
-      console.error('[Calendar] Error creating event:', error);
-      return { error: error.message };
-    }
-  },
-
-  /**
-   * Create a quick event with prompts
-   */
-  async createQuickEvent() {
-    const title = prompt('Event title:');
-    if (!title) return;
-
-    const dateStr = prompt('Date (YYYY-MM-DD):');
-    if (!dateStr) return;
-
-    const timeStr = prompt('Time (HH:MM in 24-hour format, or leave empty for all-day):');
-
-    let event;
-    if (timeStr) {
-      // Timed event
-      const startDateTime = new Date(`${dateStr}T${timeStr}:00`);
-      const endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000); // +1 hour
-
-      event = {
-        summary: title,
-        start: { 
-          dateTime: startDateTime.toISOString(), 
-          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone 
-        },
-        end: { 
-          dateTime: endDateTime.toISOString(), 
-          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone 
-        }
-      };
-    } else {
-      // All-day event
-      event = {
-        summary: title,
-        start: { date: dateStr },
-        end: { date: dateStr }
-      };
-    }
-
-    const result = await this.createEvent(event);
+    /* ========================================
+       BASE STYLES
+    ======================================== */
+    * { box-sizing: border-box; }
     
-    if (result.error) {
-      Hub.ui.toast('Error: ' + result.error, 'error');
-    } else {
-      Hub.ui.toast('Event created!', 'success');
-      this.refreshCalendar();
-    }
-  },
-
-  /**
-   * Render calendar widget on dashboard
-   */
-  async renderDashboard() {
-    const widget = Hub.utils.$('calendarWidget');
-    if (!widget) {
-      console.warn('[Calendar] Widget element not found');
-      return;
+    body {
+      background: var(--bg-base);
+      color: #f9fafb;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      margin: 0;
+      line-height: 1.5;
     }
 
-    widget.innerHTML = '<div class="animate-pulse text-gray-400 text-sm">Loading calendar...</div>';
+    /* Google Font - Inter */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
-    const events = await this.getUpcomingEvents(15); // Get more events for better organization
-
-    if (events.error) {
-      // Check if it's a simple re-auth issue
-      const needsReauth = events.error.includes('sign out') || events.error.includes('sign in');
-      
-      widget.innerHTML = `
-        <div class="bg-blue-900 bg-opacity-30 rounded-lg p-4 text-center">
-          <p class="text-2xl mb-2">📅</p>
-          <p class="text-sm font-medium mb-2">Calendar Not Connected</p>
-          <p class="text-xs text-gray-400 mb-3">${Hub.utils.esc(events.error)}</p>
-          ${needsReauth ? `
-            <button onclick="Hub.auth.signOut()" class="btn btn-primary text-xs">
-              Sign Out & Reconnect
-            </button>
-            <p class="text-xs text-gray-500 mt-2">You'll need to grant calendar access when signing back in</p>
-          ` : `
-            <button onclick="Hub.calendar.showSetupInstructions()" class="text-xs text-blue-400 hover:text-blue-300">
-              How to connect
-            </button>
-          `}
-        </div>
-      `;
-      return;
+    /* ========================================
+       CARD SYSTEM with Elevation
+    ======================================== */
+    .card {
+      background: linear-gradient(145deg, var(--bg-surface-1) 0%, var(--bg-card) 100%);
+      border-radius: 1rem;
+      padding: var(--space-md);
+      margin-bottom: var(--space-md);
+      box-shadow: 0 4px 6px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.2);
+      transition: transform var(--duration-normal) var(--ease-smooth),
+                  box-shadow var(--duration-normal) var(--ease-smooth);
     }
 
-    if (!events || events.length === 0) {
-      widget.innerHTML = `
-        <div class="text-center py-4">
-          <p class="text-gray-400 text-sm mb-2">📅 No upcoming events</p>
-          <button onclick="Hub.calendar.createQuickEvent()" class="text-xs text-blue-400 hover:text-blue-300">
-            + Create Event
-          </button>
-        </div>
-      `;
-      return;
+    .card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 24px rgba(0,0,0,0.4), 0 4px 8px rgba(0,0,0,0.3);
     }
 
-    // Organize events by time period
-    const now = new Date();
-    const todayEvents = [];
-    const tomorrowEvents = [];
-    const upcomingEvents = [];
+    /* Glassmorphism variant */
+    .card-glass {
+      background: rgba(21, 27, 43, 0.7);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
 
-    events.forEach(event => {
-      const start = event.start.dateTime || event.start.date;
-      const startDate = new Date(start);
-      
-      if (this._isToday(startDate)) {
-        todayEvents.push(event);
-      } else if (this._isTomorrow(startDate)) {
-        tomorrowEvents.push(event);
-      } else {
-        upcomingEvents.push(event);
+    /* ========================================
+       BUTTON SYSTEM
+    ======================================== */
+    .btn {
+      padding: var(--space-xs) var(--space-sm);
+      border-radius: 0.5rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all var(--duration-fast);
+      border: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: var(--font-caption);
+    }
+
+    .btn-primary {
+      background: var(--accent-primary);
+      color: #fff;
+      box-shadow: 0 0 20px var(--accent-glow);
+    }
+    
+    .btn-primary:hover {
+      background: #2563eb;
+      box-shadow: 0 0 30px var(--accent-glow);
+      transform: translateY(-2px);
+    }
+
+    .btn-secondary {
+      background: var(--bg-surface-2);
+      color: #fff;
+    }
+    
+    .btn-secondary:hover {
+      background: var(--bg-card-hover);
+    }
+
+    .btn-danger {
+      background: #ef4444;
+      color: #fff;
+    }
+    
+    .btn-danger:hover {
+      background: #dc2626;
+    }
+
+    .btn-success {
+      background: #10b981;
+      color: #fff;
+    }
+    
+    .btn-success:hover {
+      background: #059669;
+    }
+
+    /* ========================================
+       INPUT SYSTEM
+    ======================================== */
+    .input {
+      background: var(--bg-surface-2);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 0.5rem;
+      padding: var(--space-xs) var(--space-sm);
+      color: #fff;
+      width: 100%;
+      font-size: var(--font-body);
+      transition: border-color var(--duration-fast);
+    }
+
+    .input:focus {
+      outline: none;
+      border-color: var(--accent-primary);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    select.input {
+      appearance: auto;
+    }
+
+    /* ========================================
+       BENTO GRID LAYOUT for Dashboard
+    ======================================== */
+    .bento-grid {
+      display: grid;
+      gap: var(--space-md);
+      grid-template-columns: 1fr;
+    }
+
+    /* Mobile */
+    @media (min-width: 640px) {
+      .bento-grid {
+        grid-template-columns: repeat(2, 1fr);
       }
-    });
-
-    // Helper function to render an event
-    const renderEvent = (event, showDate = false) => {
-      const start = event.start.dateTime || event.start.date;
-      const startDate = new Date(start);
-      const timeLabel = event.start.dateTime 
-        ? startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-        : 'All day';
       
-      const dateLabel = showDate 
-        ? startDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-        : '';
-
-      return `
-        <div class="flex items-center gap-3 py-2 px-3 rounded hover:bg-gray-700 transition-colors">
-          <div class="text-xs font-medium text-blue-400 w-16 flex-shrink-0">
-            ${Hub.utils.esc(timeLabel)}
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="font-medium text-sm truncate">${Hub.utils.esc(event.summary || 'Untitled')}</div>
-            ${showDate ? `<div class="text-xs text-gray-500">${Hub.utils.esc(dateLabel)}</div>` : ''}
-          </div>
-        </div>
-      `;
-    };
-
-    // Build HTML sections
-    let sectionsHtml = '';
-
-    // TODAY section
-    if (todayEvents.length > 0) {
-      sectionsHtml += `
-        <div class="mb-4">
-          <div class="flex items-center gap-2 mb-2">
-            <div class="w-1 h-4 bg-green-500 rounded"></div>
-            <h4 class="font-semibold text-sm text-green-400">Today</h4>
-            <span class="text-xs text-gray-500">${todayEvents.length} event${todayEvents.length !== 1 ? 's' : ''}</span>
-          </div>
-          <div class="space-y-1">
-            ${todayEvents.map(e => renderEvent(e, false)).join('')}
-          </div>
-        </div>
-      `;
+      .bento-sm { grid-column: span 1; }
+      .bento-md { grid-column: span 2; }
+      .bento-lg { grid-column: span 2; grid-row: span 2; }
     }
 
-    // TOMORROW section
-    if (tomorrowEvents.length > 0) {
-      sectionsHtml += `
-        <div class="mb-4">
-          <div class="flex items-center gap-2 mb-2">
-            <div class="w-1 h-4 bg-blue-500 rounded"></div>
-            <h4 class="font-semibold text-sm text-blue-400">Tomorrow</h4>
-            <span class="text-xs text-gray-500">${tomorrowEvents.length} event${tomorrowEvents.length !== 1 ? 's' : ''}</span>
-          </div>
-          <div class="space-y-1">
-            ${tomorrowEvents.map(e => renderEvent(e, false)).join('')}
-          </div>
-        </div>
-      `;
+    /* Desktop */
+    @media (min-width: 1024px) {
+      .bento-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+      
+      .bento-sm { grid-column: span 1; }
+      .bento-md { grid-column: span 2; grid-row: span 1; }
+      .bento-lg { grid-column: span 2; grid-row: span 2; }
     }
 
-    // COMING UP section (limit to 5 to save space)
-    if (upcomingEvents.length > 0) {
-      const limitedUpcoming = upcomingEvents.slice(0, 5);
-      sectionsHtml += `
-        <div>
-          <div class="flex items-center gap-2 mb-2">
-            <div class="w-1 h-4 bg-gray-500 rounded"></div>
-            <h4 class="font-semibold text-sm text-gray-400">Coming Up</h4>
-            <span class="text-xs text-gray-500">${limitedUpcoming.length}${upcomingEvents.length > 5 ? '+' : ''} event${limitedUpcoming.length !== 1 ? 's' : ''}</span>
-          </div>
-          <div class="space-y-1">
-            ${limitedUpcoming.map(e => renderEvent(e, true)).join('')}
-          </div>
-        </div>
-      `;
+    /* ========================================
+       ANIMATION & MOTION
+    ======================================== */
+    @keyframes slideUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
-    // Show message if no events today/tomorrow but have upcoming
-    if (todayEvents.length === 0 && tomorrowEvents.length === 0 && upcomingEvents.length > 0) {
-      sectionsHtml = `
-        <div class="bg-gray-800 bg-opacity-50 rounded-lg p-3 mb-4 text-center">
-          <p class="text-sm text-gray-400">✨ Nothing today or tomorrow</p>
-          <p class="text-xs text-gray-500 mt-1">Your next event is coming up</p>
-        </div>
-      ` + sectionsHtml;
+    @keyframes wave {
+      0%, 100% { transform: rotate(0deg); }
+      25% { transform: rotate(10deg); }
+      75% { transform: rotate(-10deg); }
     }
 
-    widget.innerHTML = `
-      <div>
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="font-bold text-lg">📅 Calendar</h3>
-          <div class="flex gap-2">
-            <button onclick="Hub.calendar.createQuickEvent()" class="text-xs text-green-400 hover:text-green-300 font-medium">
-              + Add
-            </button>
-            <button onclick="Hub.calendar.refreshCalendar()" class="text-xs text-blue-400 hover:text-blue-300">
-              Refresh
-            </button>
+    .animate-wave:hover {
+      animation: wave 0.5s ease-in-out;
+    }
+
+    /* Staggered entrance for cards */
+    .bento-grid > * {
+      animation: slideUp var(--duration-slow) var(--ease-smooth);
+      animation-fill-mode: both;
+    }
+
+    .bento-grid > *:nth-child(1) { animation-delay: 0ms; }
+    .bento-grid > *:nth-child(2) { animation-delay: 50ms; }
+    .bento-grid > *:nth-child(3) { animation-delay: 100ms; }
+    .bento-grid > *:nth-child(4) { animation-delay: 150ms; }
+    .bento-grid > *:nth-child(5) { animation-delay: 200ms; }
+    .bento-grid > *:nth-child(6) { animation-delay: 250ms; }
+
+    /* Respect reduced motion */
+    @media (prefers-reduced-motion: reduce) {
+      * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    /* ========================================
+       STANDBY ENHANCEMENTS
+    ======================================== */
+    @keyframes kenBurns {
+      0% {
+        transform: scale(1) translate(0, 0);
+      }
+      100% {
+        transform: scale(1.1) translate(-5%, -5%);
+      }
+    }
+
+    #standbyCurrentPhoto {
+      animation: kenBurns 30s ease-in-out infinite alternate;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #standbyCurrentPhoto {
+        animation: none;
+      }
+    }
+
+    /* Ripple wake effect */
+    @keyframes ripple {
+      0% {
+        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5);
+      }
+      100% {
+        box-shadow: 0 0 0 100px rgba(59, 130, 246, 0);
+      }
+    }
+
+    #standbyPage.waking {
+      animation: ripple 0.8s ease-out;
+    }
+
+    /* ========================================
+       CHORE ICONS & INDICATORS
+    ======================================== */
+    .chore-icon {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+
+    .chore-icon.daily { background: #3b82f6; }
+    .chore-icon.weekly { background: #f59e0b; }
+    .chore-icon.monthly { background: #a855f7; }
+
+    /* Custom checkbox animation */
+    .chore-checkbox {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      transition: all var(--duration-fast);
+      cursor: pointer;
+    }
+
+    .chore-checkbox.checked {
+      background: var(--accent-primary);
+      border-color: var(--accent-primary);
+    }
+
+    .chore-checkbox.checked::after {
+      content: '✓';
+      color: white;
+      display: block;
+      text-align: center;
+      line-height: 20px;
+      font-weight: bold;
+    }
+
+    /* ========================================
+       UTILITY CLASSES
+    ======================================== */
+    .hidden { display: none !important; }
+    .page { display: none; }
+    .page.active { display: block; }
+    
+    /* Status indicators */
+    .status-dot {
+      display: inline-block;
+      width: 0.75rem;
+      height: 0.75rem;
+      border-radius: 50%;
+    }
+    
+    .status-dot.green { background: #10b981; }
+    .status-dot.red { background: #ef4444; }
+    .status-dot.yellow { background: #f59e0b; }
+
+    /* Progress bars */
+    .progress-bar {
+      height: 1rem;
+      background: var(--bg-surface-2);
+      border-radius: 9999px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      border-radius: 9999px;
+      transition: width 0.4s var(--ease-smooth);
+      background: linear-gradient(90deg, var(--accent-primary), #60a5fa);
+    }
+
+    /* Alert banner */
+    .alert-banner {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 50;
+      padding: 0.75rem 1rem;
+      text-align: center;
+      font-weight: 700;
+      animation: slideDown 0.3s ease-out;
+    }
+
+    @keyframes slideDown {
+      from { transform: translateY(-100%); }
+      to { transform: translateY(0); }
+    }
+
+    .alert-banner.warning { background: #ef4444; }
+    .alert-banner.watch { background: #f59e0b; color: #000; }
+    .alert-banner.advisory { background: #eab308; color: #000; }
+
+    /* Modal overlay */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 60;
+      padding: 1rem;
+    }
+
+    /* Photo grid */
+    .photo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+
+    .photo-item {
+      aspect-ratio: 16/9;
+      background: var(--bg-surface-1);
+      border-radius: 0.5rem;
+      overflow: hidden;
+    }
+
+    .photo-item img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: opacity 1s, transform 0.3s;
+    }
+
+    .photo-item:hover img {
+      transform: scale(1.05);
+    }
+
+    /* Skeleton loader */
+    .skeleton {
+      background: linear-gradient(
+        90deg,
+        var(--bg-surface-1) 0%,
+        var(--bg-surface-2) 50%,
+        var(--bg-surface-1) 100%
+      );
+      background-size: 200% 100%;
+      animation: skeleton-loading 1.5s ease-in-out infinite;
+      border-radius: 0.5rem;
+    }
+
+    @keyframes skeleton-loading {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    /* ========================================
+       RESPONSIVE UTILITIES
+    ======================================== */
+    @media (max-width: 640px) {
+      .card {
+        padding: var(--space-sm);
+        margin-bottom: var(--space-sm);
+      }
+      
+      :root {
+        --font-display: 2rem;
+        --font-title: 1.25rem;
+      }
+    }
+  </style>
+```
+
+## 2. UPDATE DASHBOARD SECTION (Lines ~136-223)
+
+Replace the dashboard page section with this bento grid version:
+
+```html
+    <!-- ========== DASHBOARD ========== -->
+    <div id="dashboardPage" class="page">
+      <div class="max-w-7xl mx-auto p-4 md:p-6">
+        <!-- Header with Greeting -->
+        <header class="mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+          <div>
+            <h1 class="text-4xl md:text-5xl font-bold animate-wave" style="display: inline-block;">🏠</h1>
+            <span class="text-4xl md:text-5xl font-bold"> Home Hub</span>
+            <p class="text-gray-400 mt-2 text-base" id="dashboardDate"></p>
+            <p class="text-blue-400 text-lg mt-1 font-medium" id="dashboardGreeting"></p>
           </div>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="Hub.router.go('standby')" class="btn btn-secondary text-sm py-2 px-4">🖥 Standby</button>
+            <button onclick="Hub.router.go('status')" class="btn btn-secondary text-sm py-2 px-4">📊 Status</button>
+            <button onclick="Hub.router.go('settings')" class="btn btn-secondary text-sm py-2 px-4">⚙️ Settings</button>
+            <button id="btnSignOut" class="btn btn-secondary text-sm py-2 px-4">Sign Out</button>
+          </div>
+        </header>
+
+        <!-- Bento Grid Layout -->
+        <div class="bento-grid">
+          
+          <!-- Weather - Small (1x1) -->
+          <div class="card bento-sm">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="text-xl font-bold">☀️ Weather</h2>
+              <button onclick="Hub.router.go('weather')" class="text-blue-400 hover:text-blue-300 text-sm">
+                View →
+              </button>
+            </div>
+            <div id="dashboardWeather">
+              <div class="skeleton" style="height: 120px;"></div>
+            </div>
+          </div>
+
+          <!-- Chores - Medium (2x1) -->
+          <div class="card bento-md">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="text-xl font-bold">Today's Chores</h2>
+              <button onclick="Hub.router.go('chores')" class="text-blue-400 hover:text-blue-300 text-sm">
+                View All →
+              </button>
+            </div>
+            <div id="dashboardChores" class="space-y-2">
+              <div class="skeleton" style="height: 60px;"></div>
+            </div>
+          </div>
+
+          <!-- Calendar - Large (2x2) -->
+          <div class="card bento-lg">
+            <h2 class="text-xl font-bold mb-4">📅 Calendar</h2>
+            <div id="calendarWidget">
+              <div class="skeleton" style="height: 300px;"></div>
+            </div>
+          </div>
+
+          <!-- Barker (Dog) - Medium (1x1) -->
+          <div class="card bento-sm">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-bold text-xl">🐕 Barker</h3>
+              <button onclick="Hub.treats.showQuickAdd()" class="btn btn-primary text-sm py-1 px-3">
+                + Treat
+              </button>
+            </div>
+            <div id="dogStatusWidget">
+              <div class="skeleton" style="height: 150px;"></div>
+            </div>
+          </div>
+
+          <!-- Now Playing - Small (1x1) -->
+          <div class="card bento-sm">
+            <h3 class="font-bold text-lg mb-3">🎵 Now Playing</h3>
+            <div id="nowPlayingWidget">
+              <div class="text-center text-gray-500 py-4">
+                <div class="text-3xl mb-2">🎵</div>
+                <p class="text-sm">Nothing playing</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Actions - Small (1x1) -->
+          <div class="card bento-sm">
+            <h3 class="font-bold text-lg mb-3">⚡ Quick Actions</h3>
+            <div class="grid grid-cols-2 gap-2">
+              <button onclick="Hub.router.go('music')" class="btn btn-secondary w-full py-3">🎵 Music</button>
+              <button onclick="Hub.router.go('radio')" class="btn btn-secondary w-full py-3">📻 Radio</button>
+              <button onclick="Hub.router.go('weather')" class="btn btn-secondary w-full py-3">🌤️ Weather</button>
+              <button onclick="Hub.router.go('treats')" class="btn btn-secondary w-full py-3">🐕 Treats</button>
+            </div>
+          </div>
+
+          <!-- Photos - Full Width -->
+          <div class="card bento-md lg:col-span-3">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-bold text-xl">📸 Family Photos</h3>
+            </div>
+            <div id="immichDashboardWidget" class="min-h-[200px]">
+              <div class="skeleton" style="height: 200px;"></div>
+            </div>
+          </div>
+
         </div>
-        ${sectionsHtml}
       </div>
-    `;
-  },
+    </div>
+```
 
-  /**
-   * Force refresh calendar (clears cache)
-   */
-  async refreshCalendar() {
-    this._cache = null;
-    await this.renderDashboard();
-  },
+## 3. UPDATE STANDBY SECTION (After line ~281)
 
-  /**
-   * Show setup instructions
-   */
-  showSetupInstructions() {
-    alert(
-      '📅 Google Calendar Setup:\n\n' +
-      'Calendar permissions are now requested automatically!\n\n' +
-      'If you\'re seeing this message:\n\n' +
-      '1. Sign out of Home Hub\n' +
-      '2. Sign back in with Google\n' +
-      '3. Click "Allow" when Google asks for calendar access\n\n' +
-      'Note: Admin may need to enable Calendar API in Google Cloud Console first.\n\n' +
-      'After signing in, your calendar will appear here automatically!'
-    );
-  },
+Add Now Playing card to standby grid:
 
-  // Helper functions
-  _isToday(date) {
-    const today = new Date();
-    return date.getDate() === today.getDate() &&
-           date.getMonth() === today.getMonth() &&
-           date.getFullYear() === today.getFullYear();
-  },
+```html
+          <!-- Now Playing - glassmorphism card -->
+          <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10">
+            <h3 class="text-sm font-semibold mb-2 text-purple-400">🎵 Now Playing</h3>
+            <div id="standbyNowPlaying" class="text-xs sm:text-sm">
+              <p class="text-gray-400">Nothing playing</p>
+            </div>
+          </div>
+```
 
-  _isTomorrow(date) {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    return date.getDate() === tomorrow.getDate() &&
-           date.getMonth() === tomorrow.getMonth() &&
-           date.getFullYear() === tomorrow.getFullYear();
-  }
-};
+INSERT this after the Weather card (around line 271).
+
+## 4. ADD MUSIC PAGE (After Treats page, before Status page)
+
+```html
+    <!-- ========== MUSIC ========== -->
+    <div id="musicPage" class="page">
+      <div class="max-w-7xl mx-auto p-4 md:p-6">
+        <header class="flex items-center justify-between mb-6">
+          <h1 class="text-3xl font-bold">🎵 Music</h1>
+          <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
+        </header>
+
+        <!-- YouTube Music Player -->
+        <div class="card mb-6">
+          <h2 class="text-xl font-bold mb-4">YouTube Music</h2>
+          <div id="musicPlayerContainer">
+            <p class="text-gray-400 text-center py-8">Player will load when you enter this page</p>
+          </div>
+        </div>
+
+        <!-- Bluetooth Speakers Help -->
+        <div id="bluetoothHelp"></div>
+      </div>
+    </div>
+
+    <!-- ========== RADIO ========== -->
+    <div id="radioPage" class="page">
+      <div class="max-w-7xl mx-auto p-4 md:p-6">
+        <header class="flex items-center justify-between mb-6">
+          <h1 class="text-3xl font-bold">📻 Live Radio</h1>
+          <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
+        </header>
+
+        <!-- Radio Controls -->
+        <div class="card mb-6 text-center" id="radioControls">
+          <p class="text-gray-400 mb-4">Select a station below to start listening</p>
+          <div class="flex gap-3 justify-center">
+            <button onclick="Hub.player.pause()" class="btn btn-secondary">⏸ Pause</button>
+            <button onclick="Hub.player.resume()" class="btn btn-primary">▶ Play</button>
+            <button onclick="Hub.radio.stop()" class="btn btn-secondary">⏹ Stop</button>
+          </div>
+        </div>
+
+        <!-- Station List -->
+        <div id="radioStationList" class="space-y-4">
+          <div class="skeleton" style="height: 100px;"></div>
+          <div class="skeleton" style="height: 100px;"></div>
+          <div class="skeleton" style="height: 100px;"></div>
+        </div>
+      </div>
+    </div>
+```
+
+## 5. UPDATE SCRIPT INCLUDES (Before </body>)
+
+Add new modules to the script section (around line 619):
+
+```html
+  <!-- Scripts (order matters) -->
+  <script src="assets/utils.js"></script>
+  <script src="assets/supabase.js"></script>
+  <script src="assets/router.js"></script>
+  <script src="assets/ui.js"></script>
+  <script src="assets/player.js"></script>
+  <script src="assets/weather.js"></script>
+  <script src="assets/ai.js"></script>
+  <script src="assets/calendar.js"></script>
+  <script src="assets/treats.js"></script>
+  <script src="assets/chores.js"></script>
+  <script src="assets/radio.js"></script>
+  <script src="assets/music.js"></script>
+  <script src="assets/control.js"></script>
+  <script src="assets/standby.js"></script>
+  <script src="assets/immich.js"></script>
+  <script src="assets/app.js"></script>
+```
+
+Note: player.js must load before radio.js and music.js.

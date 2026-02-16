@@ -1,94 +1,391 @@
 // ============================================================
-// assets/ui.js — Shared UI helpers
+// assets/weather.js — Weather data fetching & display (NO AI)
 // ============================================================
 window.Hub = window.Hub || {};
 
-Hub.ui = {
-  /** Close a modal by ID */
-  closeModal(id) {
-    Hub.utils.$(id)?.classList.add('hidden');
-  },
+Hub.weather = {
+  _cache: null,
+  _cacheTime: 0,
+  CACHE_TTL: 120000, // 2 min
+  _radarFrames: [],
+  _radarIndex: 0,
+  _radarInterval: null,
 
-  /** Open a modal by ID */
-  openModal(id) {
-    Hub.utils.$(id)?.classList.remove('hidden');
-  },
+  /** Fetch aggregated weather from our backend */
+  async fetchAggregate() {
+    const now = Date.now();
+    if (this._cache && (now - this._cacheTime) < this.CACHE_TTL) return this._cache;
 
-  /** Show alert banner */
-  showBanner(text, severity) {
-    const banner = Hub.utils.$('alertBanner');
-    if (!banner) return;
-    banner.className = 'alert-banner ' + (severity || 'watch');
-    banner.innerHTML = '⚠️ ' + Hub.utils.esc(text);
-    banner.classList.remove('hidden');
-  },
+    const loc = Hub.utils.getLocation();
+    const base = Hub.utils.apiBase();
+    const url = `${base}/api/weather-aggregate?lat=${loc.lat}&lon=${loc.lon}`;
 
-  /** Hide alert banner */
-  hideBanner() {
-    Hub.utils.$('alertBanner')?.classList.add('hidden');
-  },
-
-  /** Show alert popup (respects quiet hours + seen state) */
-  async showAlertPopup(alertData) {
-    if (!alertData?.active) return;
-    const s = Hub.state.settings || {};
-    const isQuiet = Hub.utils.isQuietHours(s.quiet_hours_start, s.quiet_hours_end);
-
-    // During quiet hours, suppress popup unless severity is "warning"
-    if (isQuiet && alertData.severity !== 'warning') return;
-
-    // Check if already seen
-    const alertId = alertData.banner_text || 'unknown';
-    if (Hub.state.user) {
-      const seen = await Hub.db.isAlertSeen(Hub.state.user.id, alertId);
-      if (seen) return;
-    }
-
-    Hub.utils.$('alertPopupText').textContent = alertData.banner_text || 'Weather alert active';
-    Hub.utils.$('alertPopup').classList.remove('hidden');
-  },
-
-  /** Dismiss alert popup and mark as seen */
-  async dismissAlert() {
-    const text = Hub.utils.$('alertPopupText')?.textContent || '';
-    Hub.utils.$('alertPopup').classList.add('hidden');
-    if (Hub.state.user && text) {
-      await Hub.db.markAlertSeen(Hub.state.user.id, text, 'acknowledged');
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      this._cache = data;
+      this._cacheTime = now;
+      return data;
+    } catch (e) {
+      console.error('Weather aggregate error:', e);
+      return null;
     }
   },
 
-  /** Render a simple toast message */
-  toast(msg, type) {
-    const el = document.createElement('div');
-    el.style.cssText = 'position:fixed;bottom:2rem;left:50%;transform:translateX(-50%);z-index:100;padding:.75rem 1.5rem;border-radius:.5rem;font-weight:500;transition:opacity .3s;';
-    el.style.background = type === 'error' ? '#ef4444' : '#10b981';
-    el.style.color = '#fff';
-    el.textContent = msg;
-    document.body.appendChild(el);
-    setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 2500);
+  /** Fetch weather alerts */
+  async fetchAlerts() {
+    const loc = Hub.utils.getLocation();
+    const base = Hub.utils.apiBase();
+    try {
+      const resp = await fetch(`${base}/api/weather-alerts?lat=${loc.lat}&lon=${loc.lon}`);
+      if (!resp.ok) return [];
+      const data = await resp.json();
+      return data.alerts || [];
+    } catch (e) {
+      console.error('Weather alerts error:', e);
+      return [];
+    }
   },
 
-  /** Update dashboard date */
-  updateDashboardDate() {
-    const el = Hub.utils.$('dashboardDate');
-    if (el) el.textContent = Hub.utils.formatDate(new Date());
+  /** Fetch RainViewer radar data */
+  async fetchRainViewerData() {
+    try {
+      const resp = await fetch('https://api.rainviewer.com/public/weather-maps.json');
+      if (!resp.ok) return null;
+      return await resp.json();
+    } catch (e) {
+      console.error('RainViewer error:', e);
+      return null;
+    }
   },
 
-  /** Update dashboard greeting with user's name */
-  updateDashboardGreeting() {
-    const el = Hub.utils.$('dashboardGreeting');
+  /** Normalize weather data */
+  normalize(agg) {
+    if (!agg) return null;
+    const result = { current: {}, today: {}, tomorrow: {}, forecast: [] };
+
+    // Open-Meteo current
+    if (agg.openMeteo?.current) {
+      result.current.temp_f = Math.round(agg.openMeteo.current.temperature_2m);
+      result.current.feels_like_f = Math.round(agg.openMeteo.current.apparent_temperature || agg.openMeteo.current.temperature_2m);
+      result.current.wind_mph = Math.round(agg.openMeteo.current.windspeed_10m);
+      result.current.humidity = agg.openMeteo.current.relative_humidity_2m;
+      result.current.condition = this._getConditionFromCode(agg.openMeteo.current.weathercode);
+      result.current.icon = this._getWeatherIcon(agg.openMeteo.current.weathercode);
+    }
+
+    // Open-Meteo daily
+    if (agg.openMeteo?.daily) {
+      const d = agg.openMeteo.daily;
+      if (d.temperature_2m_max?.[0] != null) result.today.high_f = Math.round(d.temperature_2m_max[0]);
+      if (d.temperature_2m_min?.[0] != null) result.today.low_f = Math.round(d.temperature_2m_min[0]);
+      if (d.precipitation_probability_max?.[0] != null) result.today.precip_chance = d.precipitation_probability_max[0];
+      if (d.temperature_2m_max?.[1] != null) result.tomorrow.high_f = Math.round(d.temperature_2m_max[1]);
+      if (d.temperature_2m_min?.[1] != null) result.tomorrow.low_f = Math.round(d.temperature_2m_min[1]);
+      if (d.precipitation_probability_max?.[1] != null) result.tomorrow.precip_chance = d.precipitation_probability_max[1];
+      
+      // 7-day forecast
+      for (let i = 0; i < 7 && i < d.time.length; i++) {
+        result.forecast.push({
+          date: d.time[i],
+          high_f: Math.round(d.temperature_2m_max[i]),
+          low_f: Math.round(d.temperature_2m_min[i]),
+          precip: d.precipitation_probability_max?.[i] || 0,
+          icon: this._getWeatherIcon(d.weathercode?.[i] || 0)
+        });
+      }
+    }
+
+    // Weather.gov forecast for textual descriptions
+    if (agg.weatherGov?.forecast?.properties?.periods) {
+      const p = agg.weatherGov.forecast.properties.periods;
+      if (p[0]) {
+        result.current.description = p[0].shortForecast;
+        if (p[0].temperature) result.current.temp_f = result.current.temp_f || p[0].temperature;
+      }
+    }
+
+    return result;
+  },
+
+  /** Get weather condition from WMO code */
+  _getConditionFromCode(code) {
+    const conditions = {
+      0: 'Clear Sky',
+      1: 'Mostly Clear', 2: 'Partly Cloudy', 3: 'Overcast',
+      45: 'Foggy', 48: 'Rime Fog',
+      51: 'Light Drizzle', 53: 'Drizzle', 55: 'Heavy Drizzle',
+      61: 'Light Rain', 63: 'Rain', 65: 'Heavy Rain',
+      71: 'Light Snow', 73: 'Snow', 75: 'Heavy Snow',
+      80: 'Light Showers', 81: 'Showers', 82: 'Heavy Showers',
+      95: 'Thunderstorm', 96: 'Thunderstorm with Hail', 99: 'Severe Thunderstorm'
+    };
+    return conditions[code] || 'Unknown';
+  },
+
+  /** Get weather emoji icon */
+  _getWeatherIcon(code) {
+    if (code === 0) return '☀️';
+    if (code >= 1 && code <= 3) return '⛅';
+    if (code >= 45 && code <= 48) return '🌫️';
+    if (code >= 51 && code <= 55) return '🌦️';
+    if (code >= 61 && code <= 65) return '🌧️';
+    if (code >= 71 && code <= 75) return '❄️';
+    if (code >= 80 && code <= 82) return '🌧️';
+    if (code >= 95) return '⛈️';
+    return '🌤️';
+  },
+
+  /** Render dashboard weather widget */
+  async renderDashboard() {
+    const el = Hub.utils.$('dashboardWeather');
+    if (!el) return;
+    el.innerHTML = '<p class="text-gray-400 text-sm">Loading...</p>';
+
+    const aggregate = await this.fetchAggregate();
+    const normalized = this.normalize(aggregate);
+
+    if (normalized?.current) {
+      el.innerHTML = `
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-4">
+            <div class="text-6xl">${normalized.current.icon}</div>
+            <div>
+              <p class="text-4xl font-bold">${normalized.current.temp_f}°F</p>
+              <p class="text-gray-400">${Hub.utils.esc(normalized.current.condition)}</p>
+            </div>
+          </div>
+          <div class="text-right text-sm text-gray-400">
+            <p>Feels like ${normalized.current.feels_like_f}°F</p>
+            <p>💨 ${normalized.current.wind_mph} mph</p>
+            <p>💧 ${normalized.current.humidity}%</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-gray-700">
+          <div>
+            <p class="text-gray-400 text-sm">Today</p>
+            <p class="text-xl font-bold">${normalized.today?.high_f ?? '--'}° / ${normalized.today?.low_f ?? '--'}°</p>
+            <p class="text-sm text-gray-400">💧 ${normalized.today?.precip_chance ?? 0}% rain</p>
+          </div>
+          <div>
+            <p class="text-gray-400 text-sm">Tomorrow</p>
+            <p class="text-xl font-bold">${normalized.tomorrow?.high_f ?? '--'}° / ${normalized.tomorrow?.low_f ?? '--'}°</p>
+            <p class="text-sm text-gray-400">💧 ${normalized.tomorrow?.precip_chance ?? 0}% rain</p>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    el.innerHTML = '<p class="text-yellow-400">Unable to load weather. Check settings or API keys.</p>';
+  },
+
+  /** Render full weather page */
+  async renderWeatherPage() {
+    const el = Hub.utils.$('weatherContent');
+    if (!el) return;
+
+    const aggregate = await this.fetchAggregate();
+    const normalized = this.normalize(aggregate);
+    
+    if (!normalized) {
+      el.innerHTML = '<p class="text-yellow-400">Unable to load weather data.</p>';
+      return;
+    }
+
+    let html = '';
+
+    // Current conditions - Big hero section
+    html += `
+      <div class="card">
+        <div class="flex flex-col md:flex-row items-center justify-between gap-6">
+          <div class="flex items-center gap-6">
+            <div class="text-9xl">${normalized.current.icon}</div>
+            <div>
+              <h2 class="text-6xl font-bold mb-2">${normalized.current.temp_f}°F</h2>
+              <p class="text-2xl text-gray-300">${Hub.utils.esc(normalized.current.condition)}</p>
+              <p class="text-gray-400 mt-2">${Hub.utils.esc(normalized.current.description || '')}</p>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-4 text-center">
+            <div class="bg-gray-800 rounded-lg p-4">
+              <p class="text-gray-400 text-sm mb-1">Feels Like</p>
+              <p class="text-3xl font-bold">${normalized.current.feels_like_f}°F</p>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4">
+              <p class="text-gray-400 text-sm mb-1">Humidity</p>
+              <p class="text-3xl font-bold">${normalized.current.humidity}%</p>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4">
+              <p class="text-gray-400 text-sm mb-1">Wind</p>
+              <p class="text-3xl font-bold">${normalized.current.wind_mph}</p>
+              <p class="text-xs text-gray-400">mph</p>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4">
+              <p class="text-gray-400 text-sm mb-1">Rain Chance</p>
+              <p class="text-3xl font-bold">${normalized.today?.precip_chance ?? 0}%</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // 7-day forecast
+    html += `
+      <div class="card">
+        <h3 class="text-2xl font-bold mb-4">7-Day Forecast</h3>
+        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
+    `;
+    
+    normalized.forecast.forEach((day, i) => {
+      const date = new Date(day.date);
+      const dayName = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : date.toLocaleDateString('en-US', { weekday: 'short' });
+      html += `
+        <div class="bg-gray-800 rounded-lg p-4 text-center hover:bg-gray-700 transition">
+          <p class="font-medium mb-2">${dayName}</p>
+          <div class="text-4xl mb-2">${day.icon}</div>
+          <p class="text-xl font-bold">${day.high_f}°</p>
+          <p class="text-sm text-gray-400">${day.low_f}°</p>
+          <p class="text-xs text-blue-400 mt-2">💧 ${day.precip}%</p>
+        </div>
+      `;
+    });
+    
+    html += '</div></div>';
+
+    // Weather.gov detailed forecast
+    if (aggregate?.weatherGov?.forecast?.properties?.periods) {
+      html += '<div class="card"><h3 class="text-2xl font-bold mb-4">📝 Detailed Forecast</h3><div class="space-y-3">';
+      aggregate.weatherGov.forecast.properties.periods.slice(0, 6).forEach((p, i) => {
+        html += `
+          <div class="bg-gray-800 rounded-lg p-4 hover:bg-gray-700 transition ${i === 0 ? 'border-2 border-blue-500' : ''}">
+            <div class="flex items-center justify-between mb-2">
+              <p class="text-lg font-bold">${Hub.utils.esc(p.name)}</p>
+              <p class="text-2xl font-bold text-blue-400">${p.temperature}°F</p>
+            </div>
+            <p class="text-gray-300 text-sm">${Hub.utils.esc(p.detailedForecast)}</p>
+          </div>
+        `;
+      });
+      html += '</div></div>';
+    }
+
+    el.innerHTML = html;
+
+    // Load and render radar
+    this.renderRainRadar();
+  },
+
+  /** Render RainViewer animated radar */
+  async renderRainRadar() {
+    const el = Hub.utils.$('rainRadar');
     if (!el) return;
     
-    const firstName = Hub.utils.getUserFirstName();
-    if (firstName) {
-      const hour = new Date().getHours();
-      let greeting = 'Good morning';
-      if (hour >= 12 && hour < 17) greeting = 'Good afternoon';
-      else if (hour >= 17) greeting = 'Good evening';
-      
-      el.textContent = `${greeting}, ${firstName}! 👋`;
+    el.innerHTML = '<p class="text-gray-400 text-sm text-center py-8">Loading radar...</p>';
+
+    const rainData = await this.fetchRainViewerData();
+    if (!rainData?.radar?.past?.length) {
+      el.innerHTML = '<p class="text-gray-400 text-sm text-center py-8">Radar data unavailable</p>';
+      return;
+    }
+
+    this._radarFrames = rainData.radar.past;
+    this._radarIndex = this._radarFrames.length - 1; // Start with latest
+
+    const loc = Hub.utils.getLocation();
+    
+    el.innerHTML = `
+      <div class="text-center">
+        <p class="text-lg font-bold mb-1">🌧️ Rain Radar</p>
+        <p class="text-sm text-gray-400 mb-3">Past 2 Hours · 10-Minute Intervals</p>
+        <div class="relative bg-gray-900 rounded-lg overflow-hidden mx-auto shadow-2xl" style="max-width: 800px;">
+          <img id="radarImage" src="" alt="Rain radar" class="w-full" style="min-height: 400px; background: #1f2937;">
+          <div class="absolute top-4 right-4 bg-black bg-opacity-70 rounded-lg px-3 py-2">
+            <span id="radarTime" class="text-white text-sm font-mono"></span>
+          </div>
+          <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black/80 to-transparent p-4">
+            <div class="flex items-center justify-center gap-4">
+              <button id="radarPlayPause" class="btn btn-primary px-6 py-2">▶️ Play Animation</button>
+              <span class="text-white text-sm" id="radarFrameInfo"></span>
+            </div>
+          </div>
+        </div>
+        <div class="mt-4 text-xs text-gray-500 space-y-1">
+          <p>📍 Centered on your location: ${loc.name || 'Home'}</p>
+          <p>Source: <a href="https://www.rainviewer.com" target="_blank" class="text-blue-400 hover:text-blue-300">RainViewer.com</a></p>
+        </div>
+      </div>
+    `;
+
+    // Set up radar animation
+    this._updateRadarFrame(loc);
+    
+    const playBtn = Hub.utils.$('radarPlayPause');
+    if (playBtn) {
+      playBtn.onclick = () => this._toggleRadarAnimation(loc);
+    }
+  },
+
+  /** Update radar frame */
+  _updateRadarFrame(loc) {
+    const img = Hub.utils.$('radarImage');
+    const timeEl = Hub.utils.$('radarTime');
+    const frameInfoEl = Hub.utils.$('radarFrameInfo');
+    
+    if (!img || !this._radarFrames.length) return;
+
+    const frame = this._radarFrames[this._radarIndex];
+    const host = 'https://tilecache.rainviewer.com';
+    
+    // Use coordinate-based tile (size 512, zoom 5, color scheme 6, smoothed, with snow)
+    const tileUrl = `${host}${frame.path}/512/5/${loc.lat.toFixed(2)}/${loc.lon.toFixed(2)}/6/1_1.png`;
+    
+    img.src = tileUrl;
+    img.onerror = () => {
+      img.style.backgroundColor = '#1f2937';
+      console.error('[Weather] Radar image failed to load');
+    };
+    
+    if (timeEl) {
+      const date = new Date(frame.time * 1000);
+      timeEl.textContent = date.toLocaleTimeString('en-US', { 
+        hour: 'numeric', 
+        minute: '2-digit',
+        hour12: true 
+      });
+    }
+
+    if (frameInfoEl) {
+      frameInfoEl.textContent = `Frame ${this._radarIndex + 1} of ${this._radarFrames.length}`;
+    }
+  },
+
+  /** Toggle radar animation */
+  _toggleRadarAnimation(loc) {
+    const playBtn = Hub.utils.$('radarPlayPause');
+    if (!playBtn) return;
+
+    if (this._radarInterval) {
+      // Stop animation
+      clearInterval(this._radarInterval);
+      this._radarInterval = null;
+      playBtn.textContent = '▶️ Play Animation';
     } else {
-      el.textContent = '';
+      // Start animation
+      playBtn.textContent = '⏸️ Pause';
+      this._radarInterval = setInterval(() => {
+        this._radarIndex = (this._radarIndex + 1) % this._radarFrames.length;
+        this._updateRadarFrame(loc);
+      }, 500); // 500ms per frame = 2fps
+    }
+  },
+
+  /** Stop radar animation (called when leaving page) */
+  stopRadarAnimation() {
+    if (this._radarInterval) {
+      clearInterval(this._radarInterval);
+      this._radarInterval = null;
     }
   }
 };

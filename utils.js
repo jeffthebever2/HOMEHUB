@@ -1,415 +1,532 @@
 // ============================================================
-// assets/chores.js — Chores management (Supabase) — FIXED
-//
-// Fixes:
-//   - Removed duplicate/garbage code that crashed the script
-//   - showAdd() and add() now properly inside Hub.chores
-//   - Dashboard filter works with and without category/day_of_week columns
-//   - Category selector on add modal
-//   - markDone uses Hub.state.user.id (not Hub.state.user_id)
+// assets/calendar.js — Google Calendar Integration
+// Uses Google Calendar API via Supabase OAuth provider token
 // ============================================================
 window.Hub = window.Hub || {};
 
-Hub.chores = {
-  _createConfetti(x, y) {
-    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
-    for (let i = 0; i < 15; i++) {
-      const particle = document.createElement('div');
-      particle.style.cssText = `position: fixed; left: ${x}px; top: ${y}px; width: 8px; height: 8px; background: ${colors[Math.floor(Math.random() * colors.length)]}; border-radius: 50%; pointer-events: none; z-index: 10000; transition: all 0.8s ease-out;`;
-      const tx = (Math.random() - 0.5) * 200;
-      const ty = Math.random() * -200 - 50;
-      setTimeout(() => { particle.style.transform = `translate(${tx}px, ${ty}px)`; particle.style.opacity = '0'; }, 10);
-      document.body.appendChild(particle);
-      setTimeout(() => particle.remove(), 900);
+Hub.calendar = {
+  _cache: null,
+  _cacheTime: 0,
+  CACHE_TTL: 5 * 60 * 1000, // 5 minutes
+
+  // Clear cache manually (e.g., when settings change)
+  clearCache() {
+    this._cache = null;
+    this._cacheTime = 0;
+    console.log('[Calendar] Cache cleared');
+  },
+
+  // --- Token helpers: keep Google Calendar auth alive ---
+  async _getProviderToken() {
+    try {
+      const { data: { session } } = await Hub.sb.auth.getSession();
+      if (session?.provider_token) return session.provider_token;
+
+      // Try refreshing Supabase session; this often refreshes Google provider_token too
+      if (Hub.auth?.ensureFreshSession) await Hub.auth.ensureFreshSession('google-token');
+
+      const { data: { session: s2 } } = await Hub.sb.auth.getSession();
+      return s2?.provider_token || null;
+    } catch (e) {
+      console.warn('[Calendar] Provider token lookup failed:', e.message);
+      return null;
     }
   },
 
-  familyMembers: ['Will', 'Lyla', 'Erin', 'Mark'],
+  async _googleFetch(url, init = {}, retry = true) {
+    if (!Hub.sb) return { error: 'App not initialized - please refresh the page' };
+    let token = await this._getProviderToken();
+    if (!token) return { error: 'Not authenticated. Please sign out and sign in again to grant calendar access.' };
 
-  // Day mapping: category string → JS getDay() value (0=Sun, 1=Mon … 6=Sat)
-  DAY_MAP: {
-    'Daily': null,
-    'Monday (Living Room)': 1,
-    'Tuesday (Bathrooms)': 2,
-    'Wednesday (Entryway)': 3,
-    'Thursday (Kitchen)': 4,
-    'Friday (Bedrooms)': 5,
-    'Saturday (Miscellaneous)': 6,
-    'Sunday (Grocery/Family)': 0
+    const headers = Object.assign({
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/json'
+    }, (init.headers || {}));
+
+    let response = await fetch(url, Object.assign({}, init, { headers }));
+
+    // If Google says token expired, refresh session and retry once
+    if (response.status === 401 && retry) {
+      console.warn('[Calendar] 401 from Google — attempting silent refresh');
+      try {
+        if (Hub.auth?.ensureFreshSession) await Hub.auth.ensureFreshSession('google-401');
+      } catch (e) {}
+
+      token = await this._getProviderToken();
+      if (!token) return response;
+      const headers2 = Object.assign({}, headers, { 'Authorization': `Bearer ${token}` });
+      response = await fetch(url, Object.assign({}, init, { headers: headers2 }));
+    }
+
+    return response;
   },
 
-  SORT_ORDER: [
-    'Daily', 'Monday (Living Room)', 'Tuesday (Bathrooms)', 'Wednesday (Entryway)',
-    'Thursday (Kitchen)', 'Friday (Bedrooms)', 'Saturday (Miscellaneous)', 'Sunday (Grocery/Family)'
-  ],
+  /**
+   * Fetch upcoming events from user's primary calendar
+   * @param {number} maxResults - Maximum number of events to fetch
+   * @returns {Array|Object} Array of events or error object
+   */
+  /**
+   * Get list of user's calendars
+   * @returns {Array|Object} Array of calendars or error object
+   */
+  async getCalendarList() {
+    try {
+      console.log('[Calendar] Getting calendar list...');
 
-  /** Load and render dashboard chores (today's priority) */
+      const url = 'https://www.googleapis.com/calendar/v3/users/me/calendarList';
+      console.log('[Calendar] Fetching from:', url);
+
+      const response = await this._googleFetch(url);
+      if (response?.error) return response;
+
+      console.log('[Calendar] Response status:', response.status);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[Calendar] Error response:', errorText);
+
+        if (response.status === 401) {
+          return { error: 'Calendar token expired. Try again; if it keeps happening, sign out and sign in again.' };
+        }
+        if (response.status === 403) {
+          return { error: 'Calendar API access denied (403). Make sure Calendar API is enabled and you granted calendar scopes when signing in.' };
+        }
+        throw new Error(`Calendar list error: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      console.log('[Calendar] Found', data.items?.length || 0, 'calendars:', data.items?.map(c => c.summary));
+
+      return data.items || [];
+    } catch (error) {
+      console.error('[Calendar] Error fetching calendar list:', error);
+      return { error: `Failed to load calendars: ${error.message}` };
+    }
+  },
+
+  /**
+   * Fetch upcoming events from user's selected calendars
+   * @param {number} maxResults - Maximum number of events to fetch per calendar
+   * @returns {Array|Object} Array of events or error object
+   */
+  async getUpcomingEvents(maxResults = 10) {
+    try {
+      // Check cache first
+      const now = Date.now();
+      if (this._cache && (now - this._cacheTime) < this.CACHE_TTL) {
+        console.log('[Calendar] Using cached events');
+        return this._cache;
+      }
+
+      // Get selected calendar IDs with localStorage backup
+      const settings = Hub.state?.settings || {};
+      let calendarIds = settings.selected_calendars || null;
+
+      // If not in settings, try localStorage
+      if (!calendarIds || !Array.isArray(calendarIds) || calendarIds.length === 0) {
+        const stored = localStorage.getItem('selected_calendars');
+        if (stored) {
+          try {
+            calendarIds = JSON.parse(stored);
+            console.log('[Calendar] Loaded from localStorage:', calendarIds);
+          } catch (e) {
+            console.warn('[Calendar] Failed to parse localStorage:', e);
+          }
+        }
+      }
+
+      // Final fallback to primary
+      if (!calendarIds || !Array.isArray(calendarIds) || calendarIds.length === 0) {
+        calendarIds = ['primary'];
+      }
+
+      console.log('[Calendar] ===== FETCHING EVENTS =====');
+      console.log('[Calendar] Settings object:', settings);
+      console.log('[Calendar] Selected calendars from settings:', calendarIds);
+      console.log('[Calendar] Will fetch from', calendarIds.length, 'calendar(s)');
+      calendarIds.forEach((id, i) => console.log(`[Calendar]   ${i + 1}. ${id}`));
+
+      // Fetch events from each selected calendar
+      const timeMin = new Date().toISOString();
+      const allEvents = [];
+
+      for (const calendarId of calendarIds) {
+        try {
+          const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?` +
+            `maxResults=${maxResults}&` +
+            `orderBy=startTime&` +
+            `singleEvents=true&` +
+            `timeMin=${timeMin}`;
+
+          const response = await this._googleFetch(url);
+          if (response?.error) return response;
+
+          if (!response.ok) {
+            if (response.status === 401) {
+              // Usually recoverable; _googleFetch already retried once.
+              return { error: 'Calendar token expired. Try again; if it keeps happening, sign out and sign in again.' };
+            }
+            if (response.status === 403) {
+              return { error: 'Calendar API access denied (403). Make sure the Google Calendar API is enabled and the right scopes were granted.' };
+            }
+            console.warn(`[Calendar] Error fetching from ${calendarId}:`, response.status);
+            continue; // Skip this calendar and try others
+          }
+
+          const data = await response.json();
+          const events = (data.items || []).map(event => ({
+            ...event,
+            calendarId: calendarId // Tag each event with its calendar ID
+          }));
+
+          console.log(`[Calendar] Fetched ${events.length} events from calendar: ${calendarId}`);
+          allEvents.push(...events);
+        } catch (err) {
+          console.error(`[Calendar] Error fetching events from ${calendarId}:`, err);
+          // Continue with other calendars
+        }
+      }
+
+      // Sort all events by start time
+      allEvents.sort((a, b) => {
+        const aTime = a.start.dateTime || a.start.date;
+        const bTime = b.start.dateTime || b.start.date;
+        return new Date(aTime) - new Date(bTime);
+      });
+
+      // Limit to maxResults total events
+      const limitedEvents = allEvents.slice(0, maxResults);
+
+      // Cache the results
+      this._cache = limitedEvents;
+      this._cacheTime = now;
+
+      console.log('[Calendar] ===== FETCH COMPLETE =====');
+      console.log(`[Calendar] Total events fetched: ${limitedEvents.length}`);
+      const calendarCounts = {};
+      limitedEvents.forEach(e => {
+        const cal = e.calendarId || 'unknown';
+        calendarCounts[cal] = (calendarCounts[cal] || 0) + 1;
+      });
+      console.log('[Calendar] Events by calendar:', calendarCounts);
+      console.log('[Calendar] ==========================');
+
+      return this._cache;
+
+    } catch (error) {
+      console.error('[Calendar] Error fetching events:', error);
+      return { error: error.message };
+    }
+  },
+
+  /**
+   * Create a new calendar event
+   * @param {Object} event - Event object following Google Calendar API format
+   * @returns {Object} Success or error object
+   */
+  async createEvent(event) {
+    try {
+      if (!Hub.sb) {
+        return { error: 'App not initialized' };
+      }
+
+      console.log('[Calendar] Creating event:', event.summary);
+
+      const response = await this._googleFetch(
+        'https://www.googleapis.com/calendar/v3/calendars/primary/events',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(event)
+        }
+      );
+
+      if (response?.error) return response;
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          return { error: 'Calendar token expired. Try again; if it keeps happening, sign out and sign in again.' };
+        }
+        const t = await response.text().catch(() => '');
+        throw new Error(`Failed to create event: ${response.status}${t ? ' - ' + t : ''}`);
+      }
+
+      const data = await response.json();
+
+      // Clear cache to force refresh
+      this._cache = null;
+
+      console.log('[Calendar] Event created:', data.id);
+      return { success: true, event: data };
+
+    } catch (error) {
+      console.error('[Calendar] Error creating event:', error);
+      return { error: error.message };
+    }
+  },
+
+  /**
+   * Create a quick event with prompts
+   */
+  async createQuickEvent() {
+    const title = prompt('Event title:');
+    if (!title) return;
+
+    const dateStr = prompt('Date (YYYY-MM-DD):');
+    if (!dateStr) return;
+
+    const timeStr = prompt('Time (HH:MM in 24-hour format, or leave empty for all-day):');
+
+    let event;
+    if (timeStr) {
+      // Timed event
+      const startDateTime = new Date(`${dateStr}T${timeStr}:00`);
+      const endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000); // +1 hour
+
+      event = {
+        summary: title,
+        start: { 
+          dateTime: startDateTime.toISOString(), 
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone 
+        },
+        end: { 
+          dateTime: endDateTime.toISOString(), 
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone 
+        }
+      };
+    } else {
+      // All-day event
+      event = {
+        summary: title,
+        start: { date: dateStr },
+        end: { date: dateStr }
+      };
+    }
+
+    const result = await this.createEvent(event);
+    
+    if (result.error) {
+      Hub.ui.toast('Error: ' + result.error, 'error');
+    } else {
+      Hub.ui.toast('Event created!', 'success');
+      this.refreshCalendar();
+    }
+  },
+
+  /**
+   * Render calendar widget on dashboard
+   */
   async renderDashboard() {
-    var el = Hub.utils.$('dashboardChores');
-    if (!el) return;
-
-    if (!Hub.state.household_id) {
-      el.innerHTML = '<p class="text-gray-400 text-sm">Loading chores...</p>';
-      setTimeout(function () { Hub.chores.renderDashboard(); }, 500);
+    const widget = Hub.utils.$('calendarWidget');
+    if (!widget) {
+      console.warn('[Calendar] Widget element not found');
       return;
     }
 
-    try {
-      var chores = await Hub.db.loadChores(Hub.state.household_id);
-      var today = new Date().getDay();
+    widget.innerHTML = '<div class="animate-pulse text-gray-400 text-sm">Loading calendar...</div>';
 
-      // Filter today's chores — supports both old schema (no category) and new schema
-      var todayAll = chores.filter(function (c) {
-        // New schema: has category column
-        if (c.category === 'Daily') return true;
-        if (typeof c.day_of_week === 'number' && c.day_of_week === today) return true;
-        // Fallback: parse category string for day_of_week
-        if (c.day_of_week == null && c.category && Hub.chores.DAY_MAP[c.category] === today) return true;
-        // Old schema: no category at all — show all pending chores
-        if (c.category == null && c.day_of_week == null) return true;
-        return false;
-      });
+    const events = await this.getUpcomingEvents(15); // Get more events for better organization
 
-      var todayPending = todayAll.filter(function (c) { return c.status !== 'done'; });
-      var doneCount = todayAll.length - todayPending.length;
-
-      if (todayAll.length === 0) {
-        el.innerHTML = '<p class="text-gray-400 text-sm">No chores yet — add some from the Chores page!</p>';
-        return;
-      }
-
-      // Progress bar
-      var pct = Math.round((doneCount / todayAll.length) * 100);
-      var progressColor = pct === 100 ? 'bg-green-500' : pct >= 50 ? 'bg-blue-500' : 'bg-yellow-500';
-
-      var html = '<div class="mb-3">' +
-        '<div class="flex justify-between text-xs text-gray-400 mb-1">' +
-          '<span>' + doneCount + ' of ' + todayAll.length + ' done</span>' +
-          '<span>' + pct + '%</span>' +
-        '</div>' +
-        '<div class="progress-bar" style="height:0.4rem;">' +
-          '<div class="progress-fill ' + progressColor + '" style="width:' + pct + '%"></div>' +
-        '</div>' +
-      '</div>';
-
-      if (!todayPending.length) {
-        html += '<p class="text-green-400 text-sm font-semibold">✨ All done for today!</p>';
-        el.innerHTML = html;
-        return;
-      }
-
-      html += todayPending.slice(0, 5).map(function (c) {
-        return '<div class="flex items-center justify-between py-3 border-b border-gray-700 last:border-0">' +
-          '<div class="flex-1 min-w-0 pr-3">' +
-            '<p class="text-sm font-semibold truncate">' + Hub.utils.esc(c.title) + '</p>' +
-            '<p class="text-xs text-gray-500">' + Hub.utils.esc(c.category || c.priority || 'General') + '</p>' +
-          '</div>' +
-          '<button onclick="Hub.chores.quickComplete(\'' + c.id + '\')" ' +
-            'class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs rounded-lg font-semibold transition-colors flex-shrink-0">' +
-            'Done' +
-          '</button>' +
-        '</div>';
-      }).join('');
-
-      if (todayPending.length > 5) {
-        html += '<p class="text-xs text-gray-500 mt-2 text-center">+' + (todayPending.length - 5) + ' more</p>';
-      }
-
-      el.innerHTML = html;
-    } catch (e) {
-      console.error('[Chores] Dashboard error:', e);
-      el.innerHTML = '<p class="text-gray-400 text-sm">Error loading chores</p>';
+    if (events.error) {
+      // Check if it's a simple re-auth issue
+      const needsReauth = events.error.includes('sign out') || events.error.includes('sign in');
+      
+      widget.innerHTML = `
+        <div class="bg-blue-900 bg-opacity-30 rounded-lg p-4 text-center">
+          <p class="text-2xl mb-2">📅</p>
+          <p class="text-sm font-medium mb-2">Calendar Not Connected</p>
+          <p class="text-xs text-gray-400 mb-3">${Hub.utils.esc(events.error)}</p>
+          ${needsReauth ? `
+            <button onclick="Hub.auth.signOut()" class="btn btn-primary text-xs">
+              Sign Out & Reconnect
+            </button>
+            <p class="text-xs text-gray-500 mt-2">You'll need to grant calendar access when signing back in</p>
+          ` : `
+            <button onclick="Hub.calendar.showSetupInstructions()" class="text-xs text-blue-400 hover:text-blue-300">
+              How to connect
+            </button>
+          `}
+        </div>
+      `;
+      return;
     }
-  },
 
-  /** Quick complete from dashboard — asks who did it */
-  async quickComplete(choreId) {
-    var name = await this.askWhoDidIt();
-    if (!name) return;
-    await this.markDone(choreId, name);
-      // Trigger confetti
-      const el = event?.target?.closest('.chore-item');
-      if (el) {
-        const rect = el.getBoundingClientRect();
-        this._createConfetti(rect.left + rect.width/2, rect.top + rect.height/2);
+    if (!events || events.length === 0) {
+      widget.innerHTML = `
+        <div class="text-center py-4">
+          <p class="text-gray-400 text-sm mb-2">📅 No upcoming events</p>
+          <button onclick="Hub.calendar.createQuickEvent()" class="text-xs text-blue-400 hover:text-blue-300">
+            + Create Event
+          </button>
+        </div>
+      `;
+      return;
+    }
+
+    // Organize events by time period
+    const now = new Date();
+    const todayEvents = [];
+    const tomorrowEvents = [];
+    const upcomingEvents = [];
+
+    events.forEach(event => {
+      const start = event.start.dateTime || event.start.date;
+      const startDate = new Date(start);
+      
+      if (this._isToday(startDate)) {
+        todayEvents.push(event);
+      } else if (this._isTomorrow(startDate)) {
+        tomorrowEvents.push(event);
+      } else {
+        upcomingEvents.push(event);
       }
-    await this.renderDashboard();
-    Hub.ui.toast('Chore completed by ' + name + '!', 'success');
-  },
-
-  /** Ask who completed the chore — returns a Promise<string|null> */
-  askWhoDidIt() {
-    var self = this;
-    return new Promise(function (resolve) {
-      var modal = document.createElement('div');
-      modal.className = 'fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4';
-
-      var cleanup = function (value) { modal.remove(); resolve(value); };
-
-      modal.innerHTML =
-        '<div class="bg-gray-800 rounded-xl p-8 max-w-md w-full shadow-2xl border border-gray-700">' +
-          '<h3 class="text-2xl font-bold mb-6 text-center">Who did this chore?</h3>' +
-          '<div class="space-y-3" id="_whoButtons"></div>' +
-          '<button id="_whoCancel" class="w-full mt-4 px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-xl font-semibold transition-colors">Cancel</button>' +
-        '</div>';
-      document.body.appendChild(modal);
-
-      var container = modal.querySelector('#_whoButtons');
-      self.familyMembers.forEach(function (name) {
-        var btn = document.createElement('button');
-        btn.className = 'w-full px-6 py-4 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-xl font-bold text-lg transition-all transform hover:scale-105 shadow-lg';
-        btn.textContent = name;
-        btn.addEventListener('click', function () { cleanup(name); });
-        container.appendChild(btn);
-      });
-
-      modal.querySelector('#_whoCancel').addEventListener('click', function () { cleanup(null); });
-      modal.addEventListener('click', function (e) { if (e.target === modal) cleanup(null); });
     });
-  },
 
-  /** Load and render full chores list (sorted by category/day) */
-  async load() {
-    var el = Hub.utils.$('choresList');
-    if (!el || !Hub.state.household_id) return;
+    // Helper function to render an event
+    const renderEvent = (event, showDate = false) => {
+      const start = event.start.dateTime || event.start.date;
+      const startDate = new Date(start);
+      const timeLabel = event.start.dateTime 
+        ? startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+        : 'All day';
+      
+      const dateLabel = showDate 
+        ? startDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+        : '';
 
-    try {
-      var chores = await Hub.db.loadChoresWithCompleters(Hub.state.household_id);
-      if (!chores.length) {
-        el.innerHTML = '<div class="card text-center"><p class="text-gray-400">No chores yet. Click "+ Add Chore" to create one!</p></div>';
-        return;
-      }
+      return `
+        <div class="flex items-center gap-3 py-2 px-3 rounded hover:bg-gray-700 transition-colors">
+          <div class="text-xs font-medium text-blue-400 w-16 flex-shrink-0">
+            ${Hub.utils.esc(timeLabel)}
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="font-medium text-sm truncate">${Hub.utils.esc(event.summary || 'Untitled')}</div>
+            ${showDate ? `<div class="text-xs text-gray-500">${Hub.utils.esc(dateLabel)}</div>` : ''}
+          </div>
+        </div>
+      `;
+    };
 
-      // Group by category (or 'Other' for old schema chores without category)
-      var grouped = {};
-      chores.forEach(function (c) {
-        var cat = c.category || 'Other';
-        if (!grouped[cat]) grouped[cat] = [];
-        grouped[cat].push(c);
-      });
+    // Build HTML sections
+    let sectionsHtml = '';
 
-      var self = this;
-      var sortedCategories = Object.keys(grouped).sort(function (a, b) {
-        var ai = self.SORT_ORDER.indexOf(a);
-        var bi = self.SORT_ORDER.indexOf(b);
-        if (ai === -1 && bi === -1) return 0;
-        if (ai === -1) return 1;
-        if (bi === -1) return -1;
-        return ai - bi;
-      });
-
-      el.innerHTML = sortedCategories.map(function (category) {
-        var list = grouped[category];
-        var pending = list.filter(function (c) { return c.status !== 'done'; });
-        var done = list.filter(function (c) { return c.status === 'done'; });
-
-        return '<div class="mb-8">' +
-          '<div class="flex items-center justify-between mb-4">' +
-            '<h2 class="text-2xl font-bold">' + Hub.utils.esc(category) + '</h2>' +
-            '<span class="text-sm text-gray-400">' + pending.length + ' pending / ' + list.length + ' total</span>' +
-          '</div>' +
-          '<div class="space-y-3">' +
-            [].concat(pending, done).map(function (c) { return self._renderChoreCard(c); }).join('') +
-          '</div>' +
-        '</div>';
-      }).join('');
-    } catch (e) {
-      console.error('[Chores] Load error:', e);
-      el.innerHTML = '<div class="card text-center"><p class="text-red-400">Error loading chores</p></div>';
-    }
-  },
-
-  /** Render a single chore card */
-  _renderChoreCard(c) {
-    var isDone = c.status === 'done';
-    var completerHtml = '';
-    if (isDone && c.completed_by_name) {
-      completerHtml = '<p class="text-sm text-green-400 mt-2">✓ Completed by ' + Hub.utils.esc(c.completed_by_name) + '</p>';
-    } else if (isDone && c.completer_email) {
-      completerHtml = '<p class="text-sm text-green-400 mt-2">✓ Completed by ' + Hub.utils.esc(c.completer_email) + '</p>';
+    // TODAY section
+    if (todayEvents.length > 0) {
+      sectionsHtml += `
+        <div class="mb-4">
+          <div class="flex items-center gap-2 mb-2">
+            <div class="w-1 h-4 bg-green-500 rounded"></div>
+            <h4 class="font-semibold text-sm text-green-400">Today</h4>
+            <span class="text-xs text-gray-500">${todayEvents.length} event${todayEvents.length !== 1 ? 's' : ''}</span>
+          </div>
+          <div class="space-y-1">
+            ${todayEvents.map(e => renderEvent(e, false)).join('')}
+          </div>
+        </div>
+      `;
     }
 
-    return '<div class="card ' + (isDone ? 'opacity-60 bg-gray-800' : '') + '">' +
-      '<div class="flex items-start justify-between gap-4">' +
-        '<div class="flex-1 min-w-0">' +
-          '<div class="flex items-start gap-3">' +
-            '<input type="checkbox" ' + (isDone ? 'checked' : '') +
-              ' onchange="Hub.chores.toggleChore(\'' + c.id + '\', this.checked, this)"' +
-              ' class="mt-1 w-5 h-5 rounded border-gray-600 bg-gray-700 checked:bg-green-600 cursor-pointer flex-shrink-0">' +
-            '<div class="flex-1">' +
-              '<h3 class="text-lg font-semibold ' + (isDone ? 'line-through text-gray-500' : '') + '">' + Hub.utils.esc(c.title) + '</h3>' +
-              (c.description ? '<p class="text-gray-400 text-sm mt-1">' + Hub.utils.esc(c.description) + '</p>' : '') +
-              '<div class="flex gap-2 mt-2">' +
-                (c.recurrence ? '<span class="inline-block px-2 py-1 rounded text-xs bg-blue-600">' + Hub.utils.esc(c.recurrence) + '</span>' : '') +
-                (c.priority ? '<span class="inline-block px-2 py-1 rounded text-xs bg-gray-600">' + Hub.utils.esc(c.priority) + '</span>' : '') +
-              '</div>' +
-              completerHtml +
-            '</div>' +
-          '</div>' +
-        '</div>' +
-        '<div class="flex gap-2 flex-shrink-0">' +
-          '<button onclick="Hub.chores.editChore(\'' + c.id + '\')" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg font-semibold transition-colors" title="Edit">✏️</button>' +
-          '<button onclick="Hub.chores.remove(\'' + c.id + '\')" class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded-lg font-semibold transition-colors" title="Delete">🗑️</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>';
+    // TOMORROW section
+    if (tomorrowEvents.length > 0) {
+      sectionsHtml += `
+        <div class="mb-4">
+          <div class="flex items-center gap-2 mb-2">
+            <div class="w-1 h-4 bg-blue-500 rounded"></div>
+            <h4 class="font-semibold text-sm text-blue-400">Tomorrow</h4>
+            <span class="text-xs text-gray-500">${tomorrowEvents.length} event${tomorrowEvents.length !== 1 ? 's' : ''}</span>
+          </div>
+          <div class="space-y-1">
+            ${tomorrowEvents.map(e => renderEvent(e, false)).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // COMING UP section (limit to 5 to save space)
+    if (upcomingEvents.length > 0) {
+      const limitedUpcoming = upcomingEvents.slice(0, 5);
+      sectionsHtml += `
+        <div>
+          <div class="flex items-center gap-2 mb-2">
+            <div class="w-1 h-4 bg-gray-500 rounded"></div>
+            <h4 class="font-semibold text-sm text-gray-400">Coming Up</h4>
+            <span class="text-xs text-gray-500">${limitedUpcoming.length}${upcomingEvents.length > 5 ? '+' : ''} event${limitedUpcoming.length !== 1 ? 's' : ''}</span>
+          </div>
+          <div class="space-y-1">
+            ${limitedUpcoming.map(e => renderEvent(e, true)).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // Show message if no events today/tomorrow but have upcoming
+    if (todayEvents.length === 0 && tomorrowEvents.length === 0 && upcomingEvents.length > 0) {
+      sectionsHtml = `
+        <div class="bg-gray-800 bg-opacity-50 rounded-lg p-3 mb-4 text-center">
+          <p class="text-sm text-gray-400">✨ Nothing today or tomorrow</p>
+          <p class="text-xs text-gray-500 mt-1">Your next event is coming up</p>
+        </div>
+      ` + sectionsHtml;
+    }
+
+    widget.innerHTML = `
+      <div>
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-bold text-lg">📅 Calendar</h3>
+          <div class="flex gap-2">
+            <button onclick="Hub.calendar.createQuickEvent()" class="text-xs text-green-400 hover:text-green-300 font-medium">
+              + Add
+            </button>
+            <button onclick="Hub.calendar.refreshCalendar()" class="text-xs text-blue-400 hover:text-blue-300">
+              Refresh
+            </button>
+          </div>
+        </div>
+        ${sectionsHtml}
+      </div>
+    `;
   },
 
-  /** Toggle chore completion via checkbox */
-  async toggleChore(choreId, checked, checkbox) {
-    if (checked) {
-      var name = await this.askWhoDidIt();
-      if (!name) {
-        if (checkbox) checkbox.checked = false;
-        return;
-      }
-      await this.markDone(choreId, name);
-      // Trigger confetti
-      const el = event?.target?.closest('.chore-item');
-      if (el) {
-        const rect = el.getBoundingClientRect();
-        this._createConfetti(rect.left + rect.width/2, rect.top + rect.height/2);
-      }
-    } else {
-      await Hub.db.updateChore(choreId, { status: 'pending', completed_by_name: null });
-    }
-    await this.load();
+  /**
+   * Force refresh calendar (clears cache)
+   */
+  async refreshCalendar() {
+    this._cache = null;
     await this.renderDashboard();
   },
 
-  /** Edit chore */
-  async editChore(choreId) {
-    try {
-      var chores = await Hub.db.loadChores(Hub.state.household_id);
-      var chore = chores.find(function (c) { return c.id === choreId; });
-      if (!chore) return;
-
-      var self = this;
-      var modal = document.createElement('div');
-      modal.className = 'fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4';
-      modal.innerHTML =
-        '<div class="bg-gray-800 rounded-xl p-6 max-w-lg w-full">' +
-          '<h3 class="text-2xl font-bold mb-4">Edit Chore</h3>' +
-          '<div class="space-y-4">' +
-            '<div><label class="block text-sm font-semibold mb-2">Title</label>' +
-              '<input type="text" id="editChoreTitle" value="' + Hub.utils.esc(chore.title) + '" class="input"></div>' +
-            '<div><label class="block text-sm font-semibold mb-2">Description</label>' +
-              '<textarea id="editChoreDesc" class="input" rows="3">' + Hub.utils.esc(chore.description || '') + '</textarea></div>' +
-            '<div><label class="block text-sm font-semibold mb-2">Category</label>' +
-              '<select id="editChoreCategory" class="input">' +
-                self.SORT_ORDER.map(function (cat) {
-                  return '<option value="' + cat + '" ' + (chore.category === cat ? 'selected' : '') + '>' + cat + '</option>';
-                }).join('') +
-              '</select></div>' +
-          '</div>' +
-          '<div class="flex gap-3 mt-6">' +
-            '<button id="editSave" class="flex-1 px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold">Save</button>' +
-            '<button id="editCancel" class="flex-1 px-4 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-semibold">Cancel</button>' +
-          '</div>' +
-        '</div>';
-      document.body.appendChild(modal);
-
-      modal.querySelector('#editSave').addEventListener('click', function () {
-        self._saveEdit(choreId, modal);
-      });
-      modal.querySelector('#editCancel').addEventListener('click', function () { modal.remove(); });
-      modal.addEventListener('click', function (e) { if (e.target === modal) modal.remove(); });
-    } catch (e) {
-      console.error('[Chores] Edit error:', e);
-      Hub.ui.toast('Error loading chore', 'error');
-    }
+  /**
+   * Show setup instructions
+   */
+  showSetupInstructions() {
+    alert(
+      '📅 Google Calendar Setup:\n\n' +
+      'Calendar permissions are now requested automatically!\n\n' +
+      'If you\'re seeing this message:\n\n' +
+      '1. Sign out of Home Hub\n' +
+      '2. Sign back in with Google\n' +
+      '3. Click "Allow" when Google asks for calendar access\n\n' +
+      'Note: Admin may need to enable Calendar API in Google Cloud Console first.\n\n' +
+      'After signing in, your calendar will appear here automatically!'
+    );
   },
 
-  /** Save chore edits */
-  async _saveEdit(choreId, modal) {
-    try {
-      var title = document.getElementById('editChoreTitle').value.trim();
-      var description = document.getElementById('editChoreDesc').value.trim();
-      var category = document.getElementById('editChoreCategory').value;
-
-      if (!title) { Hub.ui.toast('Title is required', 'error'); return; }
-
-      var dayVal = this.DAY_MAP[category];
-      var updates = {
-        title: title,
-        description: description || null,
-        category: category,
-        day_of_week: dayVal != null ? dayVal : null
-      };
-
-      await Hub.db.updateChore(choreId, updates);
-      modal.remove();
-      await this.load();
-      await this.renderDashboard();
-      Hub.ui.toast('Chore updated!', 'success');
-    } catch (e) {
-      console.error('[Chores] Save edit error:', e);
-      Hub.ui.toast('Error saving: ' + e.message, 'error');
-    }
+  // Helper functions
+  _isToday(date) {
+    const today = new Date();
+    return date.getDate() === today.getDate() &&
+           date.getMonth() === today.getMonth() &&
+           date.getFullYear() === today.getFullYear();
   },
 
-  /** Mark chore as done with person's name */
-  async markDone(choreId, personName) {
-    // Use Hub.state.user.id (NOT Hub.state.user_id which doesn't exist in this version)
-    if (!Hub.state.user || !Hub.state.user.id) return;
-    try {
-      await Hub.db.markChoreDone(choreId, Hub.state.user.id, personName);
-    } catch (e) {
-      console.error('[Chores] Mark done error:', e);
-      Hub.ui.toast('Failed to mark chore as done', 'error');
-    }
-  },
-
-  /** Show add-chore modal */
-  showAdd() {
-    Hub.ui.openModal('addChoreModal');
-  },
-
-  /** Create a new chore */
-  async add() {
-    var title = Hub.utils.$('choreTitle').value.trim();
-    var description = Hub.utils.$('choreDescription').value.trim();
-    var category = Hub.utils.$('choreCategory') ? Hub.utils.$('choreCategory').value : 'Daily';
-    var priority = Hub.utils.$('chorePriority') ? Hub.utils.$('chorePriority').value : 'medium';
-    if (!title) return Hub.ui.toast('Enter a title', 'error');
-
-    var dayVal = this.DAY_MAP[category];
-
-    try {
-      await Hub.db.addChore({
-        household_id: Hub.state.household_id,
-        title: title,
-        description: description || null,
-        category: category,
-        day_of_week: dayVal != null ? dayVal : null,
-        priority: priority,
-        created_by: Hub.state.user.id,
-        recurrence: category === 'Daily' ? 'daily' : 'weekly',
-        status: 'pending'
-      });
-      Hub.utils.$('choreTitle').value = '';
-      Hub.utils.$('choreDescription').value = '';
-      if (Hub.utils.$('choreCategory')) Hub.utils.$('choreCategory').value = 'Daily';
-      Hub.ui.closeModal('addChoreModal');
-      Hub.ui.toast('Chore created!', 'success');
-      this.load();
-      this.renderDashboard();
-    } catch (e) {
-      Hub.ui.toast('Failed: ' + e.message, 'error');
-    }
-  },
-
-  /** Delete a chore */
-  async remove(choreId) {
-    if (!confirm('Delete this chore?')) return;
-    try {
-      await Hub.db.deleteChore(choreId);
-      await this.load();
-      await this.renderDashboard();
-      Hub.ui.toast('Chore deleted', 'success');
-    } catch (e) {
-      console.error('[Chores] Delete error:', e);
-      Hub.ui.toast('Failed to delete chore', 'error');
-    }
+  _isTomorrow(date) {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return date.getDate() === tomorrow.getDate() &&
+           date.getMonth() === tomorrow.getMonth() &&
+           date.getFullYear() === tomorrow.getFullYear();
   }
 };

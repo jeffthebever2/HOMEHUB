@@ -1,162 +1,127 @@
-// /api/weather-ai.js — Vercel Serverless Function
-// POST /api/weather-ai
-
-const GENAI_URL = 'https://genaiapi.cloudsway.net/v1/ai/zWwyutGgvEGWwzSa/chat/completions';
-const MODEL = 'MaaS_4.1';
-
-const SYSTEM_PROMPT = `You are a weather briefing assistant. You receive aggregated weather data from multiple APIs (Open-Meteo, Weather.gov, Weatherbit, Tomorrow.io, Visual Crossing, Pirate Weather).
-
-RULES:
-- Use ONLY the provided data. Never invent numbers.
-- Prioritize Weather.gov for alerts.
-- If any Weather.gov alerts are active, set alerts.active=true and include actions show_red_banner and show_popup.
-- If sources disagree significantly (>5°F temp, >30% precip), reduce confidence and explain in source_disagreements.
-- Output ONLY valid JSON matching the schema below. No markdown, no explanation, just JSON.
-
-REQUIRED OUTPUT SCHEMA:
-{
-  "headline": "string (8-15 words)",
-  "summary": "string (2-3 sentences)",
-  "confidence": 0-100,
-  "hazards": ["string array"],
-  "today": {
-    "high_f": number or null,
-    "low_f": number or null,
-    "precip_chance_pct": number or null,
-    "snow_chance_pct": number or null,
-    "key_window": "string or null"
-  },
-  "tomorrow": {
-    "high_f": number or null,
-    "low_f": number or null,
-    "precip_chance_pct": number or null,
-    "snow_chance_pct": number or null,
-    "key_window": "string or null"
-  },
-  "alerts": {
-    "active": boolean,
-    "banner_text": "string <=80 chars" or null,
-    "severity": "none" | "advisory" | "watch" | "warning",
-    "expires_at": "ISO 8601 string" or null
-  },
-  "source_disagreements": [{"topic":"string","details":"string"}],
-  "actions": [{"type":"none"|"show_red_banner"|"show_popup","reason":"string"}]
-}`;
-
-async function callGenAI(aggregate, location) {
-  const resp = await fetch(GENAI_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: MODEL,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content:
-            'Interpret this aggregated weather JSON and output the required schema. Data: ' +
-            JSON.stringify({ location, aggregate })
-        }
-      ]
-    })
-  });
-  if (!resp.ok) throw new Error('GenAI failed: ' + resp.status);
-  const data = await resp.json();
-  const content = data?.choices?.[0]?.message?.content ?? '{}';
-  const clean = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-  return JSON.parse(clean);
-}
-
-function mapSeverity(s) {
-  if (!s) return 'none';
-  const l = s.toLowerCase();
-  if (l.includes('warning') || l === 'extreme' || l === 'severe') return 'warning';
-  if (l.includes('watch') || l === 'moderate') return 'watch';
-  if (l.includes('advisory') || l === 'minor') return 'advisory';
-  return 'none';
-}
-
-function buildFallback(aggregate, location) {
-  const result = {
-    headline: 'Weather data available',
-    summary: 'AI interpretation unavailable. Showing data from available sources.',
-    confidence: 35,
-    hazards: [],
-    today: { high_f: null, low_f: null, precip_chance_pct: null, snow_chance_pct: null, key_window: null },
-    tomorrow: { high_f: null, low_f: null, precip_chance_pct: null, snow_chance_pct: null, key_window: null },
-    alerts: { active: false, banner_text: null, severity: 'none', expires_at: null },
-    source_disagreements: [],
-    actions: [{ type: 'none', reason: 'AI fallback' }]
-  };
-
-  // Open-Meteo daily
-  const daily = aggregate?.openMeteo?.daily || aggregate?.sources?.openMeteo?.data?.daily;
-  if (daily) {
-    if (daily.temperature_2m_max?.[0] != null) result.today.high_f = Math.round(daily.temperature_2m_max[0]);
-    if (daily.temperature_2m_min?.[0] != null) result.today.low_f = Math.round(daily.temperature_2m_min[0]);
-    if (daily.precipitation_probability_max?.[0] != null) result.today.precip_chance_pct = daily.precipitation_probability_max[0];
-    if (daily.temperature_2m_max?.[1] != null) result.tomorrow.high_f = Math.round(daily.temperature_2m_max[1]);
-    if (daily.temperature_2m_min?.[1] != null) result.tomorrow.low_f = Math.round(daily.temperature_2m_min[1]);
-    if (daily.precipitation_probability_max?.[1] != null) result.tomorrow.precip_chance_pct = daily.precipitation_probability_max[1];
-  }
-
-  // Weather.gov description
-  const wgForecast = aggregate?.weatherGov?.forecast || aggregate?.sources?.weatherGov?.data?.forecast;
-  if (wgForecast?.properties?.periods?.[0]) {
-    result.headline = wgForecast.properties.periods[0].shortForecast || result.headline;
-  }
-
-  // Weather.gov alerts
-  const wgAlerts = aggregate?.weatherGov?.alerts || aggregate?.sources?.weatherGov?.data?.alerts;
-  if (wgAlerts?.features?.length > 0) {
-    const top = wgAlerts.features[0].properties;
-    result.alerts.active = true;
-    result.alerts.banner_text = (top.headline || top.event || 'Weather Alert').substring(0, 80);
-    result.alerts.severity = mapSeverity(top.severity);
-    result.alerts.expires_at = top.expires || null;
-    result.hazards.push(top.event || 'Weather Alert');
-    result.actions = [
-      { type: 'show_red_banner', reason: top.event || 'Active alert' },
-      { type: 'show_popup', reason: 'NWS alert active' }
-    ];
-  }
-
-  return result;
-}
+/**
+ * Cron endpoint: Reset chores daily
+ * Pure fetch implementation - no external imports
+ */
 
 export default async function handler(req, res) {
-  if (req.method === 'OPTIONS') return res.status(204).end();
-  if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+  // Allow GET and POST
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const SUPABASE_URL = process.env.SUPABASE_URL;
+  const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!SUPABASE_URL || !SERVICE_KEY) {
+    return res.status(500).json({ error: 'Missing Supabase config' });
+  }
 
   try {
-    const { location, aggregate, previousSummary } = req.body || {};
+    // Compute "today" in America/New_York timezone
+    const nyDate = new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
+    const nyNow = new Date(nyDate);
+    const today = nyNow.toISOString().split('T')[0]; // YYYY-MM-DD
+    const weekday = nyNow.getDay(); // 0=Sunday, 6=Saturday
 
-    if (!aggregate) {
-      return res.status(400).json({ error: 'Missing aggregate data' });
+    console.log(`[Cron] Today in NY: ${today}, weekday: ${weekday}`);
+
+    // Fetch all households
+    const householdsRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/households?select=id,last_chore_reset_date`,
+      {
+        headers: {
+          'apikey': SERVICE_KEY,
+          'Authorization': `Bearer ${SERVICE_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    if (!householdsRes.ok) {
+      throw new Error(`Failed to fetch households: ${householdsRes.statusText}`);
     }
 
-    let result;
-    try {
-      result = await callGenAI(aggregate, location || {});
-    } catch (aiErr) {
-      console.error('AI call failed, using fallback:', aiErr.message);
-      result = buildFallback(aggregate, location || {});
+    const households = await householdsRes.json();
+    console.log(`[Cron] Found ${households.length} households`);
+
+    let checkedCount = 0;
+    let resetCount = 0;
+
+    for (const household of households) {
+      checkedCount++;
+
+      // Skip if already reset today
+      if (household.last_chore_reset_date === today) {
+        console.log(`[Cron] Household ${household.id} already reset today`);
+        continue;
+      }
+
+      console.log(`[Cron] Resetting household ${household.id}...`);
+
+      // Reset chores: Daily OR weekly matching today's weekday
+      const resetRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/chores?household_id=eq.${household.id}&status=eq.done&or=(category.eq.Daily,day_of_week.eq.${weekday})`,
+        {
+          method: 'PATCH',
+          headers: {
+            'apikey': SERVICE_KEY,
+            'Authorization': `Bearer ${SERVICE_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify({
+            status: 'pending',
+            completed_by_name: null
+          })
+        }
+      );
+
+      if (!resetRes.ok) {
+        console.error(`[Cron] Failed to reset chores for ${household.id}: ${resetRes.statusText}`);
+        continue;
+      }
+
+      // Update household's last_chore_reset_date
+      const updateRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/households?id=eq.${household.id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'apikey': SERVICE_KEY,
+            'Authorization': `Bearer ${SERVICE_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify({
+            last_chore_reset_date: today
+          })
+        }
+      );
+
+      if (!updateRes.ok) {
+        console.error(`[Cron] Failed to update household ${household.id}: ${updateRes.statusText}`);
+        continue;
+      }
+
+      resetCount++;
+      console.log(`[Cron] ✓ Reset household ${household.id}`);
     }
 
-    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=120');
-    return res.status(200).json(result);
-  } catch (e) {
-    console.error('weather-ai error:', e);
+    console.log(`[Cron] Complete: checked ${checkedCount}, reset ${resetCount}`);
+
+    return res.status(200).json({
+      ok: true,
+      checked: checkedCount,
+      reset: resetCount,
+      today: today,
+      weekday: weekday
+    });
+
+  } catch (error) {
+    console.error('[Cron] Error:', error);
     return res.status(500).json({
-      headline: 'Error processing weather',
-      summary: 'An error occurred.',
-      confidence: 0,
-      hazards: [],
-      today: { high_f: null, low_f: null, precip_chance_pct: null, snow_chance_pct: null, key_window: null },
-      tomorrow: { high_f: null, low_f: null, precip_chance_pct: null, snow_chance_pct: null, key_window: null },
-      alerts: { active: false, banner_text: null, severity: 'none', expires_at: null },
-      source_disagreements: [],
-      actions: [{ type: 'none', reason: 'Server error' }]
+      ok: false,
+      error: error.message
     });
   }
 }

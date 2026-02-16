@@ -1,138 +1,441 @@
 // ============================================================
-// assets/router.js — SPA hash-router with pathname fallback
-// Supports both #/page hash routing AND /page clean URLs
-// (Vercel rewrites /page → /index.html, so we read pathname)
+// assets/supabase.js — Supabase auth + DB helpers  (v4)
+//
+// KEY CHANGES:
+//   - flowType: 'pkce' (server uses PKCE)
+//   - Configurable timeout on ALL DB queries (default 6s)
+//   - Boot diagnostics + debug tool
+//   - Better error logging
 // ============================================================
 window.Hub = window.Hub || {};
 
-Hub.router = {
-  current: 'dashboard',
-  // NOTE: 'control' is intentionally hidden from the UI (secret/admin-only entry)
-  VALID_PAGES: ['dashboard', 'standby', 'weather', 'chores', 'treats', 'music', 'radio', 'settings', 'status', 'control'],
+// Configuration
+const SUPABASE_CONFIG = {
+  DB_QUERY_TIMEOUT_MS: 6000,
+  KEEPALIVE_MINUTES: 10,
+  REFRESH_IF_EXPIRES_IN_SECONDS: 20 * 60
+};
 
-  /** Navigate to a page */
-  go(page) {
-    window.location.hash = '#/' + page;
-  },
+(function () {
+  const CFG = window.HOME_HUB_CONFIG || {};
+  const SB_URL = CFG.supabaseUrl || CFG.supabase?.url || '';
+  const SB_KEY = CFG.supabaseAnonKey || CFG.supabase?.anonKey || '';
 
-  /** Show auth screens (login/accessDenied) – hides all pages */
-  showScreen(screen) {
-    // CRITICAL: ABSOLUTELY refuse to show login if logged in
-    if (screen === 'login' && Hub.app?._loggedIn) {
-      console.error('[Router] 🚨 BLOCKED showScreen(login) - USER IS LOGGED IN!');
-      console.error('[Router] This should never happen - check your code!');
-      console.trace(); // Show stack trace
-      return;
+  console.log('[Boot] href:', window.location.href);
+  console.log('[Boot] has ?code=', window.location.search.includes('code='));
+  console.log('[Boot] has #access_token=', window.location.hash.includes('access_token'));
+
+  const sb = window.supabase.createClient(SB_URL, SB_KEY, {
+    auth: {
+      flowType: 'pkce',
+      detectSessionInUrl: true,
+      autoRefreshToken: true,
+      persistSession: true
     }
+  });
 
-    console.log('[Router] showScreen:', screen);
+  Hub.sb = sb;
 
-    // Clear any OAuth code from URL when showing login/denied screens
-    if (window.location.search.includes('code=')) {
-      const cleanUrl = window.location.origin + window.location.pathname + window.location.hash;
-      window.history.replaceState({}, document.title, cleanUrl);
-      console.log('[Router] OAuth code cleared from URL (stale code cleanup)');
-    }
+  // ── Keep session alive (prevents idle tab logout) ──
+  // Supabase access tokens expire (~1h). Auto-refresh SHOULD handle it, but
+  // background tabs can get throttled. This adds a lightweight safety net.
+  let _keepAliveStarted = false;
 
-    const $ = Hub.utils.$;
-    
-    // Force hide loading screen
-    const loadingScreen = $('loadingScreen');
-    if (loadingScreen) {
-      loadingScreen.style.display = 'none';
-    }
-    
-    // Force hide all pages
-    document.querySelectorAll('.page').forEach(p => {
-      p.classList.remove('active');
-      p.style.display = 'none';
-    });
-    
-    // Show requested screen
-    if (screen === 'login') {
-      const loginScreen = $('loginScreen');
-      if (loginScreen) {
-        loginScreen.classList.add('active');
-        loginScreen.style.display = 'flex'; // Login uses flex
-        console.log('[Router] Login screen shown');
+  async function _refreshIfNeeded(reason) {
+    try {
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) return null;
+
+      const expiresAt = session.expires_at ? (session.expires_at * 1000) : null;
+      if (!expiresAt) return session;
+
+      const secondsLeft = Math.floor((expiresAt - Date.now()) / 1000);
+      if (secondsLeft > SUPABASE_CONFIG.REFRESH_IF_EXPIRES_IN_SECONDS) return session;
+
+      console.log('[Auth] Refreshing session (' + reason + ') — seconds left:', secondsLeft);
+      const { data, error } = await sb.auth.refreshSession();
+      if (error) {
+        console.warn('[Auth] refreshSession error:', error.message);
+        return session;
       }
-    } else if (screen === 'accessDenied') {
-      const deniedScreen = $('accessDeniedScreen');
-      if (deniedScreen) {
-        deniedScreen.classList.add('active');
-        deniedScreen.style.display = 'flex'; // Access denied uses flex
-        console.log('[Router] Access denied screen shown');
+      if (data?.session) {
+        console.log('[Auth] Session refreshed');
+        return data.session;
       }
-    }
-  },
-
-  /** Activate a page (called after auth check) */
-  _activate(page) {
-    if (!this.VALID_PAGES.includes(page)) page = 'dashboard';
-
-    // Admin-only gate for hidden control center
-    if (page === 'control' && Hub.state?.userRole !== 'admin') {
-      console.warn('[Router] Blocked control page for non-admin user');
-      try { 
-        Hub.ui?.toast?.('Admin-only page', 'error'); 
-      } catch (e) { 
-        console.warn('[Router] Failed to show toast:', e.message);
-      }
-      page = 'dashboard';
-      // Keep URL consistent so users can't "stick" on /control
-      if (window.location.hash !== '#/dashboard') window.location.hash = '#/dashboard';
-    }
-    Hub.router.current = page;
-    
-    // Force hide all pages
-    document.querySelectorAll('.page').forEach(p => {
-      p.classList.remove('active');
-      p.style.display = 'none';
-    });
-    
-    // Force show target page
-    const el = Hub.utils.$(page + 'Page');
-    if (el) {
-      el.classList.add('active');
-      el.style.display = 'block'; // Force display
-      console.log('[Router] Activated page:', page);
-    }
-
-    // Fire page lifecycle
-    Hub.app?.onPageEnter?.(page);
-  },
-
-  /** Resolve current page from hash or pathname */
-  _resolveRoute() {
-    // Prefer hash
-    const hash = window.location.hash.replace('#/', '').replace('#', '');
-    if (hash && this.VALID_PAGES.includes(hash)) return hash;
-
-    // Fallback to pathname (for Vercel clean-URL rewrites)
-    const path = window.location.pathname.replace(/^\//, '').split('/')[0];
-    if (path && this.VALID_PAGES.includes(path)) return path;
-
-    return 'dashboard';
-  },
-
-  /** Initialize router */
-  init() {
-    const handleHash = () => {
-      // Don't route if user not authenticated OR if login is in progress
-      if (!Hub.state?.user || Hub.app?._loginInProgress) {
-        console.log('[Router] Blocked hashchange (no user or login in progress)');
-        return;
-      }
-      Hub.router._activate(Hub.router._resolveRoute());
-    };
-    window.addEventListener('hashchange', handleHash);
-    window.addEventListener('popstate', handleHash);
-    Hub.router._handleHash = handleHash;
-
-    // On first load, if pathname is a valid page but no hash, set hash
-    const pathPage = window.location.pathname.replace(/^\//, '').split('/')[0];
-    if (pathPage && this.VALID_PAGES.includes(pathPage) && !window.location.hash) {
-      window.location.hash = '#/' + pathPage;
+      return session;
+    } catch (e) {
+      console.warn('[Auth] refreshIfNeeded exception:', e.message);
+      return null;
     }
   }
-};
+
+  function _startKeepAlive() {
+    if (_keepAliveStarted) return;
+    _keepAliveStarted = true;
+
+    // Some environments need this explicitly; harmless if unsupported.
+    try { 
+      sb.auth.startAutoRefresh?.(); 
+    } catch (e) {
+      console.warn('[Auth] startAutoRefresh not available:', e.message);
+    }
+
+    // Periodic keepalive (throttled in background, but still helps).
+    setInterval(() => _refreshIfNeeded('interval'), SUPABASE_CONFIG.KEEPALIVE_MINUTES * 60 * 1000);
+
+    // When the tab becomes visible again, refresh immediately if near expiry.
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) _refreshIfNeeded('visibility');
+    });
+
+    // If network comes back, refresh.
+    window.addEventListener('online', () => _refreshIfNeeded('online'));
+  }
+
+  _startKeepAlive();
+
+  // Boot: log session state (non-blocking)
+  sb.auth.getSession().then(({ data }) => {
+    console.log('[Boot] session:', data.session ? data.session.user.email : 'none');
+  }).catch(e => console.warn('[Boot] getSession err:', e.message));
+
+  // ── Helper: DB query with configurable timeout ──
+  function timed(queryBuilder) {
+    return Promise.race([
+      queryBuilder,
+      new Promise((_, rej) => 
+        setTimeout(() => rej(new Error('DB query timeout (' + SUPABASE_CONFIG.DB_QUERY_TIMEOUT_MS + 'ms)')), 
+                   SUPABASE_CONFIG.DB_QUERY_TIMEOUT_MS)
+      )
+    ]);
+  }
+
+  Hub.auth = {
+    async signInGoogle() {
+      console.log('[Auth] signInGoogle (PKCE) with Calendar scopes');
+      const { error } = await sb.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin + '/#/',
+          scopes: 'email profile https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events'
+        }
+      });
+      if (error) console.error('[Auth] OAuth error:', error);
+    },
+
+    async signOut() {
+      console.log('[Auth] signOut()');
+      Hub.app._loggedIn = false;
+      Hub.app._loginInProgress = false;
+      Hub.app._authHandled = false;
+      Hub.state.user = null;
+      Hub.state.household_id = null;
+      Hub.state.userRole = null;
+      await sb.auth.signOut();
+      Hub.router.showScreen('login');
+    },
+
+    async getSession() {
+      try {
+        const { data: { session } } = await sb.auth.getSession();
+        return session;
+      } catch (e) {
+        console.warn('[Auth] getSession err:', e.message);
+        return null;
+      }
+    },
+
+    // Force a refresh if the session is near expiry (and often refreshes Google provider_token too)
+    async ensureFreshSession(reason = 'manual') {
+      return await _refreshIfNeeded(reason);
+    },
+
+    async checkAccess(user) {
+      try {
+        console.log('[Auth] checkAccess:', user.email);
+
+        const t0 = Date.now();
+        const { data, error } = await timed(
+          sb.from('household_members')
+            .select('household_id, role')
+            .eq('email', user.email)
+            .limit(1)
+            .maybeSingle()
+        );
+        console.log('[Auth] household_members (' + (Date.now() - t0) + 'ms):', JSON.stringify({ data, err: error?.message }));
+        if (error || !data) return false;
+
+        const t1 = Date.now();
+        const { data: ae, error: aeErr } = await timed(
+          sb.from('allowed_emails')
+            .select('id')
+            .eq('email', user.email)
+            .limit(1)
+            .maybeSingle()
+        );
+        console.log('[Auth] allowed_emails (' + (Date.now() - t1) + 'ms):', JSON.stringify({ ae, err: aeErr?.message }));
+        if (aeErr || !ae) return false;
+
+        Hub.state.household_id = data.household_id;
+        Hub.state.userRole = data.role;
+        console.log('[Auth] ✓ Granted — household:', data.household_id);
+        return true;
+      } catch (e) {
+        console.error('[Auth] checkAccess error:', e.message);
+        return false;
+      }
+    },
+
+    onAuthChange(cb) {
+      sb.auth.onAuthStateChange((event, session) => cb(event, session));
+    }
+  };
+
+  // ── Debug tool ─────────────────────────────────────────────
+  Hub.debug = {
+    async checkSupabase() {
+      const out = [];
+      const log = (m) => { out.push(m); console.log('[Debug]', m); };
+      const el = document.getElementById('debugOutput');
+      if (el) { el.style.display = 'block'; el.textContent = 'Running…\n'; }
+
+      log('═══ Supabase Diagnostics ═══');
+      log('URL: ' + (SB_URL || 'MISSING'));
+      log('Key: ' + (SB_KEY.length > 20 ? 'yes' : 'MISSING'));
+      log('Page: ' + window.location.href);
+      log('');
+
+      try {
+        const { data: { session }, error } = await sb.auth.getSession();
+        if (error) log('getSession error: ' + error.message);
+        else if (session) {
+          log('✓ Session: ' + session.user.email);
+          log('  ID: ' + session.user.id);
+          log('  Expires: ' + new Date(session.expires_at * 1000).toLocaleString());
+        } else log('✗ No session');
+      } catch (e) { log('getSession exception: ' + e.message); }
+      log('');
+
+      try {
+        const { data: { user }, error } = await sb.auth.getUser();
+        if (error) log('getUser error: ' + error.message);
+        else if (user) log('✓ getUser: ' + user.email);
+        else log('✗ getUser: null');
+      } catch (e) { log('getUser exception: ' + e.message); }
+      log('');
+
+      try {
+        log('DB: household_members…');
+        const t = Date.now();
+        const { data, error } = await timed(sb.from('household_members').select('household_id, email, role').limit(5));
+        log('  ' + (Date.now() - t) + 'ms');
+        if (error) log('✗ ' + error.message);
+        else log('✓ ' + JSON.stringify(data));
+      } catch (e) { log('✗ ' + e.message); }
+      log('');
+
+      try {
+        log('DB: allowed_emails…');
+        const t = Date.now();
+        const { data, error } = await timed(sb.from('allowed_emails').select('email').limit(5));
+        log('  ' + (Date.now() - t) + 'ms');
+        if (error) log('✗ ' + error.message);
+        else log('✓ ' + JSON.stringify(data));
+      } catch (e) { log('✗ ' + e.message); }
+
+      if (el) el.textContent = out.join('\n');
+      return out;
+    }
+  };
+
+  // ── DB helpers (all with timeout) ──────────────────────────
+  Hub.db = {
+    async loadSettings(userId) {
+      const { data } = await timed(sb.from('user_settings').select('*').eq('user_id', userId).maybeSingle());
+      return data;
+    },
+    async saveSettings(userId, householdId, settings) {
+      const payload = {
+        user_id: userId, household_id: householdId,
+        location_name: settings.location_name, location_lat: settings.location_lat,
+        location_lon: settings.location_lon, standby_timeout_min: settings.standby_timeout_min,
+        quiet_hours_start: settings.quiet_hours_start, quiet_hours_end: settings.quiet_hours_end,
+        immich_base_url: settings.immich_base_url, immich_api_key: settings.immich_api_key,
+        immich_album_id: settings.immich_album_id,
+        selected_calendars: settings.selected_calendars || ['primary'], // ADDED: Calendar selection
+        updated_at: new Date().toISOString()
+      };
+      console.log('[DB] Saving settings with selected_calendars:', payload.selected_calendars);
+      const { data, error } = await timed(sb.from('user_settings').upsert(payload, { onConflict: 'user_id' }).select().single());
+      if (error) {
+        console.error('[DB] Error saving settings:', error);
+        throw error;
+      }
+      console.log('[DB] Settings saved successfully:', data);
+      return data;
+    },
+    async loadChores(householdId) {
+      const { data, error } = await timed(sb.from('chores').select('*').eq('household_id', householdId).order('created_at', { ascending: false }));
+      if (error) throw error;
+      return data || [];
+    },
+    async loadChoresWithCompleters(householdId) {
+      // Get chores
+      const { data: chores, error } = await timed(
+        sb.from('chores')
+          .select('*')
+          .eq('household_id', householdId)
+          .order('created_at', { ascending: false })
+      );
+      if (error) throw error;
+      if (!chores) return [];
+
+      // If chores already have completed_by_name (new schema), just return them
+      // Otherwise try to look up completer from logs
+      const needsLookup = chores.filter(c => c.status === 'done' && !c.completed_by_name);
+      if (needsLookup.length === 0) return chores;
+
+      // Try to get completion info from logs for chores without completed_by_name
+      try {
+        const doneIds = needsLookup.map(c => c.id);
+        const { data: logs } = await timed(
+          sb.from('chore_logs')
+            .select('chore_id, completed_by, notes')
+            .in('chore_id', doneIds)
+            .order('completed_at', { ascending: false })
+        );
+
+        if (logs && logs.length > 0) {
+          // Build map: chore_id -> notes (which contains "Completed by Name")
+          const notesMap = {};
+          logs.forEach(function (log) {
+            if (!notesMap[log.chore_id] && log.notes) {
+              notesMap[log.chore_id] = log.notes;
+            }
+          });
+
+          // Add completer info to chores
+          return chores.map(function (chore) {
+            if (chore.status === 'done' && !chore.completed_by_name && notesMap[chore.id]) {
+              // Extract name from "Completed by Name" note
+              var note = notesMap[chore.id];
+              var match = note.match(/Completed by (.+)/);
+              return Object.assign({}, chore, {
+                completed_by_name: match ? match[1] : null
+              });
+            }
+            return chore;
+          });
+        }
+      } catch (e) {
+        console.warn('[DB] Completer lookup failed (non-critical):', e.message);
+      }
+
+      return chores;
+    },
+    async addChore(chore) {
+      const { data, error } = await timed(sb.from('chores').insert(chore).select().single());
+      if (error) throw error;
+      return data;
+    },
+    async updateChore(id, updates) {
+      const { error } = await timed(sb.from('chores').update(updates).eq('id', id));
+      if (error) throw error;
+    },
+    async deleteChore(id) {
+      // Delete logs first (foreign key constraint)
+      await timed(sb.from('chore_logs').delete().eq('chore_id', id));
+      const { error } = await timed(sb.from('chores').delete().eq('id', id));
+      if (error) throw error;
+    },
+    async logChoreCompletion(choreId, householdId, userId, notes) {
+      const { error } = await timed(sb.from('chore_logs').insert({ chore_id: choreId, household_id: householdId, completed_by: userId, notes }));
+      if (error) throw error;
+    },
+    async loadChoreLogs(householdId, sinceIso) {
+      let q = sb.from('chore_logs')
+        .select('completed_at, notes')
+        .eq('household_id', householdId)
+        .order('completed_at', { ascending: false })
+        .limit(1000);
+      if (sinceIso) q = q.gte('completed_at', sinceIso);
+      const { data, error } = await timed(q);
+      if (error) throw error;
+      return data || [];
+    },
+    async markChoreDone(choreId, userId, personName) {
+      // Try updating with completed_by_name (new schema)
+      // Falls back to just status update if column doesn't exist
+      try {
+        const { error: updateError } = await timed(
+          sb.from('chores')
+            .update({ status: 'done', completed_by_name: personName })
+            .eq('id', choreId)
+        );
+        if (updateError) {
+          // Column might not exist — fall back to just status
+          console.warn('[DB] completed_by_name update failed, trying status only:', updateError.message);
+          const { error: fallbackErr } = await timed(
+            sb.from('chores').update({ status: 'done' }).eq('id', choreId)
+          );
+          if (fallbackErr) throw fallbackErr;
+        }
+      } catch (e) {
+        // Last resort: just update status
+        const { error } = await timed(
+          sb.from('chores').update({ status: 'done' }).eq('id', choreId)
+        );
+        if (error) throw error;
+      }
+
+      // Log completion
+      try {
+        const { data: chore } = await timed(sb.from('chores').select('household_id').eq('id', choreId).single());
+        if (chore) {
+          await this.logChoreCompletion(choreId, chore.household_id, userId, 'Completed by ' + personName);
+        }
+      } catch (logErr) {
+        console.warn('[DB] Completion log failed (non-critical):', logErr.message);
+      }
+    },
+
+    // ── Site Control Center (optional table) ─────────────────
+    async loadSiteControlSettings(householdId, siteName) {
+      const { data, error } = await timed(
+        sb.from('site_control_settings')
+          .select('*')
+          .eq('household_id', householdId)
+          .eq('site_name', siteName)
+          .maybeSingle()
+      );
+      if (error) throw error;
+      return data;
+    },
+    async saveSiteControlSettings(householdId, siteName, userId, payload) {
+      const row = Object.assign({}, payload, {
+        household_id: householdId,
+        site_name: siteName,
+        updated_by: userId || null,
+        updated_at: new Date().toISOString()
+      });
+      const { data, error } = await timed(
+        sb.from('site_control_settings')
+          .upsert(row, { onConflict: 'household_id,site_name' })
+          .select()
+          .single()
+      );
+      if (error) throw error;
+      return data;
+    },
+    async markAlertSeen(userId, alertId, severity) {
+      await timed(sb.from('seen_alerts').upsert({ user_id: userId, alert_id: alertId, severity, seen_at: new Date().toISOString() }, { onConflict: 'user_id,alert_id' }));
+    },
+    async isAlertSeen(userId, alertId) {
+      const { data } = await timed(sb.from('seen_alerts').select('id').eq('user_id', userId).eq('alert_id', alertId).maybeSingle());
+      return !!data;
+    },
+    async logSystem(source, service, status, message, latencyMs) {
+      await timed(sb.from('system_logs').insert({ source, service, status, message, latency_ms: latencyMs }).select());
+    }
+  };
+})();

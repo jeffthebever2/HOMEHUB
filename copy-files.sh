@@ -1,102 +1,228 @@
-# STANDBY.JS UPDATES - Now Playing Widget & Ken Burns Effect
+# CHORES.JS UI IMPROVEMENTS
 
-## 1. Add Now Playing widget update to start() method
-
-FIND the `start()` method (it should be around line 30-50) and locate where standby content is being refreshed.
-
-ADD this call to update Now Playing widget:
+## 1. Add confetti function at the top of Hub.chores object (after familyMembers)
 
 ```javascript
-      // Update Now Playing widget
-      if (Hub.player) {
-        Hub.player.updateUI();
+  /** Lightweight confetti burst on chore completion */
+  _createConfetti(x, y) {
+    const colors = ['#3b82f6', '#10b981', '#f59e0b', '#a855f7', '#ec4899'];
+    const particles = 15;
+    
+    for (let i = 0; i < particles; i++) {
+      const particle = document.createElement('div');
+      particle.style.cssText = `
+        position: fixed;
+        left: ${x}px;
+        top: ${y}px;
+        width: 8px;
+        height: 8px;
+        background: ${colors[Math.floor(Math.random() * colors.length)]};
+        border-radius: 50%;
+        pointer-events: none;
+        z-index: 9999;
+      `;
+      
+      document.body.appendChild(particle);
+      
+      const angle = (Math.PI * 2 * i) / particles;
+      const velocity = 3 + Math.random() * 3;
+      const vx = Math.cos(angle) * velocity;
+      const vy = Math.sin(angle) * velocity - 2;
+      
+      let posX = x;
+      let posY = y;
+      let gravity = 0.3;
+      let velocityY = vy;
+      
+      const animate = () => {
+        posX += vx;
+        posY += velocityY;
+        velocityY += gravity;
+        
+        particle.style.left = posX + 'px';
+        particle.style.top = posY + 'px';
+        particle.style.opacity = Math.max(0, 1 - (posY - y) / 200);
+        
+        if (posY < window.innerHeight && parseFloat(particle.style.opacity) > 0) {
+          requestAnimationFrame(animate);
+        } else {
+          particle.remove();
+        }
+      };
+      
+      requestAnimationFrame(animate);
+    }
+  },
+
+  /** Get category icon and color */
+  _getCategoryIcon(category) {
+    if (!category || category === 'Other') {
+      return '<span class="chore-icon weekly"></span>';
+    }
+    
+    if (category === 'Daily') {
+      return '<span class="chore-icon daily"></span>';
+    }
+    
+    // Weekly chores
+    return '<span class="chore-icon weekly"></span>';
+  },
+```
+
+## 2. Update renderDashboard method - add category icons (around line 88)
+
+FIND:
+```javascript
+      html += todayPending.slice(0, 5).map(function (c) {
+        return '<div class="flex items-center justify-between py-3 border-b border-gray-700 last:border-0">' +
+          '<div class="flex-1 min-w-0 pr-3">' +
+            '<p class="text-sm font-semibold truncate">' + Hub.utils.esc(c.title) + '</p>' +
+            '<p class="text-xs text-gray-500">' + Hub.utils.esc(c.category || c.priority || 'General') + '</p>' +
+```
+
+REPLACE with:
+```javascript
+      html += todayPending.slice(0, 5).map(function (c) {
+        var icon = Hub.chores._getCategoryIcon(c.category);
+        return '<div class="flex items-center justify-between py-3 border-b border-gray-700 last:border-0">' +
+          '<div class="flex-1 min-w-0 pr-3">' +
+            '<p class="text-sm font-semibold truncate">' + icon + Hub.utils.esc(c.title) + '</p>' +
+            '<p class="text-xs text-gray-500">' + Hub.utils.esc(c.category || c.priority || 'General') + '</p>' +
+```
+
+## 3. Update load method - add progress bars per category (around line 187)
+
+FIND:
+```javascript
+      el.innerHTML = sortedCategories.map(function (category) {
+        var list = grouped[category];
+        var pending = list.filter(function (c) { return c.status !== 'done'; });
+        var done = list.filter(function (c) { return c.status === 'done'; });
+
+        return '<div class="mb-8">' +
+          '<div class="flex items-center justify-between mb-4">' +
+            '<h2 class="text-2xl font-bold">' + Hub.utils.esc(category) + '</h2>' +
+            '<span class="text-sm text-gray-400">' + pending.length + ' pending / ' + list.length + ' total</span>' +
+          '</div>' +
+```
+
+REPLACE with:
+```javascript
+      el.innerHTML = sortedCategories.map(function (category) {
+        var list = grouped[category];
+        var pending = list.filter(function (c) { return c.status !== 'done'; });
+        var done = list.filter(function (c) { return c.status === 'done'; });
+        var pct = list.length > 0 ? Math.round((done.length / list.length) * 100) : 0;
+        var progressColor = pct === 100 ? 'bg-green-500' : pct >= 50 ? 'bg-blue-500' : 'bg-yellow-500';
+
+        return '<div class="mb-8">' +
+          '<div class="flex items-center justify-between mb-2">' +
+            '<h2 class="text-2xl font-bold">' + Hub.chores._getCategoryIcon(category) + Hub.utils.esc(category) + '</h2>' +
+            '<span class="text-sm text-gray-400">' + done.length + '/' + list.length + ' done</span>' +
+          '</div>' +
+          '<div class="progress-bar mb-4" style="height:0.5rem;">' +
+            '<div class="progress-fill ' + progressColor + '" style="width:' + pct + '%"></div>' +
+          '</div>' +
+```
+
+## 4. Update _renderChoreCard method - custom checkbox with animation (around line 217)
+
+FIND:
+```javascript
+          '<div class="flex items-start justify-between gap-4">' +
+            '<div class="flex-1 min-w-0">' +
+              '<div class="flex items-start gap-3">' +
+                '<input type="checkbox" ' + (isDone ? 'checked' : '') +
+                  ' onchange="Hub.chores.toggleChore(\'' + c.id + '\', this.checked, this)"' +
+                  ' class="mt-1 w-5 h-5 rounded border-gray-600 bg-gray-700 checked:bg-green-600 cursor-pointer flex-shrink-0">' +
+```
+
+REPLACE with:
+```javascript
+          '<div class="flex items-start justify-between gap-4">' +
+            '<div class="flex-1 min-w-0">' +
+              '<div class="flex items-start gap-3">' +
+                '<div class="chore-checkbox ' + (isDone ? 'checked' : '') + ' mt-1 flex-shrink-0" ' +
+                  'onclick="Hub.chores.toggleChore(\'' + c.id + '\', !' + isDone + ', this)" ' +
+                  'role="checkbox" aria-checked="' + isDone + '" tabindex="0"></div>' +
+```
+
+## 5. Update _renderChoreCard - hover-reveal edit/delete buttons (around line 231)
+
+FIND:
+```javascript
+        '<div class="flex gap-2 flex-shrink-0">' +
+          '<button onclick="Hub.chores.editChore(\'' + c.id + '\')" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg font-semibold transition-colors" title="Edit">✏️</button>' +
+          '<button onclick="Hub.chores.remove(\'' + c.id + '\')" class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded-lg font-semibold transition-colors" title="Delete">🗑️</button>' +
+        '</div>' +
+```
+
+REPLACE with:
+```javascript
+        '<div class="flex gap-2 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" style="opacity: 1;">' +
+          '<button onclick="Hub.chores.editChore(\'' + c.id + '\')" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg font-semibold transition-all hover:scale-105" title="Edit">✏️</button>' +
+          '<button onclick="Hub.chores.remove(\'' + c.id + '\')" class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded-lg font-semibold transition-all hover:scale-105" title="Delete">🗑️</button>' +
+        '</div>' +
+```
+
+And update the card wrapper div:
+```javascript
+    return '<div class="card group ' + (isDone ? 'opacity-60 bg-gray-800' : '') + '">' +
+```
+
+## 6. Update toggleChore method - add confetti on completion (around line 240)
+
+FIND:
+```javascript
+  async toggleChore(choreId, checked, checkbox) {
+    if (checked) {
+      var name = await this.askWhoDidIt();
+      if (!name) {
+        if (checkbox) checkbox.checked = false;
+        return;
       }
+      await this.markDone(choreId, name);
 ```
 
-Place this wherever other widgets are being updated (like weather, calendar, chores).
-
-## 2. Ensure Ken Burns effect is already in CSS
-
-The CSS for Ken Burns effect should already be in index.html:
-
-```css
-@keyframes kenBurns {
-  0% {
-    transform: scale(1) translate(0, 0);
-  }
-  100% {
-    transform: scale(1.1) translate(-5%, -5%);
-  }
-}
-
-#standbyCurrentPhoto {
-  animation: kenBurns 30s ease-in-out infinite alternate;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  #standbyCurrentPhoto {
-    animation: none;
-  }
-}
-```
-
-This is already included in the INDEX_HTML_UPDATES.md file.
-
-## 3. Add ripple wake effect on tap (optional enhancement)
-
-If you want to add a visual ripple when waking from standby, add this to the click handler:
-
-FIND where standby page is clicked to wake up (there should be an event listener or onclick).
-
-ADD this ripple effect:
-
+REPLACE with:
 ```javascript
-  // Add ripple wake effect
-  const standbyPage = document.getElementById('standbyPage');
-  if (standbyPage) {
-    standbyPage.classList.add('waking');
-    setTimeout(() => standbyPage.classList.remove('waking'), 800);
-  }
+  async toggleChore(choreId, checked, element) {
+    if (checked) {
+      var name = await this.askWhoDidIt();
+      if (!name) {
+        if (element && element.classList) {
+          element.classList.remove('checked');
+          element.setAttribute('aria-checked', 'false');
+        }
+        return;
+      }
+      
+      // Add confetti burst
+      if (element) {
+        var rect = element.getBoundingClientRect();
+        this._createConfetti(
+          rect.left + rect.width / 2,
+          rect.top + rect.height / 2
+        );
+      }
+      
+      await this.markDone(choreId, name);
 ```
 
-The CSS for this is already included in index.html updates:
-
-```css
-@keyframes ripple {
-  0% {
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5);
-  }
-  100% {
-    box-shadow: 0 0 0 100px rgba(59, 130, 246, 0);
-  }
-}
-
-#standbyPage.waking {
-  animation: ripple 0.8s ease-out;
-}
-```
-
-## 4. Update data refresh to include player state
-
-In the method that refreshes standby data (usually a setInterval or similar), make sure to include:
-
+AND update the unchecking part:
 ```javascript
-  // Refresh Now Playing
-  if (Hub.player) {
-    Hub.player.updateUI();
-  }
+    } else {
+      await Hub.db.updateChore(choreId, { status: 'pending', completed_by_name: null });
 ```
 
-## 5. Ensure cleanup on stop()
+## 7. Add CSS for group hover in index.html (if not already present)
 
-The `stop()` method should already clean up timers and listeners. No changes needed if it's working correctly.
+The `.group-hover:opacity-100` utility needs the parent to have `.group` class, which we added above.
 
-## Summary
-
-The main changes needed are:
-1. Call `Hub.player.updateUI()` when standby starts and during refreshes
-2. CSS for Ken Burns and ripple effects (already in index.html updates)
-3. Optional ripple wake effect on tap
-4. Ensure Now Playing widget container is in the HTML (already in index.html updates)
-
-Most of the visual effects are CSS-only, so they're already handled by the index.html updates. The standby.js changes are minimal - just ensuring the Now Playing widget gets updated.
+These changes will:
+1. Add lightweight confetti animation on chore completion
+2. Show category icons with color dots
+3. Add progress bars for each category
+4. Use custom animated checkboxes
+5. Make edit/delete buttons hover-reveal (with fallback for mobile)
+6. Improve overall visual polish and micro-interactions
