@@ -11,7 +11,7 @@ window.Hub = window.Hub || {};
 
 // Configuration
 const SUPABASE_CONFIG = {
-  DB_QUERY_TIMEOUT_MS: 6000,
+  DB_QUERY_TIMEOUT_MS: 15000,
   KEEPALIVE_MINUTES: 10,
   REFRESH_IF_EXPIRES_IN_SECONDS: 20 * 60
 };
@@ -182,6 +182,11 @@ const SUPABASE_CONFIG = {
         return true;
       } catch (e) {
         console.error('[Auth] checkAccess error:', e.message);
+        const msg = String(e?.message || '');
+        // Treat timeouts / transient network failures as "unknown" so the app can retry.
+        if (msg.includes('DB query timeout') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+          return null;
+        }
         return false;
       }
     },
@@ -275,11 +280,16 @@ const SUPABASE_CONFIG = {
       return data;
     },
     async loadChores(householdId) {
-      const { data, error } = await timed(sb.from('chores').select('*').eq('household_id', householdId).order('created_at', { ascending: false }));
+      if (!householdId) return [];
+      const { data, error } = await timed(
+        sb.from('chores').select('*').eq('household_id', householdId).order('created_at', { ascending: false })
+      );
       if (error) throw error;
       return data || [];
     },
     async loadChoresWithCompleters(householdId) {
+      if (!householdId) return [];
+
       // Get chores
       const { data: chores, error } = await timed(
         sb.from('chores')

@@ -40,7 +40,7 @@ Hub.app = {
     Hub.router.init();
     Hub.player?.init?.();
     Hub.treats.init();
-    Hub.control?.init?.();
+    // Admin control panel must not initialize before auth; it depends on household_id.
 
     // ── TEST BYPASS: visit /#letmein (DEV ONLY) ──
     if (window.location.hash === '#letmein') {
@@ -236,8 +236,21 @@ Hub.app = {
         return;
       }
       
-      const allowed = await Hub.auth.checkAccess(user);
-      console.log('[Auth] checkAccess →', allowed);
+      // Access check can fail transiently (timeouts/network). Retry a few times and only deny on definitive false.
+      let allowed = null;
+      for (let i = 0; i < 3; i++) {
+        allowed = await Hub.auth.checkAccess(user);
+        console.log('[Auth] checkAccess →', allowed, '(attempt', (i + 1) + '/3)');
+        if (allowed === true || allowed === false) break;
+        await new Promise(r => setTimeout(r, 600 * (i + 1)));
+      }
+
+      if (allowed === null) {
+        console.warn('[Auth] checkAccess still transient after retries — keeping loading');
+        const loading = document.getElementById('loadingScreen');
+        if (loading) loading.style.display = 'flex';
+        return;
+      }
 
       // Triple check - another tab could have completed login
       if (this._loggedIn) {
@@ -276,12 +289,47 @@ Hub.app = {
       this._showApp();
     } catch (e) {
       console.error('[Auth] _onLogin error:', e);
+
+      // If a session still exists, don't bounce back to login over a recoverable error.
+      try {
+        const s = await Hub.auth.getSession();
+        if (s?.user) {
+          console.warn('[Auth] _onLogin error but session exists — continuing');
+          this._loggedIn = true;
+          Hub.state.user = s.user;
+          this._showApp();
+          return;
+        }
+      } catch (_) {}
+
       this._loggedIn = false;
       Hub.router.showScreen('login');
     } finally {
       this._loginInProgress = false;
     }
   },
+
+
+// Server-side daily reset (safe to call repeatedly).
+// Uses the signed-in user's JWT (RLS protected). No admin needed.
+async _kickDailyChoreReset() {
+  try {
+    const session = await Hub.auth.getSession();
+    const token = session?.access_token;
+    const res = await fetch(Hub.utils.apiBase() + '/chores-reset-my-household', {
+      method: 'POST',
+      headers: token ? { 'Authorization': 'Bearer ' + token } : {}
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      console.warn('[ChoresReset] Non-OK:', res.status, txt);
+    } else {
+      console.log('[ChoresReset] OK');
+    }
+  } catch (e) {
+    console.warn('[ChoresReset] Error:', e.message);
+  }
+}
 
   _showApp() {
     console.log('[Auth] _showApp called');
@@ -324,6 +372,12 @@ Hub.app = {
 
     Hub.router.current = page;
     console.log('[Auth] Page:', page);
+
+    // Init admin controls AFTER household_id + role exist.
+    if (Hub.control && typeof Hub.control.initAfterLogin === 'function') {
+      Hub.control.initAfterLogin();
+    }
+
     this.onPageEnter(page);
   },
 
