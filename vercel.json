@@ -1,123 +1,424 @@
-# Second Review - Additional Fixes Applied
+// ============================================================
+// assets/treats.js — Dog Treat Tracker (Firebase RTDB)
+// ============================================================
+window.Hub = window.Hub || {};
 
-## What I Found on Second Pass
+Hub.treats = {
+  firebaseDb: null,
+  dogs: {},
+  selectedDogId: null,
+  _listeners: [],
 
-After reviewing the code more carefully, I identified **6 additional critical issues** that could cause the login bounce:
+  /** Initialize Firebase */
+  init() {
+    const cfg = window.HOME_HUB_CONFIG?.firebase;
+    if (!cfg?.apiKey) { console.warn('Firebase config missing'); return; }
+    if (!firebase.apps.length) firebase.initializeApp(cfg);
+    this.firebaseDb = firebase.database();
+  },
 
-### 🔴 Critical Issues Found:
+  /** Detach all Firebase listeners */
+  cleanup() {
+    this._listeners.forEach(({ ref, cb }) => { try { ref.off('value', cb); } catch (e) {} });
+    this._listeners = [];
+  },
 
-1. **Router Interference During OAuth** 
-   - The router's `hashchange` listener could activate during the OAuth redirect
-   - This would try to route to a page before authentication completed
-   - **Fix**: Added `_loginInProgress` check to router to block routing during login
+  /** Load all dogs and render selectors */
+  async loadDogs() {
+    if (!this.firebaseDb) { this.init(); if (!this.firebaseDb) return; }
 
-2. **Poor Error Differentiation**
-   - Database errors were treated the same as "user not authorized"
-   - Users would see wrong screen or confusing behavior
-   - **Fix**: `checkAccess()` now THROWS errors for DB issues, RETURNS false for authorization
-   - Result: Users see helpful error screen with retry button for DB errors
+    const snapshot = await this.firebaseDb.ref('dogs').once('value');
+    this.dogs = snapshot.val() || {};
+    const dogIds = Object.keys(this.dogs);
 
-3. **Timeout Errors Not Caught Properly**
-   - The 6-second query timeout threw errors that were being swallowed
-   - **Fix**: Explicit try/catch around each DB query with timeout-specific messages
+    const selectorEl = Hub.utils.$('dogSelector');
+    if (dogIds.length === 0) {
+      selectorEl.innerHTML = '<p class="text-gray-400">No dogs yet. Add one below!</p>';
+      Hub.utils.$('selectedDogName').textContent = 'Add a dog to get started';
+      Hub.utils.$('calorieProgress').innerHTML = '';
+      Hub.utils.$('todayTreats').innerHTML = '';
+      Hub.utils.$('weekHistory').innerHTML = '';
+      return;
+    }
 
-4. **Unexpected SIGNED_OUT Events**
-   - If Supabase fired a SIGNED_OUT event during login (e.g., session refresh failed), it would abort
-   - **Fix**: Ignore SIGNED_OUT events when `_loginInProgress = true`
+    if (!this.selectedDogId || !this.dogs[this.selectedDogId]) {
+      this.selectedDogId = dogIds[0];
+    }
 
-5. **No Session Validation Logging**
-   - Hard to debug if sessions were expired or invalid
-   - **Fix**: Added detailed session logging showing expiration time and validity
+    selectorEl.innerHTML = dogIds.map(id =>
+      `<button onclick="Hub.treats.selectDog('${id}')" class="btn ${this.selectedDogId === id ? 'btn-primary' : 'btn-secondary'} mr-2 mb-2">${Hub.utils.esc(this.dogs[id].name)}</button>`
+    ).join('');
 
-6. **Redundant Error Check**
-   - Minor: `if (!this._loggedIn)` check after setting it to false
-   - Fixed for code clarity
+    this.loadTreats(this.selectedDogId);
+    this._attachRealtimeListener(this.selectedDogId);
+  },
 
-## What This Means
+  /** Select a dog */
+  selectDog(id) {
+    this.cleanup();
+    this.selectedDogId = id;
+    this.loadDogs();
+  },
 
-The original fix was **mostly correct** but had gaps that could still cause bouncing in certain scenarios:
+  /** Load and render treats for a dog */
+  async loadTreats(dogId) {
+    const dog = this.dogs[dogId];
+    if (!dog) return;
 
-### Scenarios Now Handled:
-✅ **Database timeout** → Shows error screen with retry  
-✅ **Network issues** → Shows error screen with retry  
-✅ **OAuth redirect interference** → Router blocked during login  
-✅ **Session refresh failures** → Won't abort login process  
-✅ **User not authorized** → Shows access denied  
-✅ **Expired sessions** → Logged and handled properly
+    Hub.utils.$('selectedDogName').textContent = dog.name;
 
-### Before vs After:
+    const snapshot = await this.firebaseDb.ref(`treats/${dogId}`).once('value');
+    const allTreats = snapshot.val() || {};
+    const todayStart = Hub.utils.todayStart();
 
-**BEFORE** (first fix):
-```
-DB timeout → checkAccess returns false → Access Denied screen ❌
-```
+    // Today's treats
+    const todayTreats = Object.entries(allTreats)
+      .filter(([_, t]) => t.timestamp >= todayStart)
+      .sort((a, b) => b[1].timestamp - a[1].timestamp);
 
-**AFTER** (second review):
-```
-DB timeout → checkAccess throws error → Error screen with retry ✅
-```
+    const totalCal = todayTreats.reduce((s, [_, t]) => s + (t.calories || 0), 0);
+    const limit = dog.dailyCalorieLimit || 1000;
+    const remaining = limit - totalCal;
+    const pct = Math.min((totalCal / limit) * 100, 100);
+    const color = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-yellow-500' : 'bg-green-500';
 
-**BEFORE** (first fix):
-```
-OAuth redirect → router activates → Page changes during auth ❌
-```
+    Hub.utils.$('calorieProgress').innerHTML = `
+      <div class="flex justify-between mb-2">
+        <span class="text-sm text-gray-400">Daily Calories</span>
+        <span class="font-bold">${totalCal} / ${limit} cal</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill ${color}" style="width:${pct}%"></div>
+      </div>
+      <p class="text-sm mt-2 ${remaining > 0 ? 'text-green-400' : 'text-red-400'}">${remaining > 0 ? remaining + ' cal remaining' : 'Limit reached!'}</p>
+    `;
 
-**AFTER** (second review):
-```
-OAuth redirect → router blocked → Auth completes uninterrupted ✅
-```
+    // Today treats list
+    if (todayTreats.length === 0) {
+      Hub.utils.$('todayTreats').innerHTML = '<p class="text-gray-400">No treats logged today</p>';
+    } else {
+      Hub.utils.$('todayTreats').innerHTML = '<h3 class="font-bold mb-3">Today\'s Treats</h3>' +
+        todayTreats.map(([_, t]) => `
+          <div class="bg-gray-700 rounded-lg p-3 mb-2 flex justify-between items-center">
+            <div><p class="font-medium">${Hub.utils.esc(t.name)}</p><p class="text-sm text-gray-400">${t.calories} cal</p></div>
+            <span class="text-sm text-gray-400">${Hub.utils.formatTime(t.timestamp)}</span>
+          </div>
+        `).join('');
+    }
 
-## Files Changed (Second Pass)
+    // Last 7 days
+    this._renderWeekHistory(allTreats, limit);
+  },
 
-1. **app.js**: 
-   - Protected SIGNED_OUT handler
-   - Better error screen with retry
-   
-2. **supabase.js**:
-   - Differentiated errors vs authorization failures
-   - Better session logging
-   - Explicit timeout error handling
-   
-3. **router.js**: 
-   - Added `_loginInProgress` check to prevent routing during auth
+  /** Render 7-day history */
+  _renderWeekHistory(allTreats, limit) {
+    const el = Hub.utils.$('weekHistory');
+    if (!el) return;
+    const entries = Object.values(allTreats);
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const start = Hub.utils.daysAgo(i);
+      const end = start + 86400000;
+      const dayTreats = entries.filter(t => t.timestamp >= start && t.timestamp < end);
+      const total = dayTreats.reduce((s, t) => s + (t.calories || 0), 0);
+      const label = i === 0 ? 'Today' : i === 1 ? 'Yesterday' : new Date(start).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      days.push({ label, total });
+    }
 
-## Testing Priority
+    el.innerHTML = '<h3 class="font-bold mb-3">Last 7 Days</h3>' +
+      days.map(d => {
+        const pct = Math.min((d.total / limit) * 100, 100);
+        const c = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-yellow-500' : 'bg-blue-500';
+        return `<div class="flex items-center gap-3 mb-2">
+          <span class="text-xs text-gray-400 w-24 text-right">${Hub.utils.esc(d.label)}</span>
+          <div class="flex-1 progress-bar" style="height:.5rem"><div class="progress-fill ${c}" style="width:${pct}%;height:100%"></div></div>
+          <span class="text-xs text-gray-400 w-16">${d.total} cal</span>
+        </div>`;
+      }).join('');
+  },
 
-The most important scenarios to test after this fix:
+  /** Attach real-time listener for a dog's treats */
+  _attachRealtimeListener(dogId) {
+    if (!this.firebaseDb) return;
+    const ref = this.firebaseDb.ref(`treats/${dogId}`);
+    const cb = () => { this.loadTreats(dogId); };
+    ref.on('value', cb);
+    this._listeners.push({ ref, cb });
+  },
 
-1. **Slow/Unstable Network** 
-   - Use Chrome DevTools → Network → Slow 3G
-   - Should show error screen with retry, NOT bounce to login
+  /** Add a new dog */
+  async addDog() {
+    const name = Hub.utils.$('dogName').value.trim();
+    const cal = parseInt(Hub.utils.$('dogCalories').value) || 1000;
+    if (!name) return Hub.ui.toast('Enter a dog name', 'error');
 
-2. **Database Issues**
-   - Temporarily break Supabase connection
-   - Should show error message, NOT access denied
+    await this.firebaseDb.ref('dogs').push({ name, dailyCalorieLimit: cal });
+    Hub.utils.$('dogName').value = '';
+    Hub.utils.$('dogCalories').value = '1000';
+    Hub.ui.closeModal('addDogModal');
+    Hub.ui.toast(name + ' added!');
+    this.loadDogs();
+  },
 
-3. **OAuth Flow**
-   - After clicking "Sign in with Google"
-   - Page should not flash/change during redirect
-   - Should go straight from loading → dashboard
+  /** Log a treat */
+  async logTreat() {
+    if (!this.selectedDogId) return Hub.ui.toast('Select a dog first', 'error');
+    const name = Hub.utils.$('treatName').value.trim();
+    const cal = parseInt(Hub.utils.$('treatCalories').value);
+    if (!name || !cal) return Hub.ui.toast('Enter treat name and calories', 'error');
 
-4. **Session Expiry**
-   - Open app, wait for session to expire
-   - Refresh page
-   - Should re-authenticate smoothly
+    await this.firebaseDb.ref(`treats/${this.selectedDogId}`).push({
+      name, calories: cal, timestamp: Date.now(), dogId: this.selectedDogId
+    });
+    Hub.utils.$('treatName').value = '';
+    Hub.utils.$('treatCalories').value = '';
+    Hub.ui.closeModal('addTreatModal');
+    Hub.ui.toast('Treat logged!');
+    // Realtime listener will refresh
+  },
 
-## Confidence Level
+  /** Show add-dog modal */
+  showAddDog() { Hub.ui.openModal('addDogModal'); },
 
-**First Fix**: 70% - Would solve most race conditions but had gaps  
-**Second Review Fix**: 95% - Addresses all identified edge cases
+  /** Show add-treat modal */
+  showAddTreat() {
+    if (!this.selectedDogId) return Hub.ui.toast('Select a dog first', 'error');
+    Hub.ui.openModal('addTreatModal');
+  },
 
-The remaining 5% accounts for:
-- Potential Supabase SDK quirks
-- Browser-specific timing differences
-- Network conditions we can't predict
-- User-specific Supabase configuration issues
+  /** Render dog status widget for dashboard with circular gauge */
+  async renderDashboardWidget() {
+    const el = Hub.utils.$('dogStatusWidget');
+    if (!el) return;
 
-## Recommended Next Steps
+    if (!this.firebaseDb) {
+      this.init();
+      if (!this.firebaseDb) {
+        el.innerHTML = '<p class="text-gray-400 text-sm">Firebase not configured</p>';
+        return;
+      }
+    }
 
-1. Deploy the updated fix
-2. Test with Chrome DevTools network throttling
-3. Check browser console logs during login
-4. Monitor for any remaining issues
-5. If issues persist, run `Hub.debug.checkSupabase()` and share output
+    try {
+      // Load Barker's data from familyData
+      const snapshot = await this.firebaseDb.ref('familyData').once('value');
+      const familyData = snapshot.val();
+      
+      if (!familyData || !familyData.settings) {
+        el.innerHTML = '<p class="text-gray-400 text-sm">No dog data yet</p>';
+        return;
+      }
+
+      const dogName = familyData.settings.dogName || 'Barker';
+      const limit = familyData.settings.goalKcal || 1800;
+      const cups = familyData.settings.cups || 4;
+      const kcalPerCup = familyData.settings.kcalPerCup || 384;
+      
+      // Calculate food calories (cups × calories per cup)
+      const foodCalories = cups * kcalPerCup;
+      
+      // Calculate treats from items (these should be automatically added by recurring treats)
+      const items = familyData.items || [];
+      const treatCalories = items.reduce((sum, item) => {
+        const calories = (item.kcalPerUnit || 0) * (item.qty || 0);
+        return sum + calories;
+      }, 0);
+      
+      const totalCal = foodCalories + treatCalories;
+      const percent = Math.round((totalCal / limit) * 100);
+
+      // Color changes: green -> yellow -> orange -> red
+      let gaugeColor, statusText, statusIcon;
+      if (percent <= 50) {
+        gaugeColor = '#22c55e'; // Green
+        statusText = 'Great!';
+        statusIcon = '✓';
+      } else if (percent <= 75) {
+        gaugeColor = '#84cc16'; // Light green
+        statusText = 'Good';
+        statusIcon = '✓';
+      } else if (percent <= 90) {
+        gaugeColor = '#f59e0b'; // Orange
+        statusText = 'Getting Close';
+        statusIcon = '⚠';
+      } else if (percent <= 100) {
+        gaugeColor = '#fb923c'; // Dark orange
+        statusText = 'Almost There';
+        statusIcon = '⚠';
+      } else {
+        gaugeColor = '#ef4444'; // Red
+        statusText = 'Over Limit!';
+        statusIcon = '✗';
+      }
+
+      // Calculate arc for circular gauge
+      const radius = 45;
+      const circumference = 2 * Math.PI * radius;
+      const strokeDashoffset = circumference - (Math.min(percent, 100) / 100) * circumference;
+
+      el.innerHTML = `
+        <div>
+          <!-- Dog name and status -->
+          <div class="flex items-center justify-between mb-3">
+            <span class="font-semibold text-base">${Hub.utils.esc(dogName)}</span>
+            <span class="text-xs font-bold" style="color: ${gaugeColor};">${statusIcon} ${statusText}</span>
+          </div>
+          
+          <!-- Circular gauge -->
+          <div class="flex items-center gap-4">
+            <!-- SVG Gauge -->
+            <svg class="transform -rotate-90" width="120" height="120" viewBox="0 0 120 120">
+              <!-- Background circle -->
+              <circle
+                cx="60"
+                cy="60"
+                r="${radius}"
+                stroke="#374151"
+                stroke-width="10"
+                fill="none"
+              />
+              <!-- Progress arc -->
+              <circle
+                cx="60"
+                cy="60"
+                r="${radius}"
+                stroke="${gaugeColor}"
+                stroke-width="10"
+                fill="none"
+                stroke-linecap="round"
+                style="
+                  stroke-dasharray: ${circumference};
+                  stroke-dashoffset: ${strokeDashoffset};
+                  transition: stroke-dashoffset 0.5s ease, stroke 0.5s ease;
+                "
+              />
+              <!-- Center text -->
+              <text
+                x="60"
+                y="60"
+                text-anchor="middle"
+                dominant-baseline="middle"
+                class="transform rotate-90"
+                style="
+                  font-size: 24px;
+                  font-weight: 700;
+                  fill: ${gaugeColor};
+                  transform-origin: 60px 60px;
+                "
+              >${percent}%</text>
+            </svg>
+            
+            <!-- Stats -->
+            <div class="flex-1">
+              <p class="text-sm font-semibold mb-1">${Math.round(totalCal)} / ${limit} cal</p>
+              <p class="text-xs text-gray-400">Food: ${foodCalories} + Treats: ${Math.round(treatCalories)}</p>
+              ${percent > 100 ? `<p class="text-xs font-bold mt-1" style="color: ${gaugeColor};">+${Math.round(totalCal - limit)} over!</p>` : ''}
+            </div>
+          </div>
+        </div>
+      `;
+
+    } catch (e) {
+      console.error('[Treats] Error rendering dashboard widget:', e);
+      el.innerHTML = '<p class="text-gray-400 text-sm">Error loading dog status</p>';
+    }
+  },
+
+  /** Show quick add treat modal */
+  async showQuickAdd() {
+    if (!this.firebaseDb) {
+      this.init();
+      if (!this.firebaseDb) {
+        Hub.ui.toast('Firebase not configured', 'error');
+        return;
+      }
+    }
+
+    try {
+      // Load catalog from Firebase
+      const catalogSnap = await this.firebaseDb.ref('familyData/catalog').once('value');
+      const catalog = catalogSnap.val() || [];
+
+      if (!catalog.length) {
+        Hub.ui.toast('No treats in catalog', 'error');
+        return;
+      }
+
+      // Show modal with treat selection
+      const modal = document.createElement('div');
+      modal.className = 'fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4';
+      modal.innerHTML = `
+        <div class="bg-gray-800 rounded-xl p-6 max-w-md w-full max-h-[80vh] overflow-y-auto">
+          <h3 class="text-xl font-bold mb-4">Add Treat for Barker</h3>
+          <div class="space-y-2 mb-4">
+            ${catalog.map((treat, idx) => `
+              <button 
+                onclick="Hub.treats.addQuickTreat('${treat.id}', '${Hub.utils.esc(treat.name)}', ${treat.kcalPerUnit})"
+                class="w-full text-left px-4 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+              >
+                <div class="font-semibold">${Hub.utils.esc(treat.name)}</div>
+                <div class="text-sm text-gray-400">${treat.kcalPerUnit} cal per ${treat.unitLabel || 'unit'}</div>
+              </button>
+            `).join('')}
+          </div>
+          <button 
+            onclick="this.closest('.fixed').remove()"
+            class="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg"
+          >
+            Cancel
+          </button>
+        </div>
+      `;
+      document.body.appendChild(modal);
+    } catch (e) {
+      console.error('[Treats] Error showing quick add:', e);
+      Hub.ui.toast('Error loading treats', 'error');
+    }
+  },
+
+  /** Add a quick treat (default quantity 1) */
+  async addQuickTreat(treatId, treatName, calories) {
+    try {
+      // Get current items
+      const itemsSnap = await this.firebaseDb.ref('familyData/items').once('value');
+      const items = itemsSnap.val() || [];
+
+      // Find the treat in catalog for full details
+      const catalogSnap = await this.firebaseDb.ref('familyData/catalog').once('value');
+      const catalog = catalogSnap.val() || [];
+      const treat = catalog.find(t => t.id === treatId);
+
+      if (!treat) {
+        Hub.ui.toast('Treat not found', 'error');
+        return;
+      }
+
+      // Add new item
+      const newItem = {
+        id: Date.now().toString(),
+        catalogId: treatId,
+        name: treatName,
+        kcalPerUnit: calories,
+        qty: 1,
+        unitLabel: treat.unitLabel || 'unit',
+        step: treat.step || 1,
+        type: 'catalog',
+        imageUrl: treat.imageUrl || ''
+      };
+
+      items.push(newItem);
+      await this.firebaseDb.ref('familyData/items').set(items);
+
+      // Close modal
+      document.querySelectorAll('.fixed.inset-0').forEach(m => m.remove());
+
+      // Refresh dashboard
+      await this.renderDashboardWidget();
+      
+      Hub.ui.toast(`Added ${treatName} for Barker!`, 'success');
+    } catch (e) {
+      console.error('[Treats] Error adding treat:', e);
+      Hub.ui.toast('Error adding treat', 'error');
+    }
+  }
+};
