@@ -18,7 +18,7 @@ Hub.router = {
   /** Show auth screens (login/accessDenied) – hides all pages */
   showScreen(screen) {
     // CRITICAL: ABSOLUTELY refuse to show login if logged in
-    if (screen === 'login' && (Hub.app && Hub.app._loggedIn)) {
+    if (screen === 'login' && Hub.app?._loggedIn) {
       console.error('[Router] 🚨 BLOCKED showScreen(login) - USER IS LOGGED IN!');
       console.error('[Router] This should never happen - check your code!');
       console.trace(); // Show stack trace
@@ -27,9 +27,12 @@ Hub.router = {
 
     console.log('[Router] showScreen:', screen);
 
-    // IMPORTANT: Do NOT clear ?code= here.
-    // Supabase PKCE completes the OAuth exchange using that query param.
-    // Clearing it before the exchange finishes will strand users on the login screen.
+    // Clear any OAuth code from URL when showing login/denied screens
+    if (window.location.search.includes('code=')) {
+      const cleanUrl = window.location.origin + window.location.pathname + window.location.hash;
+      window.history.replaceState({}, document.title, cleanUrl);
+      console.log('[Router] OAuth code cleared from URL (stale code cleanup)');
+    }
 
     const $ = Hub.utils.$;
     
@@ -116,7 +119,7 @@ Hub.router = {
   init() {
     const handleHash = () => {
       // Don't route if user not authenticated OR if login is in progress
-      if (!Hub.state?.user || (Hub.app && Hub.app._loginInProgress)) {
+      if (!Hub.state?.user || Hub.app?._loginInProgress) {
         console.log('[Router] Blocked hashchange (no user or login in progress)');
         return;
       }

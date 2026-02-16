@@ -29,26 +29,46 @@ window.HOME_HUB_CONFIG = {
   immichBaseUrl: '',                    // e.g. http://192.168.1.100:2283
   immichSharedAlbumKeyOrToken: '',      // shared link key or API token
 
+  // === API BASE (leave empty for same-origin Cloudflare Pages Functions) ===
+  apiBase: '',
 
-  // === MEDIA (Music + Radio) ===
-  // YouTube Music embedding can be restricted; we default to YouTube playlist/video embed (reliable),
-  // and provide an optional YouTube Music iframe fallback.
-  youtubeMusic: {
-    mode: 'playlist',           // 'playlist' | 'video'
-    playlistId: '',             // e.g. 'PLxxxxxxxxxxxx'
-    videoId: '',                // e.g. 'dQw4w9WgXcQ' (only used if mode='video')
-    musicIframeUrl: 'https://music.youtube.com/' // optional fallback
+  // === MUSIC (YouTube Music / YouTube Playlists) ===
+  music: {
+    // Primary: YouTube Music (may be blocked in iframe)
+    youtubeMusic: 'https://music.youtube.com',
+    // Fallback: YouTube playlist embed
+    youtubePlaylistId: 'PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf', // Example: Top Hits
+    // Set to true to use playlist fallback instead of YouTube Music
+    usePlaylistFallback: false
   },
 
-  // Preferred: use real audio stream URLs for best performance + best Bluetooth support.
-  // Example stream URLs are not included here—add your own stations.
-  radioStations: [
-    // { id: 'station1', name: 'Example FM', url: 'https://example.com/stream.mp3', tagline: 'Pop / Hits' }
-  ],
-
-  // Optional iframe-based live radio page (only used if you set a URL)
-  radioIframeUrl: '',
-
-  // === API BASE (leave empty for same-origin Cloudflare Pages Functions) ===
-  apiBase: ''
+  // === RADIO STATIONS ===
+  radio: {
+    stations: [
+      {
+        name: 'NPR News',
+        streamUrl: 'https://npr-ice.streamguys1.com/live.mp3',
+        websiteUrl: 'https://www.npr.org',
+        logo: '📻'
+      },
+      {
+        name: 'Classical Music',
+        streamUrl: 'https://stream.wfmt.com/wfmt-hi',
+        websiteUrl: 'https://www.wfmt.com',
+        logo: '🎻'
+      },
+      {
+        name: 'Jazz 24',
+        streamUrl: 'https://live.wostreaming.net/direct/ppm-jazz24mp3-ibc1',
+        websiteUrl: 'https://jazz24.org',
+        logo: '🎷'
+      },
+      {
+        name: 'BBC World Service',
+        streamUrl: 'http://stream.live.vc.bbcmedia.co.uk/bbc_world_service',
+        websiteUrl: 'https://www.bbc.co.uk/sounds/play/live:bbc_world_service',
+        logo: '🌍'
+      }
+    ]
+  }
 };

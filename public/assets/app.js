@@ -32,15 +32,16 @@ Hub.app = {
   _loggedIn: false,
   _authHandled: false,
   _loginInProgress: false,
-  _oauthInProgress: false,
 
   async init() {
     console.log('[App] init()');
     this._bindUI();
     Hub.router.init();
-    Hub.player?.init?.();
     Hub.treats.init();
-    // Admin control panel must not initialize before auth; it depends on household_id.
+    Hub.player?.init?.();
+    Hub.radio?.init?.();
+    Hub.music?.init?.();
+    Hub.control?.init?.();
 
     // ── TEST BYPASS: visit /#letmein (DEV ONLY) ──
     if (window.location.hash === '#letmein') {
@@ -76,11 +77,6 @@ Hub.app = {
     // Skip SIGNED_IN — it fires DURING exchange when JWT isn't ready
     Hub.auth.onAuthChange(async (event, session) => {
       console.log('[Auth] Event:', event, session?.user?.email || 'no-user', 'loggedIn:', this._loggedIn);
-
-      // If we're returning from OAuth, Supabase PKCE may briefly report no session
-      // during the code exchange. Don't kick the user back to login in that window.
-      const oauthExchangeInProgress = window.location.search.includes('code=') || this._oauthInProgress;
-      if (window.location.search.includes('code=')) this._oauthInProgress = true;
 
       // CRITICAL: If already logged in, ignore all events except SIGNED_OUT
       if (this._loggedIn && event !== 'SIGNED_OUT') {
@@ -118,12 +114,9 @@ Hub.app = {
         return;
       }
 
-      // SIGNED_IN can be the first reliable event after OAuth code exchange.
-      // If we ignore it, users can get stranded on the login screen.
-      if (event === 'SIGNED_IN' && session?.user) {
-        console.log('[Auth] SIGNED_IN received — proceeding to login');
-        this._authHandled = true;
-        await this._onLogin(session.user);
+      // Skip SIGNED_IN — wait for INITIAL_SESSION
+      if (event === 'SIGNED_IN') {
+        console.log('[Auth] Ignoring SIGNED_IN (waiting for INITIAL_SESSION)');
         return;
       }
 
@@ -149,15 +142,6 @@ Hub.app = {
       }
 
       if (event === 'INITIAL_SESSION' && !session) {
-        // If OAuth exchange is in progress, keep the loading screen up and
-        // let the fallback session check handle it. Do NOT clear the code param.
-        if (oauthExchangeInProgress) {
-          console.log('[Auth] INITIAL_SESSION: no user BUT ?code= present — waiting for PKCE exchange');
-          const loading = document.getElementById('loadingScreen');
-          if (loading) loading.style.display = 'flex';
-          return;
-        }
-
         this._authHandled = true;
         console.log('[Auth] INITIAL_SESSION: no user → login');
         Hub.router.showScreen('login');
@@ -166,9 +150,8 @@ Hub.app = {
 
     // Fallback 1: 3s — try getSession manually
     setTimeout(async () => {
-      // If OAuth exchange is happening, we WANT this fallback to run.
-      if (this._loggedIn) {
-        console.log('[Auth] 3s fallback skipped (already logged in)');
+      if (this._loggedIn || this._authHandled || this._loginInProgress) {
+        console.log('[Auth] 3s fallback skipped (already handled)');
         return;
       }
       console.log('[Auth] 3s fallback — getSession()');
@@ -178,13 +161,7 @@ Hub.app = {
         if (session?.user && !this._loggedIn && !this._loginInProgress) {
           await this._onLogin(session.user);
         } else if (!this._loggedIn && !this._loginInProgress) {
-          // If we came back from OAuth but exchange still hasn't produced a session,
-          // keep waiting until the hard fallback.
-          if (!window.location.search.includes('code=')) {
-            Hub.router.showScreen('login');
-          } else {
-            console.log('[Auth] 3s fallback: still exchanging OAuth code — waiting');
-          }
+          Hub.router.showScreen('login');
         }
       } catch (e) {
         console.error('[Auth] 3s fallback error:', e);
@@ -205,13 +182,6 @@ Hub.app = {
           Hub.router.showScreen('login');
         }
       }
-
-      // If we were waiting on OAuth exchange, stop waiting after the hard timeout.
-      if (!this._loggedIn && window.location.search.includes('code=')) {
-        console.warn('[Auth] OAuth exchange timed out — showing login');
-        this._oauthInProgress = false;
-        Hub.router.showScreen('login');
-      }
     }, APP_CONFIG.AUTH_HARD_FALLBACK_MS);
 
     this._startIdleTimer();
@@ -225,7 +195,6 @@ Hub.app = {
     }
     
     this._loginInProgress = true;
-    this._oauthInProgress = false;
 
     try {
       console.log('[Auth] _onLogin:', user.email);
@@ -236,21 +205,8 @@ Hub.app = {
         return;
       }
       
-      // Access check can fail transiently (timeouts/network). Retry a few times and only deny on definitive false.
-      let allowed = null;
-      for (let i = 0; i < 3; i++) {
-        allowed = await Hub.auth.checkAccess(user);
-        console.log('[Auth] checkAccess →', allowed, '(attempt', (i + 1) + '/3)');
-        if (allowed === true || allowed === false) break;
-        await new Promise(r => setTimeout(r, 600 * (i + 1)));
-      }
-
-      if (allowed === null) {
-        console.warn('[Auth] checkAccess still transient after retries — keeping loading');
-        const loading = document.getElementById('loadingScreen');
-        if (loading) loading.style.display = 'flex';
-        return;
-      }
+      const allowed = await Hub.auth.checkAccess(user);
+      console.log('[Auth] checkAccess →', allowed);
 
       // Triple check - another tab could have completed login
       if (this._loggedIn) {
@@ -282,54 +238,22 @@ Hub.app = {
         Hub.state.settings = {};
       }
 
-      // Auto reset daily chores (server-side) — safe to call repeatedly
-      this._kickDailyChoreReset().catch(() => {});
-
       console.log('[Auth] ✓ Showing app');
+      
+      // Call chore reset endpoint (non-blocking fallback)
+      this._callChoreResetEndpoint().catch(e => 
+        console.warn('[App] Chore reset call failed:', e.message)
+      );
+      
       this._showApp();
     } catch (e) {
       console.error('[Auth] _onLogin error:', e);
-
-      // If a session still exists, don't bounce back to login over a recoverable error.
-      try {
-        const s = await Hub.auth.getSession();
-        if (s?.user) {
-          console.warn('[Auth] _onLogin error but session exists — continuing');
-          this._loggedIn = true;
-          Hub.state.user = s.user;
-          this._showApp();
-          return;
-        }
-      } catch (_) {}
-
       this._loggedIn = false;
       Hub.router.showScreen('login');
     } finally {
       this._loginInProgress = false;
     }
   },
-
-
-// Server-side daily reset (safe to call repeatedly).
-// Uses the signed-in user's JWT (RLS protected). No admin needed.
-async _kickDailyChoreReset() {
-  try {
-    const session = await Hub.auth.getSession();
-    const token = session?.access_token;
-    const res = await fetch(Hub.utils.apiBase() + '/chores-reset-my-household', {
-      method: 'POST',
-      headers: token ? { 'Authorization': 'Bearer ' + token } : {}
-    });
-    if (!res.ok) {
-      const txt = await res.text().catch(() => '');
-      console.warn('[ChoresReset] Non-OK:', res.status, txt);
-    } else {
-      console.log('[ChoresReset] OK');
-    }
-  } catch (e) {
-    console.warn('[ChoresReset] Error:', e.message);
-  }
-}
 
   _showApp() {
     console.log('[Auth] _showApp called');
@@ -372,12 +296,6 @@ async _kickDailyChoreReset() {
 
     Hub.router.current = page;
     console.log('[Auth] Page:', page);
-
-    // Init admin controls AFTER household_id + role exist.
-    if (Hub.control && typeof Hub.control.initAfterLogin === 'function') {
-      Hub.control.initAfterLogin();
-    }
-
     this.onPageEnter(page);
   },
 
@@ -395,9 +313,14 @@ async _kickDailyChoreReset() {
         Hub.chores.renderStats?.('choresStats', 7).catch?.(() => {});
         break;
       case 'treats':    Hub.treats.loadDogs(); break;
-      case 'music':     Hub.music?.load?.(); break;
-      case 'radio':     Hub.radio?.load?.(); break;
       case 'standby':   Hub.standby.start(); break;
+      case 'music':
+        Hub.music?.onEnter?.();
+        Hub.music?.renderBluetoothHelp?.();
+        break;
+      case 'radio':
+        Hub.radio?.onEnter?.();
+        break;
       case 'settings':  this._loadSettingsForm(); break;
       case 'status':    this._loadStatusPage(); break;
       case 'control':   Hub.control?.load?.(); break;
@@ -434,10 +357,10 @@ async _kickDailyChoreReset() {
     if (Hub.immich && typeof Hub.immich.renderDashboardWidget === 'function') {
       Hub.immich.renderDashboardWidget().catch(e => console.warn('[Dashboard] Photos error:', e));
     }
-
-    // Now Playing widget
-    if (Hub.player && typeof Hub.player.renderDashboardWidget === 'function') {
-      Hub.player.renderDashboardWidget();
+    
+    // Update Now Playing widget
+    if (Hub.player) {
+      Hub.player.updateUI();
     }
   },
 
@@ -768,6 +691,23 @@ async _kickDailyChoreReset() {
     this._idleTimer = setTimeout(() => {
       if (Hub.router.current !== 'standby' && Hub.state.user) Hub.router.go('standby');
     }, timeout);
+  },
+
+  async _callChoreResetEndpoint() {
+    if (!Hub.state.household_id) return;
+    try {
+      const apiBase = window.HOME_HUB_CONFIG?.apiBase || '';
+      const response = await fetch(`${apiBase}/api/cron-chores-reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const result = await response.json();
+      if (result.processed > 0 && Hub.router.current === 'chores') {
+        Hub.chores?.load?.();
+      }
+    } catch (error) {
+      console.error('[App] Chore reset endpoint error:', error);
+    }
   }
 };
 

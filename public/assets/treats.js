@@ -202,136 +202,130 @@ Hub.treats = {
     try {
       // Load Barker's data from familyData
       const snapshot = await this.firebaseDb.ref('familyData').once('value');
-      const familyData = snapshot.val() || {};
-      const settings = familyData.settings || {};
-      const dogName = settings.dogName || 'Barker';
-      const limit = Number(settings.dailyLimit || 200);
-      const photoUrl = settings.dogPhotoUrl || 'https://images.unsplash.com/photo-1517849845537-4d257902454a?w=800&auto=format&fit=crop&q=60';
+      const familyData = snapshot.val();
+      
+      if (!familyData || !familyData.settings) {
+        el.innerHTML = '<p class="text-gray-400 text-sm">No dog data yet</p>';
+        return;
+      }
 
-      // Items array (treat logs)
-      const items = Array.isArray(familyData.items) ? familyData.items : [];
+      const dogName = familyData.settings.dogName || 'Barker';
+      const limit = familyData.settings.goalKcal || 1800;
+      const cups = familyData.settings.cups || 4;
+      const kcalPerCup = familyData.settings.kcalPerCup || 384;
+      
+      // Calculate food calories (cups × calories per cup)
+      const foodCalories = cups * kcalPerCup;
+      
+      // Calculate treats from items (these should be automatically added by recurring treats)
+      const items = familyData.items || [];
+      const treatCalories = items.reduce((sum, item) => {
+        const calories = (item.kcalPerUnit || 0) * (item.qty || 0);
+        return sum + calories;
+      }, 0);
+      
+      const totalCal = foodCalories + treatCalories;
+      const percent = Math.round((totalCal / limit) * 100);
 
-      // Get timestamp (supports old entries)
-      const getTs = (it) => {
-        if (!it) return 0;
-        if (typeof it.ts === 'number') return it.ts;
-        if (it.timestamp) {
-          const t = Date.parse(it.timestamp);
-          if (!isNaN(t)) return t;
-        }
-        // Old items used id = Date.now().toString()
-        if (it.id && /^\d+$/.test(it.id)) return parseInt(it.id, 10);
-        return 0;
-      };
+      // Color changes: green -> yellow -> orange -> red
+      let gaugeColor, statusText, statusIcon;
+      if (percent <= 50) {
+        gaugeColor = '#22c55e'; // Green
+        statusText = 'Great!';
+        statusIcon = '✓';
+      } else if (percent <= 75) {
+        gaugeColor = '#84cc16'; // Light green
+        statusText = 'Good';
+        statusIcon = '✓';
+      } else if (percent <= 90) {
+        gaugeColor = '#f59e0b'; // Orange
+        statusText = 'Getting Close';
+        statusIcon = '⚠';
+      } else if (percent <= 100) {
+        gaugeColor = '#fb923c'; // Dark orange
+        statusText = 'Almost There';
+        statusIcon = '⚠';
+      } else {
+        gaugeColor = '#ef4444'; // Red
+        statusText = 'Over Limit!';
+        statusIcon = '✗';
+      }
 
-      // Filter to today only
-      const now = new Date();
-      const start = new Date(now);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(now);
-      end.setHours(23, 59, 59, 999);
-
-      const itemsToday = items
-        .map(it => ({ ...it, _ts: getTs(it) }))
-        .filter(it => it._ts >= start.getTime() && it._ts <= end.getTime());
-
-      const totalCal = itemsToday.reduce((sum, item) => sum + (Number(item.kcalPerUnit || 0) * Number(item.qty || 1)), 0);
-      const pct = limit > 0 ? Math.min(100, Math.round((totalCal / limit) * 100)) : 0;
-      const remaining = Math.max(0, limit - totalCal);
-
-      const gaugeColor = pct >= 100 ? '#f87171' : pct >= 80 ? '#fbbf24' : '#34d399';
-
-      const recent = itemsToday.slice(-5).reverse();
-      const fmtTime = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-
-      const historyHtml = recent.length ? `
-        <div class="mt-4 pt-4 border-t border-white/10">
-          <h4 class="text-sm font-semibold mb-2 text-amber-300">🍖 Treat history (today)</h4>
-          <div class="space-y-2">
-            ${recent.map(it => `
-              <div class="flex items-center justify-between text-sm p-2 rounded-xl border border-white/10 bg-white/5">
-                <div class="min-w-0 pr-3">
-                  <p class="font-semibold truncate">${Hub.utils.esc(it.label || it.name || 'Treat')}</p>
-                  <p class="text-xs text-gray-400 mt-0.5">${fmtTime(it._ts)}</p>
-                </div>
-                <div class="text-right">
-                  <p class="text-xs text-gray-400">${Number(it.qty || 1)} × ${Number(it.kcalPerUnit || 0)} kcal</p>
-                  <p class="text-sm font-semibold text-amber-200">${Math.round(Number(it.qty || 1) * Number(it.kcalPerUnit || 0))} kcal</p>
-                </div>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      ` : `
-        <div class="mt-4 pt-4 border-t border-white/10">
-          <p class="text-sm text-gray-400">No treats logged today yet.</p>
-        </div>
-      `;
+      // Calculate arc for circular gauge
+      const radius = 45;
+      const circumference = 2 * Math.PI * radius;
+      const strokeDashoffset = circumference - (Math.min(percent, 100) / 100) * circumference;
 
       el.innerHTML = `
-        <div class="flex items-center gap-4">
-          <img src="${photoUrl}" alt="${dogName}" class="w-16 h-16 rounded-2xl object-cover border border-white/10">
-          <div class="flex-1 min-w-0">
-            <p class="text-sm text-gray-400">Today's calories</p>
-            <p class="text-2xl font-bold">${Math.round(totalCal)} <span class="text-sm text-gray-400">/ ${limit} kcal</span></p>
-            <p class="text-xs text-gray-400 mt-1">${remaining} kcal remaining</p>
+        <div>
+          <!-- Dog name and status -->
+          <div class="flex items-center justify-between mb-3">
+            <span class="font-semibold text-base">${Hub.utils.esc(dogName)}</span>
+            <span class="text-xs font-bold" style="color: ${gaugeColor};">${statusIcon} ${statusText}</span>
           </div>
-
-          <div class="w-20 h-20 relative">
-            <svg class="w-20 h-20" viewBox="0 0 36 36">
-              <defs>
-                <linearGradient id="hhDogGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#fb923c" />
-                  <stop offset="100%" stop-color="#fbbf24" />
-                </linearGradient>
-              </defs>
-              <path d="M18 2.0845
-                a 15.9155 15.9155 0 0 1 0 31.831
-                a 15.9155 15.9155 0 0 1 0 -31.831"
+          
+          <!-- Circular gauge -->
+          <div class="flex items-center gap-4">
+            <!-- SVG Gauge -->
+            <svg class="transform -rotate-90" width="120" height="120" viewBox="0 0 120 120">
+              <!-- Background circle -->
+              <circle
+                cx="60"
+                cy="60"
+                r="${radius}"
+                stroke="#374151"
+                stroke-width="10"
                 fill="none"
-                stroke="rgba(255,255,255,0.12)"
-                stroke-width="4"
               />
-              <path d="M18 2.0845
-                a 15.9155 15.9155 0 0 1 0 31.831
-                a 15.9155 15.9155 0 0 1 0 -31.831"
+              <!-- Progress arc -->
+              <circle
+                cx="60"
+                cy="60"
+                r="${radius}"
+                stroke="${gaugeColor}"
+                stroke-width="10"
                 fill="none"
-                stroke="url(#hhDogGrad)"
-                stroke-width="4"
                 stroke-linecap="round"
-                stroke-dasharray="${pct}, 100"
+                style="
+                  stroke-dasharray: ${circumference};
+                  stroke-dashoffset: ${strokeDashoffset};
+                  transition: stroke-dashoffset 0.5s ease, stroke 0.5s ease;
+                "
               />
+              <!-- Center text -->
+              <text
+                x="60"
+                y="60"
+                text-anchor="middle"
+                dominant-baseline="middle"
+                class="transform rotate-90"
+                style="
+                  font-size: 24px;
+                  font-weight: 700;
+                  fill: ${gaugeColor};
+                  transform-origin: 60px 60px;
+                "
+              >${percent}%</text>
             </svg>
-            <div class="absolute inset-0 flex items-center justify-center">
-              <div class="text-center">
-                <p class="text-sm font-bold" style="color:${gaugeColor};">${pct}%</p>
-                ${pct >= 100 ? `<p class="text-[10px] font-bold mt-0.5" style="color:${gaugeColor};">OVER</p>` : `<p class="text-[10px] text-gray-400 mt-0.5">OK</p>`}
-              </div>
+            
+            <!-- Stats -->
+            <div class="flex-1">
+              <p class="text-sm font-semibold mb-1">${Math.round(totalCal)} / ${limit} cal</p>
+              <p class="text-xs text-gray-400">Food: ${foodCalories} + Treats: ${Math.round(treatCalories)}</p>
+              ${percent > 100 ? `<p class="text-xs font-bold mt-1" style="color: ${gaugeColor};">+${Math.round(totalCal - limit)} over!</p>` : ''}
             </div>
           </div>
         </div>
-
-        <div class="mt-4">
-          <button onclick="Hub.treats.showQuickAdd()" class="btn btn-primary w-full justify-center">🍖 Quick Add Treat</button>
-        </div>
-
-        ${historyHtml}
       `;
-
-      // Celebration when hitting 100%
-      if (pct === 100 && Hub.ui && Hub.ui.confettiBurst) {
-        try {
-          const r = el.getBoundingClientRect();
-          Hub.ui.confettiBurst(r.left + r.width * 0.65, r.top + r.height * 0.35, 22);
-        } catch (_) {}
-      }
 
     } catch (e) {
       console.error('[Treats] Error rendering dashboard widget:', e);
       el.innerHTML = '<p class="text-gray-400 text-sm">Error loading dog status</p>';
     }
   },
-async showQuickAdd() {
+
+  /** Show quick add treat modal */
+  async showQuickAdd() {
     if (!this.firebaseDb) {
       this.init();
       if (!this.firebaseDb) {
@@ -399,12 +393,9 @@ async showQuickAdd() {
         return;
       }
 
-      const now = Date.now();
       // Add new item
       const newItem = {
-        id: now.toString(),
-        ts: now,
-        timestamp: new Date(now).toISOString(),
+        id: Date.now().toString(),
         catalogId: treatId,
         name: treatName,
         kcalPerUnit: calories,

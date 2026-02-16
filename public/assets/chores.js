@@ -13,6 +13,30 @@ window.Hub = window.Hub || {};
 Hub.chores = {
   familyMembers: ['Will', 'Lyla', 'Erin', 'Mark'],
 
+
+  _createConfetti(x, y) {
+    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
+    for (let i = 0; i < 15; i++) {
+      const particle = document.createElement('div');
+      particle.style.cssText = `
+        position: fixed; left: ${x}px; top: ${y}px;
+        width: 8px; height: 8px;
+        background: ${colors[Math.floor(Math.random() * colors.length)]};
+        border-radius: 50%; pointer-events: none; z-index: 10000;
+        transition: all 0.8s ease-out;
+      `;
+      const tx = (Math.random() - 0.5) * 200;
+      const ty = Math.random() * -200 - 50;
+      setTimeout(() => {
+        particle.style.transform = `translate(${tx}px, ${ty}px)`;
+        particle.style.opacity = '0';
+      }, 10);
+      document.body.appendChild(particle);
+      setTimeout(() => particle.remove(), 900);
+    }
+  },
+
+
   // Day mapping: category string → JS getDay() value (0=Sun, 1=Mon … 6=Sat)
   DAY_MAP: {
     'Daily': null,
@@ -47,10 +71,13 @@ Hub.chores = {
 
       // Filter today's chores — supports both old schema (no category) and new schema
       var todayAll = chores.filter(function (c) {
+        // New schema: has category column
         if (c.category === 'Daily') return true;
         if (typeof c.day_of_week === 'number' && c.day_of_week === today) return true;
+        // Fallback: parse category string for day_of_week
         if (c.day_of_week == null && c.category && Hub.chores.DAY_MAP[c.category] === today) return true;
-        if (c.category == null && c.day_of_week == null) return true; // old schema fallback
+        // Old schema: no category at all — show all pending chores
+        if (c.category == null && c.day_of_week == null) return true;
         return false;
       });
 
@@ -71,7 +98,7 @@ Hub.chores = {
           '<span>' + doneCount + ' of ' + todayAll.length + ' done</span>' +
           '<span>' + pct + '%</span>' +
         '</div>' +
-        '<div class="progress-bar" style="height:0.45rem;">' +
+        '<div class="progress-bar" style="height:0.4rem;">' +
           '<div class="progress-fill ' + progressColor + '" style="width:' + pct + '%"></div>' +
         '</div>' +
       '</div>';
@@ -82,28 +109,21 @@ Hub.chores = {
         return;
       }
 
-      html += '<div class="space-y-2">';
-      html += todayPending.slice(0, 6).map(function (c) {
-        var isDaily = c.category === 'Daily';
-        var dot = isDaily ? '🔵' : '🟣';
-        var label = isDaily ? 'daily' : (typeof c.day_of_week === 'number' ? Hub.chores.DAYS[c.day_of_week].split(' ')[0].toLowerCase() : 'weekly');
-        return '<div class="hh-group flex items-center justify-between gap-3 p-3 rounded-2xl border border-white/10 bg-white/5">' +
-          '<div class="flex-1 min-w-0">' +
+      html += todayPending.slice(0, 5).map(function (c) {
+        return '<div class="flex items-center justify-between py-3 border-b border-gray-700 last:border-0">' +
+          '<div class="flex-1 min-w-0 pr-3">' +
             '<p class="text-sm font-semibold truncate">' + Hub.utils.esc(c.title) + '</p>' +
-            '<p class="text-xs text-gray-400 mt-1">' + dot + ' ' + Hub.utils.esc(label) + '</p>' +
+            '<p class="text-xs text-gray-500">' + Hub.utils.esc(c.category || c.priority || 'General') + '</p>' +
           '</div>' +
-          '<div class="flex items-center gap-2 flex-shrink-0">' +
-            '<button onclick="Hub.chores.quickComplete(\'' + c.id + '\', event)" class="btn btn-primary text-xs py-2 px-3">Done</button>' +
-            '<div class="hh-actions flex gap-2">' +
-              '<button onclick="Hub.chores.editChore(\'' + c.id + '\')" class="btn btn-secondary text-xs py-2 px-3" title="Edit">✏️</button>' +
-            '</div>' +
-          '</div>' +
+          '<button onclick="Hub.chores.quickComplete(\'' + c.id + '\')" ' +
+            'class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs rounded-lg font-semibold transition-colors flex-shrink-0">' +
+            'Done' +
+          '</button>' +
         '</div>';
       }).join('');
-      html += '</div>';
 
-      if (todayPending.length > 6) {
-        html += '<p class="text-xs text-gray-500 mt-3 text-center">+' + (todayPending.length - 6) + ' more</p>';
+      if (todayPending.length > 5) {
+        html += '<p class="text-xs text-gray-500 mt-2 text-center">+' + (todayPending.length - 5) + ' more</p>';
       }
 
       el.innerHTML = html;
@@ -113,59 +133,12 @@ Hub.chores = {
     }
   },
 
-  /** Render chore completion stats leaderboard (uses chore_logs notes parsing) */
-  async renderStats(elId, days) {
-    const el = Hub.utils.$(elId);
-    if (!el || !Hub.state.household_id) return;
-    const lookbackDays = days || 7;
-    const since = new Date(Date.now() - lookbackDays * 86400000).toISOString();
-
-    try {
-      const logs = await Hub.db.loadChoreLogs(Hub.state.household_id, since);
-      const counts = {};
-      logs.forEach(l => {
-        const n = (l.notes || '').match(/Completed by (.+)$/i);
-        const name = n ? n[1].trim() : 'Unknown';
-        counts[name] = (counts[name] || 0) + 1;
-      });
-
-      const rows = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,5);
-      if (!rows.length) {
-        el.innerHTML = '<p class="text-xs hh-muted">No completions logged yet.</p>';
-        return;
-      }
-
-      el.innerHTML =
-        '<div class="flex items-center justify-between mb-2">' +
-          '<p class="text-sm font-semibold">This week</p>' +
-          '<p class="text-xs hh-muted">Top helpers</p>' +
-        '</div>' +
-        '<div class="space-y-2">' +
-          rows.map(([name,count], i) => (
-            '<div class="flex items-center justify-between text-sm p-2 rounded-xl border border-white/10 bg-white/5">' +
-              '<span class="truncate pr-3">' + (i===0?'🏆 ':'') + Hub.utils.esc(name) + '</span>' +
-              '<span class="hh-muted text-xs">' + count + '</span>' +
-            '</div>'
-          )).join('') +
-        '</div>';
-    } catch (e) {
-      console.warn('[Chores] Stats error:', e);
-      el.innerHTML = '<p class="text-xs hh-muted">Stats unavailable.</p>';
-    }
-  },
-
-/** Quick complete from dashboard — asks who did it */
-  async quickComplete(choreId, evt) {
+  /** Quick complete from dashboard — asks who did it */
+  async quickComplete(choreId) {
     var name = await this.askWhoDidIt();
     if (!name) return;
     await this.markDone(choreId, name);
     await this.renderDashboard();
-    try {
-      if (evt && Hub.ui && Hub.ui.confettiBurst) {
-        const r = evt.target?.getBoundingClientRect?.();
-        if (r) Hub.ui.confettiBurst(r.left + r.width/2, r.top + r.height/2, 16);
-      }
-    } catch (_) {}
     Hub.ui.toast('Chore completed by ' + name + '!', 'success');
   },
 
@@ -179,7 +152,7 @@ Hub.chores = {
       var cleanup = function (value) { modal.remove(); resolve(value); };
 
       modal.innerHTML =
-        '<div class="hh-glass p-8 max-w-md w-full shadow-2xl border border-white/10">' +
+        '<div class="bg-gray-800 rounded-xl p-8 max-w-md w-full shadow-2xl border border-gray-700">' +
           '<h3 class="text-2xl font-bold mb-6 text-center">Who did this chore?</h3>' +
           '<div class="space-y-3" id="_whoButtons"></div>' +
           '<button id="_whoCancel" class="w-full mt-4 px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-xl font-semibold transition-colors">Cancel</button>' +
@@ -235,18 +208,10 @@ Hub.chores = {
         var pending = list.filter(function (c) { return c.status !== 'done'; });
         var done = list.filter(function (c) { return c.status === 'done'; });
 
-        var pct = list.length ? Math.round((done.length / list.length) * 100) : 0;
-        var barColor = pct === 100 ? 'bg-green-500' : pct >= 50 ? 'bg-blue-500' : 'bg-yellow-500';
-
         return '<div class="mb-8">' +
-          '<div class="flex items-center justify-between mb-2">' +
+          '<div class="flex items-center justify-between mb-4">' +
             '<h2 class="text-2xl font-bold">' + Hub.utils.esc(category) + '</h2>' +
             '<span class="text-sm text-gray-400">' + pending.length + ' pending / ' + list.length + ' total</span>' +
-          '</div>' +
-          '<div class="mb-4">' +
-            '<div class="progress-bar" style="height:0.45rem;">' +
-              '<div class="progress-fill ' + barColor + '" style="width:' + pct + '%"></div>' +
-            '</div>' +
           '</div>' +
           '<div class="space-y-3">' +
             [].concat(pending, done).map(function (c) { return self._renderChoreCard(c); }).join('') +
@@ -259,16 +224,9 @@ Hub.chores = {
     }
   },
 
-    /** Render a single chore card */
+  /** Render a single chore card */
   _renderChoreCard(c) {
     var isDone = c.status === 'done';
-
-    var rec = '';
-    if (c.category === 'Daily') rec = '🔵 daily';
-    else if (typeof c.day_of_week === 'number') rec = '🟣 ' + (this.DAYS[c.day_of_week] || 'weekly');
-    else if (c.category) rec = '🟣 ' + c.category;
-    else rec = '🟣 weekly';
-
     var completerHtml = '';
     if (isDone && c.completed_by_name) {
       completerHtml = '<p class="text-sm text-green-400 mt-2">✓ Completed by ' + Hub.utils.esc(c.completed_by_name) + '</p>';
@@ -276,34 +234,33 @@ Hub.chores = {
       completerHtml = '<p class="text-sm text-green-400 mt-2">✓ Completed by ' + Hub.utils.esc(c.completer_email) + '</p>';
     }
 
-    return '<div class="card hh-group ' + (isDone ? 'opacity-60' : '') + '">' +
+    return '<div class="card ' + (isDone ? 'opacity-60 bg-gray-800' : '') + '">' +
       '<div class="flex items-start justify-between gap-4">' +
         '<div class="flex-1 min-w-0">' +
           '<div class="flex items-start gap-3">' +
             '<input type="checkbox" ' + (isDone ? 'checked' : '') +
               ' onchange="Hub.chores.toggleChore(\'' + c.id + '\', this.checked, this)"' +
-              ' class="hh-check mt-1 w-5 h-5 rounded border-white/20 bg-white/5 checked:bg-green-600 cursor-pointer flex-shrink-0">' +
-            '<div class="flex-1 min-w-0">' +
-              '<div class="flex items-start justify-between gap-3">' +
-                '<div class="min-w-0">' +
-                  '<h3 class="text-lg font-semibold ' + (isDone ? 'line-through text-gray-500' : '') + '">' + Hub.utils.esc(c.title) + '</h3>' +
-                  (c.description ? '<p class="text-gray-400 text-sm mt-1">' + Hub.utils.esc(c.description) + '</p>' : '') +
-                  '<p class="text-xs text-gray-400 mt-2">' + Hub.utils.esc(rec) + '</p>' +
-                '</div>' +
-                '<div class="hh-actions flex gap-2 flex-shrink-0">' +
-                  '<button onclick="Hub.chores.editChore(\'' + c.id + '\')" class="btn btn-secondary text-xs py-2 px-3" title="Edit">✏️</button>' +
-                  '<button onclick="Hub.chores.remove(\'' + c.id + '\')" class="btn btn-danger text-xs py-2 px-3" title="Delete">🗑️</button>' +
-                '</div>' +
+              ' class="mt-1 w-5 h-5 rounded border-gray-600 bg-gray-700 checked:bg-green-600 cursor-pointer flex-shrink-0">' +
+            '<div class="flex-1">' +
+              '<h3 class="text-lg font-semibold ' + (isDone ? 'line-through text-gray-500' : '') + '">' + Hub.utils.esc(c.title) + '</h3>' +
+              (c.description ? '<p class="text-gray-400 text-sm mt-1">' + Hub.utils.esc(c.description) + '</p>' : '') +
+              '<div class="flex gap-2 mt-2">' +
+                (c.recurrence ? '<span class="inline-block px-2 py-1 rounded text-xs bg-blue-600">' + Hub.utils.esc(c.recurrence) + '</span>' : '') +
+                (c.priority ? '<span class="inline-block px-2 py-1 rounded text-xs bg-gray-600">' + Hub.utils.esc(c.priority) + '</span>' : '') +
               '</div>' +
               completerHtml +
             '</div>' +
           '</div>' +
         '</div>' +
+        '<div class="flex gap-2 flex-shrink-0">' +
+          '<button onclick="Hub.chores.editChore(\'' + c.id + '\')" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg font-semibold transition-colors" title="Edit">✏️</button>' +
+          '<button onclick="Hub.chores.remove(\'' + c.id + '\')" class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded-lg font-semibold transition-colors" title="Delete">🗑️</button>' +
+        '</div>' +
       '</div>' +
     '</div>';
   },
 
-/** Toggle chore completion via checkbox */
+  /** Toggle chore completion via checkbox */
   async toggleChore(choreId, checked, checkbox) {
     if (checked) {
       var name = await this.askWhoDidIt();
@@ -312,12 +269,6 @@ Hub.chores = {
         return;
       }
       await this.markDone(choreId, name);
-      try {
-        if (checkbox && Hub.ui && Hub.ui.confettiBurst) {
-          const r = checkbox.getBoundingClientRect();
-          Hub.ui.confettiBurst(r.left + r.width/2, r.top + r.height/2, 18);
-        }
-      } catch (_) {}
     } else {
       await Hub.db.updateChore(choreId, { status: 'pending', completed_by_name: null });
     }
