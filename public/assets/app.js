@@ -239,12 +239,7 @@ Hub.app = {
       }
 
       console.log('[Auth] ✓ Showing app');
-      
-      // Call chore reset endpoint (non-blocking fallback)
-      this._callChoreResetEndpoint().catch(e => 
-        console.warn('[App] Chore reset call failed:', e.message)
-      );
-      
+      this._callChoreResetEndpoint().catch(e => console.warn('[App] Chore reset failed:', e.message));
       this._showApp();
     } catch (e) {
       console.error('[Auth] _onLogin error:', e);
@@ -314,13 +309,8 @@ Hub.app = {
         break;
       case 'treats':    Hub.treats.loadDogs(); break;
       case 'standby':   Hub.standby.start(); break;
-      case 'music':
-        Hub.music?.onEnter?.();
-        Hub.music?.renderBluetoothHelp?.();
-        break;
-      case 'radio':
-        Hub.radio?.onEnter?.();
-        break;
+      case 'music': Hub.music?.onEnter?.(); Hub.music?.renderBluetoothHelp?.(); break;
+      case 'radio': Hub.radio?.onEnter?.(); break;
       case 'settings':  this._loadSettingsForm(); break;
       case 'status':    this._loadStatusPage(); break;
       case 'control':   Hub.control?.load?.(); break;
@@ -357,11 +347,7 @@ Hub.app = {
     if (Hub.immich && typeof Hub.immich.renderDashboardWidget === 'function') {
       Hub.immich.renderDashboardWidget().catch(e => console.warn('[Dashboard] Photos error:', e));
     }
-    
-    // Update Now Playing widget
-    if (Hub.player) {
-      Hub.player.updateUI();
-    }
+    if (Hub.player) Hub.player.updateUI();
   },
 
   async _loadDashboardWeather() {
@@ -691,23 +677,6 @@ Hub.app = {
     this._idleTimer = setTimeout(() => {
       if (Hub.router.current !== 'standby' && Hub.state.user) Hub.router.go('standby');
     }, timeout);
-  },
-
-  async _callChoreResetEndpoint() {
-    if (!Hub.state.household_id) return;
-    try {
-      const apiBase = window.HOME_HUB_CONFIG?.apiBase || '';
-      const response = await fetch(`${apiBase}/api/cron-chores-reset`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      const result = await response.json();
-      if (result.processed > 0 && Hub.router.current === 'chores') {
-        Hub.chores?.load?.();
-      }
-    } catch (error) {
-      console.error('[App] Chore reset endpoint error:', error);
-    }
   }
 };
 

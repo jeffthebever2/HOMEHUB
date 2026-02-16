@@ -11,31 +11,20 @@
 window.Hub = window.Hub || {};
 
 Hub.chores = {
-  familyMembers: ['Will', 'Lyla', 'Erin', 'Mark'],
-
-
   _createConfetti(x, y) {
     const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
     for (let i = 0; i < 15; i++) {
       const particle = document.createElement('div');
-      particle.style.cssText = `
-        position: fixed; left: ${x}px; top: ${y}px;
-        width: 8px; height: 8px;
-        background: ${colors[Math.floor(Math.random() * colors.length)]};
-        border-radius: 50%; pointer-events: none; z-index: 10000;
-        transition: all 0.8s ease-out;
-      `;
+      particle.style.cssText = `position: fixed; left: ${x}px; top: ${y}px; width: 8px; height: 8px; background: ${colors[Math.floor(Math.random() * colors.length)]}; border-radius: 50%; pointer-events: none; z-index: 10000; transition: all 0.8s ease-out;`;
       const tx = (Math.random() - 0.5) * 200;
       const ty = Math.random() * -200 - 50;
-      setTimeout(() => {
-        particle.style.transform = `translate(${tx}px, ${ty}px)`;
-        particle.style.opacity = '0';
-      }, 10);
+      setTimeout(() => { particle.style.transform = `translate(${tx}px, ${ty}px)`; particle.style.opacity = '0'; }, 10);
       document.body.appendChild(particle);
       setTimeout(() => particle.remove(), 900);
     }
   },
 
+  familyMembers: ['Will', 'Lyla', 'Erin', 'Mark'],
 
   // Day mapping: category string → JS getDay() value (0=Sun, 1=Mon … 6=Sat)
   DAY_MAP: {
@@ -138,6 +127,12 @@ Hub.chores = {
     var name = await this.askWhoDidIt();
     if (!name) return;
     await this.markDone(choreId, name);
+      // Trigger confetti
+      const el = event?.target?.closest('.chore-item');
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        this._createConfetti(rect.left + rect.width/2, rect.top + rect.height/2);
+      }
     await this.renderDashboard();
     Hub.ui.toast('Chore completed by ' + name + '!', 'success');
   },
@@ -269,6 +264,12 @@ Hub.chores = {
         return;
       }
       await this.markDone(choreId, name);
+      // Trigger confetti
+      const el = event?.target?.closest('.chore-item');
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        this._createConfetti(rect.left + rect.width/2, rect.top + rect.height/2);
+      }
     } else {
       await Hub.db.updateChore(choreId, { status: 'pending', completed_by_name: null });
     }
