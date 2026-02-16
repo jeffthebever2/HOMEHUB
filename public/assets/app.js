@@ -239,7 +239,6 @@ Hub.app = {
       }
 
       console.log('[Auth] ✓ Showing app');
-      this._callChoreResetEndpoint().catch(e => console.warn('[App] Chore reset failed:', e.message));
       this._showApp();
     } catch (e) {
       console.error('[Auth] _onLogin error:', e);
@@ -677,6 +676,34 @@ Hub.app = {
     this._idleTimer = setTimeout(() => {
       if (Hub.router.current !== 'standby' && Hub.state.user) Hub.router.go('standby');
     }, timeout);
+  },
+
+  /** Call chore reset endpoint (client fallback) */
+  async _callChoreResetEndpoint() {
+    if (!Hub.state.household_id) {
+      console.log('[App] Skip chore reset - no household');
+      return;
+    }
+
+    try {
+      console.log('[App] Calling chore reset endpoint...');
+      const apiBase = window.HOME_HUB_CONFIG?.apiBase || '';
+      const response = await fetch(`${apiBase}/api/cron-chores-reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      const result = await response.json();
+      console.log('[App] Chore reset result:', result);
+      
+      // If chores were reset, refresh chores page if we're on it
+      if (result.processed > 0 && Hub.router.current === 'chores') {
+        Hub.chores?.load?.();
+      }
+    } catch (error) {
+      console.error('[App] Chore reset endpoint error:', error);
+      // Don't throw - this is a fallback, cron is primary
+    }
   }
 };
 
