@@ -1,121 +1,22 @@
-╔══════════════════════════════════════════════════════════════════╗
-║                                                                  ║
-║              🏠 HOME HUB v2.1.0 - START HERE                     ║
-║                  + ADMIN PANEL & AUTOMATION                      ║
-║                                                                  ║
-╚══════════════════════════════════════════════════════════════════╝
+-- ==========================================
+-- HOME HUB — Migration: Add missing columns
+-- Run this if your database already exists and is missing these columns.
+-- Safe to run multiple times (uses IF NOT EXISTS).
+-- ==========================================
 
-WHAT'S THIS?
-────────────
-This folder contains ALL the fixed AND enhanced files for your Home Hub.
-Everything is organized exactly like your GitHub repository.
+-- Add missing columns to chores table
+ALTER TABLE chores ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'Daily';
+ALTER TABLE chores ADD COLUMN IF NOT EXISTS day_of_week INTEGER;
+ALTER TABLE chores ADD COLUMN IF NOT EXISTS completed_by_name TEXT;
+ALTER TABLE chores ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
-🆕 NEW FEATURES:
-✨ Automatic chore reset at midnight
-✨ Comprehensive admin control panel  
-✨ Statistics & analytics dashboard
-✨ Today's chores only on standby
-✨ Completion history tracking
-✨ User management interface
+-- Add missing column to user_settings table
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS selected_calendars JSONB DEFAULT '["primary"]'::jsonb;
 
+-- Create index on chores for faster dashboard queries
+CREATE INDEX IF NOT EXISTS idx_chores_household_status ON chores(household_id, status);
+CREATE INDEX IF NOT EXISTS idx_chores_household_category ON chores(household_id, category);
+CREATE INDEX IF NOT EXISTS idx_chore_logs_chore_id ON chore_logs(chore_id);
 
-FASTEST WAY TO DEPLOY (3 minutes):
-──────────────────────────────────
-
-1. Download this ENTIRE folder to your computer
-
-2. Open Terminal/Command Prompt and navigate to your repo:
-   
-   cd /path/to/your/homehub
-   
-   (Example: cd ~/Documents/homehub)
-
-3. Run the copy script:
-   
-   bash /path/to/homehub-fixed/copy-files.sh /path/to/homehub-fixed
-   
-   (Example: bash ~/Downloads/homehub-fixed/copy-files.sh ~/Downloads/homehub-fixed)
-   
-   OR copy manually:
-   
-   cp -r /path/to/homehub-fixed/api/* ./api/
-   cp -r /path/to/homehub-fixed/public/* ./public/
-   cp /path/to/homehub-fixed/database-setup.sql ./
-
-4. Update index.html (see ADMIN-QUICK-START.md for details)
-   
-   Replace the control page section (line 380-466) with content from:
-   index-control-section.html
-
-5. Push to GitHub:
-   
-   git add -A
-   git commit -m "Add admin panel with chore automation (v2.1.0)"
-   git push origin main
-
-6. Done! Vercel will auto-deploy in ~2 minutes
-
-
-🎯 NEW ADMIN FEATURES:
-──────────────────────────
-✅ Automatic Daily Reset - Chores reset at midnight automatically
-✅ Statistics Dashboard - See completion rates and history
-✅ User Management - View and manage family members
-✅ System Logs - Track activity and errors
-✅ Smart Standby - Shows only TODAY's chores
-✅ History Tracking - All completions preserved forever
-
-
-ACCESS ADMIN PANEL:
-───────────────────
-Method 1: Click "🏠 Home Hub" title 7 times fast
-Method 2: Type "control" on keyboard
-(Admin users only)
-
-
-WHAT GOT FIXED:
-───────────────
-✅ Security: Debug mode protected in production
-✅ Performance: Faster, smoother (debounced events)
-✅ Bugs: Race condition fixed, cache clearing works
-✅ Errors: Better logging and user messages
-
-
-FILES THAT WILL BE REPLACED:
-────────────────────────────
-→ api/weather-aggregate.js
-→ public/assets/app.js
-→ public/assets/supabase.js  
-→ public/assets/calendar.js
-→ public/assets/router.js
-→ public/assets/control.js    ← NEW COMPREHENSIVE ADMIN PANEL!
-→ public/assets/standby.js    ← UPDATED to show today's chores only
-→ public/index.html           ← UPDATED with new admin interface
-→ database-setup.sql
-
-
-DOCUMENTATION:
-──────────────
-📖 ADMIN-QUICK-START.md   - 2-minute setup guide for admin features
-📖 ADMIN-FEATURES.md       - Complete admin documentation
-📖 README.md               - Overview and instructions
-💻 GIT-COMMANDS.md         - Git help
-📝 CHANGES.txt             - What changed in each file
-📂 FILE-STRUCTURE.txt      - Visual folder layout
-🔧 index-control-section.html - New HTML for admin panel
-
-
-QUESTIONS?
-──────────
-• Everything is backward compatible ✅
-• No database changes needed (already done) ✅
-• No user action required ✅
-• Can rollback easily if needed ✅
-• Admin features are optional (can skip HTML update) ✅
-
-
-═══════════════════════════════════════════════════════════════════
-
-                  READY TO DEPLOY WITH AUTOMATION! 🚀
-
-═══════════════════════════════════════════════════════════════════
+-- Update existing chores that have NULL updated_at to use created_at
+UPDATE chores SET updated_at = created_at WHERE updated_at IS NULL;

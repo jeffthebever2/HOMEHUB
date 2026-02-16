@@ -1,123 +1,24 @@
-# Second Review - Additional Fixes Applied
+-- ==========================================
+-- Migration: Add Automatic Chore Reset Tracking
+-- Adds last_chore_reset_date column to households table
+-- This enables server-side automatic daily chore resets
+-- ==========================================
 
-## What I Found on Second Pass
+-- Add column to track the last date chores were reset for this household
+ALTER TABLE households 
+ADD COLUMN IF NOT EXISTS last_chore_reset_date DATE DEFAULT NULL;
 
-After reviewing the code more carefully, I identified **6 additional critical issues** that could cause the login bounce:
+COMMENT ON COLUMN households.last_chore_reset_date IS 
+'Tracks the last date (America/New_York timezone) when daily/weekly chores were automatically reset for this household. Used to ensure idempotent cron-based resets.';
 
-### 🔴 Critical Issues Found:
+-- Add missing columns for enhanced chore functionality (if not already present from other migrations)
+ALTER TABLE chores 
+ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'Daily',
+ADD COLUMN IF NOT EXISTS day_of_week INTEGER;
 
-1. **Router Interference During OAuth** 
-   - The router's `hashchange` listener could activate during the OAuth redirect
-   - This would try to route to a page before authentication completed
-   - **Fix**: Added `_loginInProgress` check to router to block routing during login
+COMMENT ON COLUMN chores.category IS 'Category of chore: Daily, Weekly, or Monthly';
+COMMENT ON COLUMN chores.day_of_week IS 'Day of week for weekly chores (0=Sunday, 6=Saturday)';
 
-2. **Poor Error Differentiation**
-   - Database errors were treated the same as "user not authorized"
-   - Users would see wrong screen or confusing behavior
-   - **Fix**: `checkAccess()` now THROWS errors for DB issues, RETURNS false for authorization
-   - Result: Users see helpful error screen with retry button for DB errors
-
-3. **Timeout Errors Not Caught Properly**
-   - The 6-second query timeout threw errors that were being swallowed
-   - **Fix**: Explicit try/catch around each DB query with timeout-specific messages
-
-4. **Unexpected SIGNED_OUT Events**
-   - If Supabase fired a SIGNED_OUT event during login (e.g., session refresh failed), it would abort
-   - **Fix**: Ignore SIGNED_OUT events when `_loginInProgress = true`
-
-5. **No Session Validation Logging**
-   - Hard to debug if sessions were expired or invalid
-   - **Fix**: Added detailed session logging showing expiration time and validity
-
-6. **Redundant Error Check**
-   - Minor: `if (!this._loggedIn)` check after setting it to false
-   - Fixed for code clarity
-
-## What This Means
-
-The original fix was **mostly correct** but had gaps that could still cause bouncing in certain scenarios:
-
-### Scenarios Now Handled:
-✅ **Database timeout** → Shows error screen with retry  
-✅ **Network issues** → Shows error screen with retry  
-✅ **OAuth redirect interference** → Router blocked during login  
-✅ **Session refresh failures** → Won't abort login process  
-✅ **User not authorized** → Shows access denied  
-✅ **Expired sessions** → Logged and handled properly
-
-### Before vs After:
-
-**BEFORE** (first fix):
-```
-DB timeout → checkAccess returns false → Access Denied screen ❌
-```
-
-**AFTER** (second review):
-```
-DB timeout → checkAccess throws error → Error screen with retry ✅
-```
-
-**BEFORE** (first fix):
-```
-OAuth redirect → router activates → Page changes during auth ❌
-```
-
-**AFTER** (second review):
-```
-OAuth redirect → router blocked → Auth completes uninterrupted ✅
-```
-
-## Files Changed (Second Pass)
-
-1. **app.js**: 
-   - Protected SIGNED_OUT handler
-   - Better error screen with retry
-   
-2. **supabase.js**:
-   - Differentiated errors vs authorization failures
-   - Better session logging
-   - Explicit timeout error handling
-   
-3. **router.js**: 
-   - Added `_loginInProgress` check to prevent routing during auth
-
-## Testing Priority
-
-The most important scenarios to test after this fix:
-
-1. **Slow/Unstable Network** 
-   - Use Chrome DevTools → Network → Slow 3G
-   - Should show error screen with retry, NOT bounce to login
-
-2. **Database Issues**
-   - Temporarily break Supabase connection
-   - Should show error message, NOT access denied
-
-3. **OAuth Flow**
-   - After clicking "Sign in with Google"
-   - Page should not flash/change during redirect
-   - Should go straight from loading → dashboard
-
-4. **Session Expiry**
-   - Open app, wait for session to expire
-   - Refresh page
-   - Should re-authenticate smoothly
-
-## Confidence Level
-
-**First Fix**: 70% - Would solve most race conditions but had gaps  
-**Second Review Fix**: 95% - Addresses all identified edge cases
-
-The remaining 5% accounts for:
-- Potential Supabase SDK quirks
-- Browser-specific timing differences
-- Network conditions we can't predict
-- User-specific Supabase configuration issues
-
-## Recommended Next Steps
-
-1. Deploy the updated fix
-2. Test with Chrome DevTools network throttling
-3. Check browser console logs during login
-4. Monitor for any remaining issues
-5. If issues persist, run `Hub.debug.checkSupabase()` and share output
+-- Create index for faster reset queries
+CREATE INDEX IF NOT EXISTS idx_chores_household_status ON chores(household_id, status);
+CREATE INDEX IF NOT EXISTS idx_chores_category_dow ON chores(category, day_of_week);

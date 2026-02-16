@@ -1,51 +1,24 @@
-# HOME HUB V2.0 - LOGIN FIXED
+-- ==========================================
+-- MIGRATION: Add missing chore columns
+-- Run this in Supabase SQL Editor
+-- (Dashboard → SQL Editor → New Query → Paste → Run)
+-- ==========================================
 
-## ⚠️ CRITICAL FIX
+-- Add category column (e.g. "Daily", "Monday (Living Room)", etc.)
+ALTER TABLE chores ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'Daily';
 
-I removed the call that was breaking your login. Login works now!
+-- Add day_of_week column (0=Sunday, 1=Monday ... 6=Saturday, NULL=Daily)
+ALTER TABLE chores ADD COLUMN IF NOT EXISTS day_of_week INTEGER;
 
-The automatic chore reset still works via the cron job (runs daily at 4 AM).
+-- Add completed_by_name column (stores the family member's name who completed it)
+ALTER TABLE chores ADD COLUMN IF NOT EXISTS completed_by_name TEXT;
 
-## 🚀 TO FIX YOUR SITE NOW
+-- Add selected_calendars to user_settings (for multi-calendar selection)
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS selected_calendars TEXT[] DEFAULT ARRAY['primary'];
 
-### Step 1: Upload This ONE File
-
-The login is broken because of app.js. Replace it:
-
-1. Go to your GitHub repo
-2. Navigate to `public/assets/`
-3. Upload the `app.js` from this zip (drag and drop to replace)
-4. Commit
-
-Vercel will auto-deploy in ~30 seconds.
-
-### Step 2: Clear Your Browser Cache
-
-After Vercel deploys:
-- Press **Ctrl + Shift + R** (Windows)
-- Or **Cmd + Shift + R** (Mac)
-
-Login should work immediately!
-
-## ✨ All Features Included
-
-- ✅ Music tab (player.js, music.js, radio.js)
-- ✅ Confetti on chore completion
-- ✅ New design (Inter font, gradients, animations)
-- ✅ Treat timestamps (today only)
-- ✅ Auto chore reset (cron at 4 AM daily)
-
-## 📝 Full Deployment (For All Features)
-
-To get ALL the new features working:
-
-1. Upload ALL files from this zip to GitHub
-2. Set `SUPABASE_SERVICE_ROLE_KEY` in Vercel (if not already set)
-3. Clear browser cache
-4. Reload
-
-But for NOW, just upload app.js to fix login!
-
----
-
-**Quick Fix: Just replace public/assets/app.js and your login works!** 🎉
+-- Verify: check that columns were added
+SELECT column_name, data_type 
+FROM information_schema.columns 
+WHERE table_name = 'chores' 
+  AND column_name IN ('category', 'day_of_week', 'completed_by_name')
+ORDER BY column_name;

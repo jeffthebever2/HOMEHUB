@@ -1,209 +1,126 @@
-# ✅ FEATURE VERIFICATION GUIDE
+============================================================
+HOME HUB — VERCEL DEPLOYMENT SETUP
+============================================================
 
-After deploying, use this checklist to verify all features are working.
+STEP 1: CREATE A GITHUB REPOSITORY
+------------------------------------------------------------
+Option A (GitHub web):
+  1. Go to https://github.com/new
+  2. Name it: home-hub (or whatever you prefer)
+  3. Set to Private, click "Create repository"
+  4. Unzip vercel-home-hub.zip on your computer
+  5. In the repo, click "uploading an existing file"
+  6. Drag-and-drop ALL files/folders from the unzipped directory
+     (public/, api/, vercel.json, etc.)
+  7. Commit
 
-## 🔍 How to Verify Each Feature
+Option B (command line):
+  cd vercel-home-hub
+  git init
+  git add .
+  git commit -m "Home Hub initial"
+  gh repo create home-hub --private --push
 
-### 1. ⏰ Automatic Chore Resets
+STEP 2: IMPORT INTO VERCEL
+------------------------------------------------------------
+  1. Go to https://vercel.com/new
+  2. Click "Import Git Repository"
+  3. Select your home-hub repo
+  4. Framework Preset: "Other" (no framework)
+  5. Root Directory: ./ (leave default)
+  6. Output Directory: public
+  7. Click Deploy
 
-**Files Required:**
-- `api/cron-chores-reset.js` ✓ 
-- `vercel.json` (with crons section) ✓
+STEP 3: SET ENVIRONMENT VARIABLES
+------------------------------------------------------------
+Go to: Vercel Dashboard → your project → Settings → Environment Variables
 
-**Test:**
-```
-Visit: https://your-app.vercel.app/api/cron-chores-reset
+REQUIRED:
+  SUPABASE_URL             = https://cmaefwhqoykittrwiobw.supabase.co
+  SUPABASE_ANON_KEY        = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNtYWVmd2hxb3lraXR0cndpb2J3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA1NjM1ODQsImV4cCI6MjA4NjEzOTU4NH0.rUub2PIr60w9InuA1zygE7l0OK6li_Un8WjpdcVg3ko
 
-Should return JSON like:
-{
-  "message": "Processed 1 household(s)",
-  "date": "2026-02-16",
-  "processed": 0
-}
-```
+WEATHER API KEYS (optional — improves accuracy, skip any you don't have):
+  WEATHERBIT_KEY            = (from https://www.weatherbit.io/account/create)
+  TOMORROW_KEY              = (from https://app.tomorrow.io/signup)
+  VISUAL_CROSSING_KEY       = (from https://www.visualcrossing.com/sign-up)
+  PIRATE_WEATHER_KEY        = (from https://pirateweather.net/getting-started)
 
-If you get 404 → File wasn't uploaded
-If you get error → Check SUPABASE_SERVICE_ROLE_KEY is set in Vercel
+  Note: Open-Meteo, Weather.gov, and RainViewer are free and keyless.
+  The system works with zero paid keys — they just add more data sources.
 
----
+IMMICH (optional — for standby photo collage):
+  IMMICH_BASE_URL           = http://your-immich-server:2283
+  IMMICH_SHARED_ALBUM_TOKEN = (your API key or shared link key)
+  IMMICH_ALBUM_ID           = (UUID of the shared album)
 
-### 2. 🎵 Music Tab
+After adding env vars, click Redeploy (Deployments tab → three dots → Redeploy).
 
-**Files Required:**
-- `public/assets/music.js` ✓
-- `public/assets/player.js` ✓
-- `public/index.html` (with script tag) ✓
+STEP 4: UPDATE config.js
+------------------------------------------------------------
+Before deploying (or after, then redeploy), edit public/config.js:
 
-**Test:**
-1. Log into your app
-2. Look for "Music" in navigation menu
-3. Click it
-4. Should see YouTube Music player
+  supabaseUrl: 'https://cmaefwhqoykittrwiobw.supabase.co',
+  supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIs...(your key)...',
 
-If missing → Check browser console (F12) for errors
+These are client-side values used by the Supabase JS SDK in the browser.
+The weather API keys stay server-side only (Vercel env vars).
 
----
+STEP 5: SUPABASE AUTH REDIRECT
+------------------------------------------------------------
+  1. In Supabase Dashboard → Authentication → URL Configuration
+  2. Add your Vercel URL as a Redirect URL:
+       https://your-project.vercel.app
+  3. In Google Cloud Console → OAuth → Authorized redirect URIs:
+       https://cmaefwhqoykittrwiobw.supabase.co/auth/v1/callback
+  4. Make sure Google provider is enabled in Supabase Auth → Providers
 
-### 3. 📻 Radio Tab
+STEP 6: ADD YOUR EMAIL TO THE DATABASE
+------------------------------------------------------------
+In Supabase SQL Editor, run (replace with your Google email):
 
-**Files Required:**
-- `public/assets/radio.js` ✓
-- `public/assets/player.js` ✓
-- `public/index.html` (with script tag) ✓
+  INSERT INTO households (name) VALUES ('My Home');
 
-**Test:**
-1. Log into your app
-2. Look for "Radio" in navigation menu
-3. Click it
-4. Should see radio station list
+  INSERT INTO household_members (household_id, email, role)
+  SELECT id, 'your.email@gmail.com', 'admin'
+  FROM households WHERE name = 'My Home';
 
-If missing → Check browser console (F12) for errors
+  INSERT INTO allowed_emails (household_id, email)
+  SELECT id, 'your.email@gmail.com'
+  FROM households WHERE name = 'My Home';
 
----
+STEP 7: TEST
+------------------------------------------------------------
+  1. Visit: https://your-project.vercel.app
+     → Should show login screen
 
-### 4. 🎮 Now Playing Widget
+  2. Visit: https://your-project.vercel.app/api/health
+     → Should return JSON with service statuses
 
-**Files Required:**
-- `public/assets/player.js` ✓
-- Updated `public/assets/app.js` ✓
-- Updated `public/assets/standby.js` ✓
+  3. Visit: https://your-project.vercel.app/api/weather-aggregate?lat=40.029&lon=-82.863
+     → Should return weather data from multiple sources
 
-**Test:**
-1. Play music or radio
-2. Go to Dashboard
-3. Should see "Now Playing" widget showing what's playing
+  4. Sign in with Google → Dashboard should load with weather
 
-If missing → Check that player.js loaded (F12 console)
+  5. Try /standby, /treats, /chores, /settings, /status pages
 
----
+  6. Refresh on any page → should NOT 404 (SPA routing via vercel.json)
 
-### 5. ✨ Confetti When Completing Chores
+TROUBLESHOOTING
+------------------------------------------------------------
+Problem: API routes return 404
+Fix:     Make sure the /api/ folder is at the project root (not inside /public/).
+         Vercel auto-detects serverless functions in /api/.
 
-**Files Required:**
-- Updated `public/assets/chores.js` ✓
+Problem: "Access Denied" after login
+Fix:     Your email must be in BOTH household_members AND allowed_emails.
 
-**Test:**
-1. Go to Chores page
-2. Click checkbox to complete a chore
-3. Should see colorful confetti burst
+Problem: Weather shows "Unable to load"
+Fix:     Check /api/health. Open-Meteo needs no key and should always work.
+         Add optional weather API keys for more sources.
 
-**Verify Code:**
-```bash
-# In chores.js, look for:
-grep "_createConfetti" public/assets/chores.js
-```
+Problem: Pages 404 on refresh
+Fix:     Ensure vercel.json is at the project root with the SPA rewrite rules.
 
-If not working → chores.js wasn't uploaded or cached
-
----
-
-### 6. 🐕 Treat History with Timestamps
-
-**Files Required:**
-- Updated `public/assets/treats.js` ✓
-
-**Test:**
-1. Go to Dashboard
-2. Look at Dog Treat widget
-3. Should only show today's treats (not all time)
-
-**Verify Code:**
-```bash
-# In treats.js, look for:
-grep "todayStart" public/assets/treats.js
-```
-
----
-
-### 7. 📊 New Design System
-
-**Files Required:**
-- Updated `public/index.html` ✓
-
-**Test:**
-- Cards should have subtle gradients
-- Hover over cards → they should lift up slightly
-- Fonts should be Inter (not system default)
-- Dark mode should be deeper/richer
-
-**Verify:**
-```bash
-# Check index.html has:
-grep "Inter" public/index.html
-grep "kenBurns" public/index.html
-grep "card-glass" public/index.html
-```
-
----
-
-## 🐛 Troubleshooting
-
-### None of the features work
-
-**Check:**
-1. Did you upload ALL files from the zip?
-2. Clear browser cache (Ctrl+Shift+R or Cmd+Shift+R)
-3. Check browser console (F12) for JavaScript errors
-4. Verify vercel.json was uploaded
-
-### Music/Radio tabs don't appear
-
-**Check:**
-1. Open browser console (F12)
-2. Look for errors loading player.js, radio.js, music.js
-3. Verify index.html has the script tags at the bottom:
-   ```html
-   <script src="assets/player.js"></script>
-   <script src="assets/radio.js"></script>
-   <script src="assets/music.js"></script>
-   ```
-
-### Cron endpoint returns 404
-
-**Check:**
-1. Verify `api/cron-chores-reset.js` was uploaded to GitHub
-2. Check Vercel deployment logs
-3. Redeploy from Vercel dashboard
-
-### Confetti doesn't work
-
-**Check:**
-1. Verify chores.js was uploaded (not just added to zip)
-2. Clear browser cache
-3. Check console for JavaScript errors
-
----
-
-## ✅ Success Checklist
-
-After deploying, you should see:
-
-- [ ] `/api/cron-chores-reset` returns JSON (not 404)
-- [ ] Music and Radio appear in navigation menu
-- [ ] Clicking Music loads YouTube Music player
-- [ ] Clicking Radio shows station list
-- [ ] Completing a chore shows confetti
-- [ ] Dashboard only shows today's treats
-- [ ] Cards have gradients and hover effects
-- [ ] No JavaScript errors in console (F12)
-
----
-
-## 📝 Quick Verification Script
-
-Run this in your browser console (F12) after loading the app:
-
-```javascript
-console.log('=== FEATURE VERIFICATION ===');
-console.log('Player module loaded:', typeof Hub.player !== 'undefined');
-console.log('Radio module loaded:', typeof Hub.radio !== 'undefined');
-console.log('Music module loaded:', typeof Hub.music !== 'undefined');
-console.log('Chores has confetti:', typeof Hub.chores._createConfetti === 'function');
-console.log('App has chore reset:', typeof Hub.app._callChoreResetEndpoint === 'function');
-```
-
-All should return `true` or show the function exists.
-
----
-
-**If everything checks out but you still don't see features, clear your browser cache completely and reload!**
+Problem: CORS errors
+Fix:     The vercel.json headers section adds CORS for /api/* routes.
+         For local dev, use `npx vercel dev` which respects vercel.json.
