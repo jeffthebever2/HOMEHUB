@@ -52,6 +52,15 @@
     .btn-secondary { background: #374151; color: #fff; } .btn-secondary:hover { background: #4b5563; }
     .btn-danger { background: #ef4444; color: #fff; } .btn-danger:hover { background: #dc2626; }
     .btn-success { background: #10b981; color: #fff; } .btn-success:hover { background: #059669; }
+    /* ── Typography scale ── */
+    :root {
+      --font-display: 2.5rem/1.1 'Inter', system-ui, sans-serif;
+      --font-title:   1.5rem/1.2 'Inter', system-ui, sans-serif;
+      --font-body:    1rem/1.5   'Inter', system-ui, sans-serif;
+      --font-caption: 0.875rem/1.4 'Inter', system-ui, sans-serif;
+      --font-micro:   0.75rem/1.3  'Inter', system-ui, sans-serif;
+    }
+
     .input { background: #374151; border: 1px solid #4b5563; border-radius: .5rem; padding: .5rem 1rem; color: #fff; width: 100%; box-sizing: border-box; }
     .input:focus { outline: none; border-color: #3b82f6; }
     .hidden { display: none !important; }
@@ -68,15 +77,109 @@
     .progress-bar { height: 1rem; background: #374151; border-radius: 9999px; overflow: hidden; }
     .progress-fill { height: 100%; border-radius: 9999px; transition: width .4s; }
     select.input { appearance: auto; }
-    
-    /* Standby photo transitions */
-    #standbyCurrentPhoto { transition: opacity 0.5s ease-in-out; }
-    
+
+    /* ── Slideshow two-layer crossfade ── */
+    .slideshow-layer {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+      will-change: opacity;
+      transition: opacity 0.9s ease-in-out;
+    }
+
+    /* ── Card hover lift (disabled in touchscreen mode) ── */
+    body:not(.touchscreen-mode) .card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 24px rgba(0,0,0,.4), 0 0 0 1px rgba(255,255,255,.05);
+    }
+    .card { transition: transform .2s ease, box-shadow .2s ease; }
+
+    /* ── Staggered card entrance ── */
+    @keyframes cardIn { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
+    .card-enter { animation: cardIn .4s ease both; }
+    .card-enter:nth-child(1) { animation-delay: 0ms; }
+    .card-enter:nth-child(2) { animation-delay: 50ms; }
+    .card-enter:nth-child(3) { animation-delay: 100ms; }
+    .card-enter:nth-child(4) { animation-delay: 150ms; }
+    .card-enter:nth-child(5) { animation-delay: 200ms; }
+
+    /* ── Chore confetti particle ── */
+    @keyframes confetti-fall { 0% { opacity:1; transform:translateY(0) rotate(0deg); } 100% { opacity:0; transform:translateY(60px) rotate(360deg); } }
+    .confetti-dot { position:fixed; width:8px; height:8px; border-radius:50%; pointer-events:none; z-index:9999; animation: confetti-fall .8s ease-out forwards; }
+
+    /* ── Skeleton shimmer ── */
+    @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+    .skeleton {
+      background: linear-gradient(90deg, #1E2738 25%, #253048 50%, #1E2738 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: .5rem;
+    }
+    .skeleton-text { height: 1em; margin-bottom: .5rem; }
+    .skeleton-block { height: 80px; }
+
+    /* ── Weather icon pulse ── */
+    @keyframes icon-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
+    .weather-icon-animated { display:inline-block; animation: icon-pulse 3s ease-in-out infinite; }
+
+    /* ── Lock screen glass ── */
+    .glass-panel {
+      background: rgba(15, 20, 40, 0.72);
+      backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid rgba(255,255,255,.08);
+    }
+
+    /* ── Touchscreen mode ── */
+    .touchscreen-mode .btn { padding: .75rem 1.25rem; font-size: 1.1rem; }
+    .touchscreen-mode .card { padding: 1.75rem; }
+    .touchscreen-mode .card:hover { transform: none; box-shadow: none; }
+    body.reduce-motion * { animation: none !important; transition-duration: .01ms !important; }
+
+    /* ── Bento grid dashboard ── */
+    .bento-grid {
+      display: grid;
+      gap: 1.25rem;
+      grid-template-columns: 1fr;
+    }
+    @media (min-width: 640px) {
+      .bento-grid { grid-template-columns: repeat(2, 1fr); }
+      .bento-span-2 { grid-column: span 2; }
+    }
+    @media (min-width: 1024px) {
+      .bento-grid { grid-template-columns: repeat(3, 1fr); }
+      .bento-span-2 { grid-column: span 2; }
+      .bento-span-3 { grid-column: span 3; }
+      .bento-tall   { grid-row: span 2; }
+    }
+
+    /* ── Tomorrow weather in standby ── */
+    .standby-alert-strip {
+      background: rgba(239,68,68,.85);
+      border-radius: .5rem;
+      padding: .4rem .75rem;
+      font-size: .78rem;
+      font-weight: 600;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    @keyframes marquee { from{transform:translateX(0)} to{transform:translateX(-50%)} }
+    .marquee-text { display:inline-block; animation: marquee 12s linear infinite; }
+
     /* Responsive utilities */
     @media (max-width: 640px) {
       .card { padding: 1rem; margin-bottom: 1rem; }
       .standby-clock { font-size: 4rem !important; }
     }
+
+    /* ── Smooth scrolling ── */
+    html { scroll-behavior: smooth; }
+
+    /* ── Accordion for settings ── */
+    .accordion-body { max-height: 0; overflow: hidden; transition: max-height .35s ease; }
+    .accordion-body.open { max-height: 2000px; }
+    .accordion-toggle { cursor: pointer; user-select: none; }
+    .accordion-toggle::after { content: ' ▼'; font-size:.7em; transition:transform .2s; display:inline-block; }
+    .accordion-toggle.open::after { transform: rotate(180deg); }
   </style>
 </head>
 <body>
@@ -161,90 +264,89 @@
           </div>
         </header>
 
-        <!-- Main Grid - 2 Column Layout -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          
-          <!-- Left Column -->
-          <div class="space-y-6">
-            
-            <!-- Calendar Widget -->
-            <div class="card">
-              <div id="calendarWidget">
-                <p class="text-gray-400 text-sm">Loading calendar...</p>
-              </div>
-            </div>
+        <!-- Bento Grid Dashboard -->
+        <div class="bento-grid">
 
-            <!-- Weather Card -->
-            <div class="card">
-              <div class="flex items-center justify-between mb-4">
-                <h2 class="text-xl font-bold">☀️ Weather</h2>
-                <button onclick="Hub.router.go('weather')" class="text-blue-400 hover:text-blue-300 text-sm">
-                  Full Forecast →
-                </button>
-              </div>
-              <div id="dashboardWeather">
-                <p class="text-gray-400 text-sm">Loading weather…</p>
-              </div>
+          <!-- Calendar Widget — spans 2 cols on tablet+ -->
+          <div class="card card-enter bento-span-2">
+            <div id="calendarWidget">
+              <div class="skeleton skeleton-block mb-2"></div>
+              <div class="skeleton skeleton-text" style="width:70%"></div>
             </div>
-
-          </div>
-          
-          <!-- Right Column -->
-          <div class="space-y-6">
-            
-            <!-- Dog Treat Status Widget -->
-            <div class="card">
-              <div class="flex items-center justify-between mb-4">
-                <h3 class="font-bold text-xl">🐕 Barker</h3>
-                <button onclick="Hub.treats.showQuickAdd()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg font-semibold transition-colors">
-                  + Treat
-                </button>
-              </div>
-              <div id="dogStatusWidget">
-                <p class="text-gray-400 text-sm">Loading...</p>
-              </div>
-            </div>
-
-            <!-- Chores Preview -->
-            <div class="card">
-              <div class="flex items-center justify-between mb-4">
-                <h2 class="text-xl font-bold">Today's Chores</h2>
-                <button onclick="Hub.router.go('chores')" class="text-blue-400 hover:text-blue-300 text-sm">
-                  View All →
-                </button>
-              </div>
-              <div id="dashboardChores" class="space-y-2">
-                <p class="text-gray-400 text-sm">Loading chores...</p>
-              </div>
-            </div>
-
-            <!-- Now Playing Widget -->
-            <div class="card">
-              <h2 class="text-xl font-bold mb-4">🎵 Now Playing</h2>
-              <div id="nowPlayingWidget"></div>
-            </div>
-
           </div>
 
-          <!-- Photos Widget - Full Width -->
-          <div class="card lg:col-span-2">
+          <!-- Weather Card -->
+          <div class="card card-enter">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="text-xl font-bold">☀️ Weather</h2>
+              <button onclick="Hub.router.go('weather')" class="text-blue-400 hover:text-blue-300 text-sm">
+                Full Forecast →
+              </button>
+            </div>
+            <div id="dashboardWeather">
+              <div class="skeleton skeleton-text" style="width:80%"></div>
+              <div class="skeleton skeleton-text" style="width:60%"></div>
+            </div>
+          </div>
+
+          <!-- Dog Treat Status Widget -->
+          <div class="card card-enter">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-bold text-xl">🐕 Barker</h3>
+              <button onclick="Hub.treats.showQuickAdd()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg font-semibold transition-colors">
+                + Treat
+              </button>
+            </div>
+            <div id="dogStatusWidget">
+              <div class="skeleton skeleton-block"></div>
+            </div>
+          </div>
+
+          <!-- Chores Preview -->
+          <div class="card card-enter">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="text-xl font-bold">Today's Chores</h2>
+              <button onclick="Hub.router.go('chores')" class="text-blue-400 hover:text-blue-300 text-sm">
+                View All →
+              </button>
+            </div>
+            <div id="dashboardChores" class="space-y-2">
+              <div class="skeleton skeleton-text"></div>
+              <div class="skeleton skeleton-text" style="width:85%"></div>
+              <div class="skeleton skeleton-text" style="width:70%"></div>
+            </div>
+          </div>
+
+          <!-- Now Playing Widget -->
+          <div class="card card-enter">
+            <h2 class="text-xl font-bold mb-4">🎵 Now Playing</h2>
+            <div id="nowPlayingWidget"></div>
+          </div>
+
+          <!-- Photos Widget — full width -->
+          <div class="card card-enter bento-span-3">
             <div class="flex items-center justify-between mb-4">
               <h3 class="font-bold text-xl">📸 Family Photos</h3>
             </div>
             <div id="immichDashboardWidget" class="min-h-[200px]">
-              <p class="text-gray-400 text-sm text-center py-8">Loading photos...</p>
+              <div class="grid grid-cols-3 gap-2">
+                <div class="skeleton" style="aspect-ratio:16/9;border-radius:.5rem;"></div>
+                <div class="skeleton" style="aspect-ratio:16/9;border-radius:.5rem;"></div>
+                <div class="skeleton" style="aspect-ratio:16/9;border-radius:.5rem;"></div>
+              </div>
             </div>
           </div>
 
-        </div>
+        </div><!-- end bento-grid -->
       </div>
     </div>
 
     <!-- ========== STANDBY ========== -->
     <div id="standbyPage" class="page min-h-screen bg-black text-white relative overflow-hidden cursor-pointer">
-      <!-- Full screen photo background - rotating -->
-      <div id="standbyPhotoBackground" class="absolute inset-0 transition-opacity duration-1000">
-        <img id="standbyCurrentPhoto" class="w-full h-full object-cover" alt="" />
+      <!-- Full screen photo background - two-layer RAF crossfade -->
+      <div id="standbyPhotoBackground" class="absolute inset-0">
+        <img id="slideshowLayerA" class="slideshow-layer" alt="" style="opacity:0;z-index:2;" />
+        <img id="slideshowLayerB" class="slideshow-layer" alt="" style="opacity:0;z-index:1;" />
       </div>
       
       <!-- Dark overlay for readability -->
@@ -263,9 +365,9 @@
 
         <!-- Info Cards - compact and responsive -->
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 max-w-6xl w-full mb-4">
-          
+
           <!-- Calendar Events - compact -->
-          <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10">
+          <div class="glass-panel rounded-xl p-3 sm:p-4">
             <h3 class="text-sm font-semibold mb-2 text-blue-400">📅 Upcoming Events</h3>
             <div id="standbyCalendar" class="space-y-2 text-xs sm:text-sm max-h-32 overflow-hidden">
               <p class="text-gray-400">Loading...</p>
@@ -273,29 +375,33 @@
           </div>
 
           <!-- Due Chores - compact -->
-          <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10">
+          <div class="glass-panel rounded-xl p-3 sm:p-4">
             <h3 class="text-sm font-semibold mb-2 text-green-400">✅ Chores Due</h3>
             <div id="standbyChores" class="space-y-2 text-xs sm:text-sm max-h-32 overflow-hidden">
               <p class="text-gray-400">Loading...</p>
             </div>
           </div>
 
-          <!-- Weather - compact -->
-          <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10 sm:col-span-2 lg:col-span-1">
+          <!-- Weather - today + tomorrow + alert -->
+          <div class="glass-panel rounded-xl p-3 sm:p-4 sm:col-span-2 lg:col-span-1">
             <h3 class="text-sm font-semibold mb-2 text-yellow-400">🌤️ Weather</h3>
             <div id="standbyWeather" class="text-xs sm:text-sm">
               <p class="text-gray-400">Loading...</p>
             </div>
+            <!-- Tomorrow weather (smaller) -->
+            <div id="standbyTomorrow" class="text-xs text-gray-400 mt-2 hidden"></div>
+            <!-- Alert strip -->
+            <div id="standbyAlertStrip" class="standby-alert-strip mt-2 hidden"></div>
           </div>
 
           <!-- Now Playing - compact -->
-          <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10">
+          <div class="glass-panel rounded-xl p-3 sm:p-4">
             <h3 class="text-sm font-semibold mb-2 text-purple-400">🎵 Now Playing</h3>
             <div id="standbyNowPlaying" class="text-xs sm:text-sm">
               <p class="text-gray-400">Nothing playing</p>
             </div>
           </div>
-          
+
         </div>
 
         <!-- Tap to wake hint - always at very bottom -->
@@ -574,6 +680,42 @@
                 and acknowledge our compliance with <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" class="text-blue-400 hover:text-blue-300 underline">Google API Services User Data Policy</a>.
               </p>
             </div>
+          </div>
+
+          <!-- Touchscreen Mode -->
+          <div class="card">
+            <h2 class="text-xl font-bold mb-4 accordion-toggle" onclick="Hub.ui.toggleAccordion(this)">📱 Touchscreen Mode</h2>
+            <div class="accordion-body">
+              <div class="space-y-4">
+                <label class="flex items-center justify-between cursor-pointer">
+                  <span class="text-sm font-medium">Larger UI density</span>
+                  <input type="checkbox" id="tsLargerUI" class="w-5 h-5 rounded" onchange="Hub.ui.applyTouchscreenMode()">
+                </label>
+                <label class="flex items-center justify-between cursor-pointer">
+                  <span class="text-sm font-medium">Disable hover states</span>
+                  <input type="checkbox" id="tsDisableHover" class="w-5 h-5 rounded" onchange="Hub.ui.applyTouchscreenMode()">
+                </label>
+                <label class="flex items-center justify-between cursor-pointer">
+                  <span class="text-sm font-medium">Increase button hit areas</span>
+                  <input type="checkbox" id="tsLargeHits" class="w-5 h-5 rounded" onchange="Hub.ui.applyTouchscreenMode()">
+                </label>
+                <label class="flex items-center justify-between cursor-pointer">
+                  <span class="text-sm font-medium">Reduce motion (performance)</span>
+                  <input type="checkbox" id="tsReduceMotion" class="w-5 h-5 rounded" onchange="Hub.ui.applyTouchscreenMode()">
+                </label>
+                <p class="text-xs text-gray-500">Touchscreen mode optimises the UI for kiosk/Pi use.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Fullscreen Controls -->
+          <div class="card">
+            <h2 class="text-xl font-bold mb-4">🖥 Fullscreen</h2>
+            <div class="flex gap-3">
+              <button onclick="Hub.ui.enterFullscreen()" class="btn btn-primary flex-1">⛶ Enter Fullscreen</button>
+              <button onclick="Hub.ui.exitFullscreen()" class="btn btn-secondary flex-1">✕ Exit Fullscreen</button>
+            </div>
+            <p id="fullscreenStatus" class="text-xs text-gray-500 mt-2 text-center"></p>
           </div>
 
           <button id="btnSaveSettings" class="btn btn-primary w-full py-3">💾 Save All Settings</button>

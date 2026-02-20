@@ -42,6 +42,8 @@ Hub.app = {
     Hub.radio?.init?.();
     Hub.music?.init?.();
     Hub.control?.init?.();
+    // Load saved touchscreen preferences on startup
+    Hub.ui?.loadTouchscreenMode?.();
 
     // ── TEST BYPASS: visit /#letmein (DEV ONLY) ──
     if (window.location.hash === '#letmein') {

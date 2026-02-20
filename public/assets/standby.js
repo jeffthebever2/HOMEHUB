@@ -76,23 +76,41 @@ Hub.standby = {
   /** Load weather for standby */
   async _loadWeather() {
     const el = Hub.utils.$('standbyWeather');
+    const tomorrowEl = document.getElementById('standbyTomorrow');
+    const alertEl    = document.getElementById('standbyAlertStrip');
     if (!el) return;
 
     try {
       const agg = await Hub.weather.fetchAggregate();
       const ai = await Hub.ai.getSummary(agg);
-      
+
       if (ai && ai.today) {
         el.innerHTML = `
-          <div class="flex items-center gap-2 mb-2">
-            <span class="text-2xl">${this._getWeatherIcon(ai.headline)}</span>
+          <div class="flex items-center gap-2">
+            <span class="weather-icon-animated text-2xl">${this._getWeatherIcon(ai.headline)}</span>
             <div>
               <p class="font-semibold">${ai.today.high_f}° / ${ai.today.low_f}°</p>
               <p class="text-xs text-gray-400">${Hub.utils.esc(ai.headline)}</p>
             </div>
           </div>
-          ${ai.hazards?.length ? `<p class="text-yellow-400 text-xs">⚠️ ${Hub.utils.esc(ai.hazards[0])}</p>` : ''}
         `;
+
+        // Tomorrow weather (smaller)
+        if (tomorrowEl && ai.tomorrow) {
+          tomorrowEl.textContent = `Tomorrow: ${ai.tomorrow.high_f}° / ${ai.tomorrow.low_f}°`;
+          tomorrowEl.classList.remove('hidden');
+        }
+
+        // Alert strip
+        if (alertEl) {
+          if (ai.hazards?.length) {
+            const text = ai.hazards.join(' — ');
+            alertEl.innerHTML = `<span class="marquee-text">⚠️ ${Hub.utils.esc(text)} &nbsp;&nbsp;&nbsp; ⚠️ ${Hub.utils.esc(text)}</span>`;
+            alertEl.classList.remove('hidden');
+          } else {
+            alertEl.classList.add('hidden');
+          }
+        }
       } else {
         el.innerHTML = '<p class="text-gray-500 text-sm">Weather unavailable</p>';
       }

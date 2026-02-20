@@ -1,248 +1,316 @@
 // ============================================================
-// assets/player.js — Unified Player State Manager
-// Manages Now Playing state for Music & Radio
-// Shows status on Dashboard and Standby pages
+// public/assets/player.js — Unified Player State + Audio
+// Fixed:
+//  - Proper radio flow: src → load() → canplay → play()
+//  - Stall retry once after 6s
+//  - Autoplay restriction overlay
+//  - Status labels: Connecting / Buffering / Playing / Failed
+//  - Now Playing updates in-place (no DOM duplication)
 // ============================================================
-
 window.Hub = window.Hub || {};
 
 Hub.player = {
-  // Player state
   state: {
-    currentSource: null,      // 'radio' | 'youtube' | null
-    title: '',                // Station name or song title
-    isPlaying: false,         // Playing status
-    startedAt: null,          // Timestamp when started
-    volume: 0.7               // Volume level (0-1)
+    currentSource: null,   // 'radio' | 'youtube' | null
+    title:         '',
+    isPlaying:     false,
+    startedAt:     null,
+    volume:        0.7,
+    radioStatus:   ''      // 'connecting' | 'buffering' | 'playing' | 'failed' | ''
   },
 
-  // Audio element for radio (single instance)
-  radioAudio: null,
+  radioAudio:      null,
+  _radioListeners: [],
+  _stallTimer:     null,
+  _retryCount:     0,
 
-  /** Initialize player */
   init() {
     console.log('[Player] Initializing...');
-    
-    // Create radio audio element
-    this.radioAudio = new Audio();
-    this.radioAudio.volume = this.state.volume;
-    
-    // Listen for audio events
-    this.radioAudio.addEventListener('play', () => {
-      this.state.isPlaying = true;
-      this.updateUI();
-    });
-    
-    this.radioAudio.addEventListener('pause', () => {
-      this.state.isPlaying = false;
-      this.updateUI();
-    });
-    
-    this.radioAudio.addEventListener('ended', () => {
-      this.state.isPlaying = false;
-      this.updateUI();
-    });
-
-    this.radioAudio.addEventListener('error', (e) => {
-      console.error('[Player] Audio error:', e);
-      Hub.ui?.toast?.('Playback error. Try another station.', 'error');
-      this.state.isPlaying = false;
-      this.updateUI();
-    });
-
-    // Update Media Session API (for lockscreen controls)
+    this.radioAudio        = new Audio();
+    this.radioAudio.preload = 'none';
+    this.radioAudio.volume  = this.state.volume;
     this.setupMediaSession();
-
     console.log('[Player] Ready');
   },
 
-  /** Play radio station */
+  // ── Radio ─────────────────────────────────────────────────
+
   playRadio(stationName, streamUrl) {
-    console.log('[Player] Play radio:', stationName);
-    
-    // Stop any current playback
-    this.stop();
-    
-    // Set new state
+    console.log('[Player] playRadio:', stationName);
+    this._stopRadioHard();
+
     this.state.currentSource = 'radio';
-    this.state.title = stationName;
-    this.state.startedAt = Date.now();
-    
-    // Load and play
-    this.radioAudio.src = streamUrl;
-    this.radioAudio.play().catch(err => {
-      console.error('[Player] Play failed:', err);
-      Hub.ui?.toast?.('Failed to play station', 'error');
-      this.state.isPlaying = false;
+    this.state.title         = stationName;
+    this.state.startedAt     = Date.now();
+    this.state.isPlaying     = false;
+    this.state.radioStatus   = 'connecting';
+    this._retryCount         = 0;
+    this.updateUI();
+
+    this._startStream(streamUrl);
+  },
+
+  _startStream(streamUrl) {
+    const audio = this.radioAudio;
+    this._removeRadioListeners();
+
+    const on = (evt, fn) => { audio.addEventListener(evt, fn); this._radioListeners.push([evt, fn]); };
+
+    on('loadstart', ()  => this._setStatus('connecting'));
+    on('canplay',   ()  => {
+      this._clearStallTimer();
+      this._setStatus('buffering');
+      audio.play().catch(err => this._handlePlayError(err, streamUrl));
     });
-    
-    this.updateMediaSession();
+    on('playing',   ()  => { this._clearStallTimer(); this._setStatus('playing'); });
+    on('waiting',   ()  => { this._setStatus('buffering'); this._startStallTimer(streamUrl); });
+    on('stalled',   ()  => { this._setStatus('buffering'); this._startStallTimer(streamUrl); });
+    on('pause',     ()  => { if (this.state.currentSource === 'radio') this.updateUI(); });
+    on('error',     ()  => this._handleStreamError(streamUrl));
+
+    audio.src = streamUrl;
+    audio.load();
+  },
+
+  _handlePlayError(err, streamUrl) {
+    console.warn('[Player] play() rejected:', err.name, err.message);
+    if (err.name === 'NotAllowedError') {
+      this._setStatus('failed');
+      this._showAutoplayOverlay();
+    } else {
+      this._setStatus('failed');
+      Hub.ui?.toast?.('Playback failed — check station URL', 'error');
+    }
+  },
+
+  _handleStreamError(streamUrl) {
+    const code = this.radioAudio.error?.code ?? '?';
+    console.error('[Player] Audio error code:', code);
+
+    if (this._retryCount < 1) {
+      this._retryCount++;
+      console.log('[Player] Retrying stream (attempt', this._retryCount, ')');
+      this._setStatus('connecting');
+      setTimeout(() => {
+        if (this.state.currentSource === 'radio') {
+          this.radioAudio.load();
+          this.radioAudio.play().catch(err => this._handlePlayError(err, streamUrl));
+        }
+      }, 1500);
+    } else {
+      this._setStatus('failed');
+      Hub.ui?.toast?.('Station offline or blocked', 'error');
+    }
+  },
+
+  _startStallTimer(streamUrl) {
+    this._clearStallTimer();
+    this._stallTimer = setTimeout(() => {
+      if (this.state.radioStatus !== 'playing' && this._retryCount < 1) {
+        console.log('[Player] Stall timeout — retrying');
+        this._retryCount++;
+        this._setStatus('connecting');
+        this.radioAudio.load();
+        this.radioAudio.play().catch(err => this._handlePlayError(err, streamUrl));
+      }
+    }, 6000);
+  },
+
+  _clearStallTimer() {
+    if (this._stallTimer) { clearTimeout(this._stallTimer); this._stallTimer = null; }
+  },
+
+  _setStatus(status) {
+    this.state.radioStatus = status;
+    this.state.isPlaying   = status === 'playing';
     this.updateUI();
   },
 
-  /** Play YouTube Music (called from music.js) */
+  _removeRadioListeners() {
+    this._radioListeners.forEach(([e, fn]) => this.radioAudio.removeEventListener(e, fn));
+    this._radioListeners = [];
+  },
+
+  _stopRadioHard() {
+    this._clearStallTimer();
+    this._removeRadioListeners();
+    this.radioAudio.pause();
+    this.radioAudio.src = '';
+    try { this.radioAudio.load(); } catch (_) {}
+  },
+
+  _showAutoplayOverlay() {
+    document.getElementById('autoplayOverlay')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'autoplayOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    overlay.innerHTML = `
+      <div style="background:#1E2738;border-radius:1rem;padding:2rem;max-width:400px;width:90%;text-align:center;border:1px solid rgba(255,255,255,.1);">
+        <div style="font-size:3rem;margin-bottom:1rem;">📻</div>
+        <h2 style="font-size:1.4rem;font-weight:700;margin-bottom:.5rem;">Tap to Start Audio</h2>
+        <p style="color:#9ca3af;font-size:.875rem;margin-bottom:1.5rem;">Your browser requires a tap to begin audio playback.</p>
+        <button id="autoplayTapBtn" style="background:#3b82f6;color:#fff;border:none;border-radius:.5rem;padding:.75rem 2rem;font-size:1rem;font-weight:600;cursor:pointer;width:100%;">
+          ▶ Play ${Hub.utils.esc(this.state.title)}
+        </button>
+        <br><br>
+        <button onclick="document.getElementById('autoplayOverlay').remove()"
+          style="background:transparent;color:#6b7280;border:none;cursor:pointer;font-size:.85rem;">Cancel</button>
+      </div>`;
+    document.body.appendChild(overlay);
+    document.getElementById('autoplayTapBtn').onclick = () => {
+      overlay.remove();
+      this.radioAudio.play()
+        .then(() => this._setStatus('playing'))
+        .catch(() => { this._setStatus('failed'); Hub.ui?.toast?.('Audio failed', 'error'); });
+    };
+  },
+
+  // ── YouTube / Spotify ──────────────────────────────────────
+
   playYouTube(title = 'YouTube Music') {
-    console.log('[Player] Play YouTube:', title);
-    
-    // Stop radio if playing
-    if (this.state.currentSource === 'radio') {
-      this.radioAudio.pause();
-    }
-    
+    if (this.state.currentSource === 'radio') this._stopRadioHard();
     this.state.currentSource = 'youtube';
-    this.state.title = title;
-    this.state.isPlaying = true;
-    this.state.startedAt = Date.now();
-    
+    this.state.title         = title;
+    this.state.isPlaying     = true;
+    this.state.startedAt     = Date.now();
+    this.state.radioStatus   = '';
     this.updateMediaSession();
     this.updateUI();
   },
 
-  /** Pause current playback */
   pause() {
-    console.log('[Player] Pause');
-    
-    if (this.state.currentSource === 'radio') {
-      this.radioAudio.pause();
-    } else if (this.state.currentSource === 'youtube') {
-      // Signal to music.js to pause YouTube
-      window.dispatchEvent(new CustomEvent('player:pause-youtube'));
-    }
-    
+    if (this.state.currentSource === 'radio')   this.radioAudio.pause();
+    if (this.state.currentSource === 'youtube') window.dispatchEvent(new CustomEvent('player:pause-youtube'));
     this.state.isPlaying = false;
     this.updateUI();
   },
 
-  /** Resume playback */
   resume() {
-    console.log('[Player] Resume');
-    
-    if (this.state.currentSource === 'radio') {
-      this.radioAudio.play();
-    } else if (this.state.currentSource === 'youtube') {
-      // Signal to music.js to resume YouTube
+    if (this.state.currentSource === 'radio')
+      this.radioAudio.play().catch(() => this._showAutoplayOverlay());
+    if (this.state.currentSource === 'youtube')
       window.dispatchEvent(new CustomEvent('player:resume-youtube'));
-    }
-    
     this.state.isPlaying = true;
     this.updateUI();
   },
 
-  /** Stop all playback */
   stop() {
-    console.log('[Player] Stop');
-    
-    if (this.state.currentSource === 'radio') {
-      this.radioAudio.pause();
-      this.radioAudio.src = '';
-    } else if (this.state.currentSource === 'youtube') {
+    this._stopRadioHard();
+    if (this.state.currentSource === 'youtube')
       window.dispatchEvent(new CustomEvent('player:stop-youtube'));
-    }
-    
     this.state.currentSource = null;
-    this.state.title = '';
-    this.state.isPlaying = false;
-    this.state.startedAt = null;
-    
+    this.state.title         = '';
+    this.state.isPlaying     = false;
+    this.state.startedAt     = null;
+    this.state.radioStatus   = '';
     this.updateMediaSession();
     this.updateUI();
   },
 
-  /** Set volume (0-1) */
   setVolume(level) {
     this.state.volume = Math.max(0, Math.min(1, level));
-    if (this.radioAudio) {
-      this.radioAudio.volume = this.state.volume;
-    }
-    // YouTube volume would be controlled separately if needed
+    if (this.radioAudio) this.radioAudio.volume = this.state.volume;
   },
 
-  /** Setup Media Session API for lockscreen controls */
+  // ── Media Session ──────────────────────────────────────────
+
   setupMediaSession() {
     if (!('mediaSession' in navigator)) return;
-
-    navigator.mediaSession.setActionHandler('play', () => this.resume());
+    navigator.mediaSession.setActionHandler('play',  () => this.resume());
     navigator.mediaSession.setActionHandler('pause', () => this.pause());
-    navigator.mediaSession.setActionHandler('stop', () => this.stop());
+    navigator.mediaSession.setActionHandler('stop',  () => this.stop());
   },
 
-  /** Update Media Session metadata */
   updateMediaSession() {
     if (!('mediaSession' in navigator)) return;
-
-    if (this.state.currentSource) {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: this.state.title,
-        artist: this.state.currentSource === 'radio' ? 'Live Radio' : 'YouTube Music',
-        artwork: [
-          { src: '/favicon.png', sizes: '96x96', type: 'image/png' }
-        ]
-      });
-    } else {
-      navigator.mediaSession.metadata = null;
-    }
+    navigator.mediaSession.metadata = this.state.currentSource
+      ? new MediaMetadata({
+          title:   this.state.title,
+          artist:  this.state.currentSource === 'radio' ? 'Live Radio' : 'Music',
+          artwork: [{ src: '/favicon.png', sizes: '96x96', type: 'image/png' }]
+        })
+      : null;
   },
 
-  /** Update all player UI widgets */
+  // ── UI (in-place update — no duplication) ─────────────────
+
   updateUI() {
-    // Update dashboard widget
-    const dashWidget = document.getElementById('nowPlayingWidget');
-    if (dashWidget) {
-      this.renderWidget(dashWidget);
-    }
-
-    // Update standby widget
-    const standbyWidget = document.getElementById('standbyNowPlaying');
-    if (standbyWidget) {
-      this.renderWidget(standbyWidget);
-    }
+    this._renderInPlace('nowPlayingWidget');
+    this._renderInPlace('standbyNowPlaying');
   },
 
-  /** Render player widget */
-  renderWidget(container) {
+  _renderInPlace(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
     if (!this.state.currentSource) {
-      container.innerHTML = `
-        <div class="text-center text-gray-500 py-4">
-          <div class="text-3xl mb-2">🎵</div>
-          <p class="text-sm">Nothing playing</p>
-        </div>
-      `;
+      // Only write if not already in idle state
+      if (!container.querySelector('.player-idle')) {
+        container.innerHTML = `
+          <div class="player-idle text-center text-gray-500 py-4">
+            <div class="text-3xl mb-2">🎵</div>
+            <p class="text-sm">Nothing playing</p>
+          </div>`;
+      }
       return;
     }
 
-    const icon = this.state.currentSource === 'radio' ? '📻' : '🎵';
+    const icon        = this.state.currentSource === 'radio' ? '📻' : '🎵';
     const sourceLabel = this.state.currentSource === 'radio' ? 'Radio' : 'Music';
-    
+    const statusText  = this._statusLabel();
+    const statusClass = this.state.isPlaying              ? 'text-green-400'
+                      : this.state.radioStatus === 'failed' ? 'text-red-400'
+                      :                                      'text-yellow-400';
+
+    // Update existing widget in-place
+    const existing = container.querySelector('.player-widget');
+    if (existing) {
+      existing.querySelector('.p-icon').textContent  = icon;
+      existing.querySelector('.p-source').textContent = sourceLabel;
+      existing.querySelector('.p-title').textContent  = this.state.title;
+      const statusEl = existing.querySelector('.p-status');
+      statusEl.textContent = statusText;
+      statusEl.className   = `p-status text-xs ${statusClass}`;
+      existing.querySelector('.p-buttons').innerHTML = this._buttonsHTML();
+      return;
+    }
+
+    // First render
     container.innerHTML = `
-      <div class="flex items-center justify-between gap-4">
+      <div class="player-widget flex items-center justify-between gap-4">
         <div class="flex items-center gap-3 flex-1 min-w-0">
-          <div class="text-3xl">${icon}</div>
+          <div class="p-icon text-3xl">${icon}</div>
           <div class="flex-1 min-w-0">
-            <p class="text-xs text-gray-400 uppercase tracking-wide">${sourceLabel}</p>
-            <p class="font-semibold truncate">${this.state.title}</p>
-            <p class="text-xs ${this.state.isPlaying ? 'text-green-400' : 'text-gray-400'}">
-              ${this.state.isPlaying ? '▶ Playing' : '⏸ Paused'}
-            </p>
+            <p class="p-source text-xs text-gray-400 uppercase tracking-wide">${sourceLabel}</p>
+            <p class="p-title font-semibold truncate">${Hub.utils.esc(this.state.title)}</p>
+            <p class="p-status text-xs ${statusClass}">${statusText}</p>
           </div>
         </div>
-        <div class="flex gap-2">
-          ${this.state.isPlaying 
-            ? '<button onclick="Hub.player.pause()" class="btn btn-secondary p-2">⏸</button>'
-            : '<button onclick="Hub.player.resume()" class="btn btn-primary p-2">▶</button>'
-          }
-          <button onclick="Hub.player.stop()" class="btn btn-secondary p-2">⏹</button>
-        </div>
-      </div>
-    `;
+        <div class="p-buttons flex gap-2">${this._buttonsHTML()}</div>
+      </div>`;
   },
 
-  /** Get formatted playback duration */
+  _statusLabel() {
+    const s = this.state.radioStatus;
+    if (s === 'connecting')    return '⏳ Connecting…';
+    if (s === 'buffering')     return '⏳ Buffering…';
+    if (s === 'failed')        return '❌ Failed';
+    if (this.state.isPlaying)  return '▶ Playing';
+    return '⏸ Paused';
+  },
+
+  _buttonsHTML() {
+    const play  = `<button onclick="Hub.player.resume()" class="btn btn-primary p-2">▶</button>`;
+    const pause = `<button onclick="Hub.player.pause()"  class="btn btn-secondary p-2">⏸</button>`;
+    const stop  = `<button onclick="Hub.player.stop()"   class="btn btn-secondary p-2">⏹</button>`;
+    return (this.state.isPlaying ? pause : play) + stop;
+  },
+
   getPlaybackDuration() {
     if (!this.state.startedAt) return '0:00';
-    
-    const elapsed = Math.floor((Date.now() - this.state.startedAt) / 1000);
-    const mins = Math.floor(elapsed / 60);
-    const secs = elapsed % 60;
+    const s    = Math.floor((Date.now() - this.state.startedAt) / 1000);
+    const mins = Math.floor(s / 60);
+    const secs = s % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   }
 };
