@@ -442,10 +442,9 @@ Hub.control = {
 
   manualChoreReset() {
     if (!confirm('Reset ALL chores to pending?')) return;
-    Hub.db?.resetChores?.(Hub.state?.household_id).then(() => {
-      Hub.ui?.toast?.('All chores reset!', 'success');
-      this._log('Manual chore reset');
-    }).catch(e => Hub.ui?.toast?.('Reset failed: ' + e.message, 'error'));
+    Hub.app?._callChoreResetEndpoint?.()
+      .then(() => { Hub.ui?.toast?.('All chores reset!', 'success'); this._log('Manual chore reset'); })
+      .catch(e => Hub.ui?.toast?.('Reset: ' + (e?.message || 'failed'), 'error'));
   },
 
   reloadStream() {
@@ -711,13 +710,21 @@ Hub.control = {
 
   simWeather(type) {
     const data = {
-      snow:  { headline:'Heavy snow expected', today:{high_f:28,low_f:18}, hazards:['Winter storm warning'] },
-      storm: { headline:'Severe thunderstorms', today:{high_f:65,low_f:55}, hazards:['Tornado watch'] },
-      clear: { headline:'Beautiful sunny day', today:{high_f:75,low_f:60}, hazards:[] },
+      snow:  { headline:'Heavy snow expected', today:{high_f:28,low_f:18}, tomorrow:{high_f:24,low_f:14}, hazards:['Winter storm warning in effect'] },
+      storm: { headline:'Severe thunderstorms likely', today:{high_f:65,low_f:55}, tomorrow:{high_f:70,low_f:58}, hazards:['Tornado watch until 8pm'] },
+      clear: { headline:'Beautiful sunny day', today:{high_f:75,low_f:60}, tomorrow:{high_f:78,low_f:62}, hazards:[] },
     };
-    Hub.ai._simData = data[type];
-    Hub.ui?.toast?.(`Simulating: ${type}`, 'info');
-    Hub.standby?._loadWeather?.();
+    const sim = data[type];
+    if (!sim) return;
+    // Inject into ai cache so standby._loadWeather picks it up
+    if (Hub.ai) {
+      Hub.ai._cache     = sim;
+      Hub.ai._cacheTime = Date.now();
+    }
+    Hub.ui?.toast?.(`Simulating: ${type} weather`, 'info');
+    this._log(`Sim weather: ${type}`);
+    // If currently on standby, refresh
+    if (Hub.router.current === 'standby') Hub.standby?._loadWeather?.();
   },
 
   simAlert() {

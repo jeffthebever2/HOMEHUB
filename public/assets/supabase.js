@@ -434,6 +434,86 @@ const SUPABASE_CONFIG = {
       const { data } = await timed(sb.from('seen_alerts').select('id').eq('user_id', userId).eq('alert_id', alertId).maybeSingle());
       return !!data;
     },
+
+    // ── Grocery ────────────────────────────────────────────────
+    async getGroceryItems(householdId) {
+      const { data, error } = await timed(
+        sb.from('grocery_items')
+          .select('*')
+          .eq('household_id', householdId)
+          .order('position', { ascending: true })
+          .order('created_at', { ascending: false })
+      );
+      if (error) throw error;
+      return data || [];
+    },
+
+    async addGroceryItem(householdId, text, addedByName) {
+      // Get current max position so new item goes to top (position 0 means insert before, use negative trick)
+      const { data, error } = await timed(
+        sb.from('grocery_items')
+          .insert({
+            household_id: householdId,
+            text: text.trim(),
+            done: false,
+            added_by: Hub.state?.user?.id || null,
+            added_by_name: addedByName || Hub.utils.getUserFirstName() || null,
+            position: 0
+          })
+          .select()
+          .single()
+      );
+      if (error) throw error;
+      return data;
+    },
+
+    async toggleGroceryItem(id, done) {
+      const { data, error } = await timed(
+        sb.from('grocery_items')
+          .update({ done })
+          .eq('id', id)
+          .select()
+          .single()
+      );
+      if (error) throw error;
+      return data;
+    },
+
+    async deleteGroceryItem(id) {
+      const { error } = await timed(
+        sb.from('grocery_items').delete().eq('id', id)
+      );
+      if (error) throw error;
+    },
+
+    async clearCompletedGroceryItems(householdId) {
+      const { error } = await timed(
+        sb.from('grocery_items')
+          .delete()
+          .eq('household_id', householdId)
+          .eq('done', true)
+      );
+      if (error) throw error;
+    },
+
+    async clearAllGroceryItems(householdId) {
+      const { error } = await timed(
+        sb.from('grocery_items').delete().eq('household_id', householdId)
+      );
+      if (error) throw error;
+    },
+
+    subscribeToGrocery(householdId, callback) {
+      return sb.channel('grocery:' + householdId)
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'grocery_items',
+          filter: `household_id=eq.${householdId}`
+        }, callback)
+        .subscribe();
+    },
+
     async logSystem(source, service, status, message, latencyMs) {
       await timed(sb.from('system_logs').insert({ source, service, status, message, latency_ms: latencyMs }).select());
     }
