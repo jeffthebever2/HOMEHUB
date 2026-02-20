@@ -4,6 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>🏠 Home Hub</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#1e293b">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
 
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -211,6 +217,19 @@
     /* ── Admin panel grid tiles ── */
     #adminPanelContent .card { transition: background .15s, transform .1s; }
     #adminPanelContent .card:active { transform: scale(0.96); }
+    /* ── Player visualizer ── */
+    @keyframes vizBar {
+      from { height: 3px; opacity: .5; }
+      to   { height: 16px; opacity: 1; }
+    }
+    /* ── Marquee for long track titles ── */
+    @keyframes marquee {
+      0%   { transform: translateX(0); }
+      100% { transform: translateX(-50%); }
+    }
+    /* ── Chore SVG check transition ── */
+    .chore-check-svg { transition: transform .2s cubic-bezier(0.34,1.56,0.64,1); }
+    .chore-card { transition: opacity .3s, background .3s; }
   </style>
 </head>
 <body>
@@ -286,13 +305,34 @@
             <p class="text-blue-400 text-base mt-1" id="dashboardGreeting"></p>
           </div>
           <div class="flex flex-wrap gap-2">
-            <button onclick="Hub.router.go('standby')" class="btn btn-secondary text-sm py-2 px-4">🖥 Standby</button>
-            <button onclick="Hub.router.go('status')" class="btn btn-secondary text-sm py-2 px-4">📊 Status</button>
-            <button onclick="Hub.router.go('settings')" class="btn btn-secondary text-sm py-2 px-4">⚙️ Settings</button>
-            <button onclick="Hub.router.go('music')" class="btn btn-secondary text-sm py-2 px-4">🎵 Music</button>
-            <button onclick="Hub.router.go('radio')" class="btn btn-secondary text-sm py-2 px-4">📻 Radio</button>
-            <button onclick="Hub.router.go('grocery')" class="btn btn-secondary text-sm py-2 px-4">🛒 Grocery</button>
-            <button id="btnSignOut" class="btn btn-secondary text-sm py-2 px-4">Sign Out</button>
+            <button onclick="Hub.router.go('standby')" class="btn btn-secondary text-sm py-2 px-4">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+              Standby
+            </button>
+            <button onclick="Hub.router.go('status')" class="btn btn-secondary text-sm py-2 px-4">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+              Status
+            </button>
+            <button onclick="Hub.router.go('settings')" class="btn btn-secondary text-sm py-2 px-4">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              Settings
+            </button>
+            <button onclick="Hub.router.go('music')" class="btn btn-secondary text-sm py-2 px-4">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+              Music
+            </button>
+            <button onclick="Hub.router.go('radio')" class="btn btn-secondary text-sm py-2 px-4">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 17l9-9 9 9"/><rect x="5" y="17" width="14" height="4" rx="1"/></svg>
+              Radio
+            </button>
+            <button onclick="Hub.router.go('grocery')" class="btn btn-secondary text-sm py-2 px-4">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+              Grocery
+            </button>
+            <button id="btnSignOut" class="btn btn-secondary text-sm py-2 px-4">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+              Sign Out
+            </button>
           </div>
         </header>
 
@@ -624,13 +664,58 @@
               <button id="btnUseLocation" class="btn btn-secondary text-sm">📍 Use Current Location</button>
             </div>
           </div>
-          <!-- Immich -->
+          <!-- Standby Photos -->
           <div class="card">
-            <h2 class="text-xl font-bold mb-4">📸 Immich Photos</h2>
+            <h2 class="text-xl font-bold mb-4">
+              <svg style="display:inline;vertical-align:-.1em;margin-right:.4em" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              Standby Photos
+            </h2>
             <div class="space-y-4">
-              <div><label class="block text-sm font-medium mb-2">Immich Base URL</label><input id="settingImmichUrl" type="url" class="input" placeholder="http://192.168.1.100:2283"></div>
-              <div><label class="block text-sm font-medium mb-2">API Key / Shared Token</label><input id="settingImmichKey" type="password" class="input" placeholder="Your Immich API key or shared link key"></div>
-              <div><label class="block text-sm font-medium mb-2">Album ID</label><input id="settingImmichAlbum" type="text" class="input" placeholder="Shared album ID"></div>
+              <div>
+                <label class="block text-sm font-medium mb-2">Photo Source</label>
+                <select id="settingPhotoProvider" class="input">
+                  <option value="imgur">Imgur Album</option>
+                  <option value="google">Google Photos Album</option>
+                  <option value="immich">Immich (local NAS)</option>
+                  <option value="off">Off (placeholders)</option>
+                </select>
+              </div>
+
+              <!-- Google Photos settings -->
+              <div id="photoSettingsGoogle" style="display:none;" class="space-y-3 border-l-2 border-blue-600 pl-4">
+                <p class="text-xs text-blue-400">Uses your Google account — no extra sign-in needed</p>
+                <div>
+                  <label class="block text-sm font-medium mb-2">Album</label>
+                  <div class="flex gap-2 mb-2">
+                    <button id="btnLoadGoogleAlbums" class="btn btn-secondary text-sm">Load My Albums</button>
+                    <button id="btnTestSlideshow" class="btn btn-secondary text-sm">Test Slideshow</button>
+                  </div>
+                  <select id="settingGooglePhotosAlbumSelect" class="input mb-2">
+                    <option value="">— click Load My Albums first —</option>
+                  </select>
+                  <input id="settingGooglePhotosAlbumId" type="hidden">
+                  <input id="settingGooglePhotosAlbumTitle" type="text" class="input text-xs text-gray-400" placeholder="Album title (auto-filled)" readonly>
+                </div>
+                <p class="text-xs text-gray-500">If photos stop working, sign out and back in to re-grant Photos permission.</p>
+              </div>
+
+              <!-- Imgur settings -->
+              <div id="photoSettingsImgur" class="space-y-3 border-l-2 border-orange-500 pl-4">
+                <p class="text-xs text-orange-400">Public Imgur album — no account needed</p>
+                <div>
+                  <label class="block text-sm font-medium mb-2">Imgur Album ID</label>
+                  <input id="settingImgurAlbum" type="text" class="input" placeholder="kAG2MS3">
+                </div>
+                <button id="btnTestSlideshow2" class="btn btn-secondary text-sm" onclick="Hub.app._testSlideshow()">Test Slideshow</button>
+              </div>
+
+              <!-- Immich settings -->
+              <div id="photoSettingsImmich" style="display:none;" class="space-y-3 border-l-2 border-purple-500 pl-4">
+                <p class="text-xs text-purple-400">Local Immich server — must be on same network</p>
+                <div><label class="block text-sm font-medium mb-2">Immich Base URL</label><input id="settingImmichUrl" type="url" class="input" placeholder="http://192.168.1.100:2283"></div>
+                <div><label class="block text-sm font-medium mb-2">API Key / Shared Token</label><input id="settingImmichKey" type="password" class="input" placeholder="Your Immich API key"></div>
+                <div><label class="block text-sm font-medium mb-2">Album ID (optional)</label><input id="settingImmichAlbum" type="text" class="input" placeholder="Shared album ID or leave blank for library"></div>
+              </div>
             </div>
           </div>
           <!-- Standby -->
@@ -748,17 +833,17 @@
             <p id="fullscreenStatus" class="text-xs text-gray-500 mt-2 text-center"></p>
           </div>
 
-          <!-- Admin Panel -->
-          <div class="card" style="border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.05);">
+          <!-- Admin Panel — button shown/hidden based on role by _loadSettingsForm() -->
+          <div id="settingsAdminCard" class="card" style="border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.05);">
             <div class="flex items-center justify-between">
               <div>
                 <h2 class="text-xl font-bold">🛠 Admin Panel</h2>
                 <p class="text-gray-400 text-sm mt-1">Live control console — system, media, display, debug, simulation</p>
               </div>
-              <button onclick="Hub.router.go('admin')"
-                class="btn btn-primary px-6 py-3 text-base font-bold" style="background:#dc2626;">
-                Open Admin →
-              </button>
+              <div id="settingsAdminBtn">
+                <!-- Populated by _loadSettingsForm based on role -->
+                <span class="text-gray-500 text-sm">Checking access…</span>
+              </div>
             </div>
           </div>
 
@@ -770,6 +855,21 @@
   </div>
 
   <!-- ========== MODALS ========== -->
+  <!-- Grocery: Confirm Clear All modal -->
+  <div id="groceryClearModal" class="modal-overlay hidden">
+    <div class="card max-w-sm w-full text-center">
+      <p class="text-3xl mb-3">🗑️</p>
+      <h2 class="text-xl font-bold mb-2">Clear All Groceries?</h2>
+      <p class="text-gray-400 text-sm mb-6">This will delete every item from the household list. This cannot be undone.</p>
+      <div class="flex gap-3">
+        <button onclick="Hub.ui.closeModal('groceryClearModal')"
+          class="btn btn-secondary flex-1">Cancel</button>
+        <button onclick="Hub.grocery.confirmClearAllConfirmed()"
+          class="btn btn-primary flex-1" style="background:#dc2626;">Yes, Clear All</button>
+      </div>
+    </div>
+  </div>
+
   <div id="addDogModal" class="modal-overlay hidden">
     <div class="card max-w-lg w-full">
       <h2 class="text-2xl font-bold mb-4">Add Dog</h2>
@@ -903,8 +1003,6 @@
       </div>
     </div>
 
-  <!-- Admin quick-access FAB (always visible on screen) -->
-  <div id="adminQuickFab" title="Admin Panel" onclick="Hub.router.go('admin')" style="display:none;">🛠</div>
 
   <!-- Scripts (order matters) -->
   <script src="assets/utils.js"></script>
@@ -920,9 +1018,40 @@
   <script src="assets/grocery.js"></script>
   <script src="assets/standby.js"></script>
   <script src="assets/immich.js"></script>
+  <script src="assets/googlePhotos.js"></script>
+  <script src="assets/photos.js"></script>
   <script src="assets/player.js"></script>
   <script src="assets/radio.js"></script>
   <script src="assets/music.js"></script>
   <script src="assets/app.js"></script>
+
+  <!-- Twemoji: replaces emoji characters with SVG images for Chromium/Pi kiosk compatibility -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/twemoji.min.js" crossorigin="anonymous"></script>
+  <script>
+    // Parse only page headings and standby panel headers — not the full DOM (perf-safe)
+    document.addEventListener('DOMContentLoaded', () => {
+      const parseTargets = () => {
+        // Standby panel headers, page headers, dashboard title
+        document.querySelectorAll('.glass-panel h3, #dashboardPage h1, .page header h1, .card h2').forEach(el => {
+          twemoji.parse(el, { folder: 'svg', ext: '.svg', base: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/' });
+        });
+      };
+      // Run after fonts load
+      setTimeout(parseTargets, 500);
+      // Re-run on navigation (router emits hashchange)
+      window.addEventListener('hashchange', () => setTimeout(parseTargets, 300));
+    });
+  </script>
+
+  <!-- Service Worker registration (PWA — no UI here, install UI lives in Admin Panel only) -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').then(reg => {
+          console.log('[SW] Registered, scope:', reg.scope);
+        }).catch(err => console.warn('[SW] Registration failed:', err));
+      });
+    }
+  </script>
 </body>
 </html>

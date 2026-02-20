@@ -28,8 +28,8 @@ Hub.standby = {
       this._loadChores();
     }, 300000);
 
-    // Start photo slideshow
-    Hub.immich.startStandbySlideshow();
+    // Start photo slideshow (unified provider — picks Google / Imgur / Immich per settings)
+    Hub.photos.startStandbySlideshow();
 
     // Wake on interaction
     const wake = () => {
@@ -48,7 +48,7 @@ Hub.standby = {
     this._dataInterval = null;
     
     // Stop photo slideshow
-    Hub.immich.stopStandbySlideshow();
+    Hub.photos.stopStandbySlideshow();
   },
 
   /** Update clock display */

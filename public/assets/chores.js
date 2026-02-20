@@ -202,11 +202,16 @@ Hub.chores = {
         var list = grouped[category];
         var pending = list.filter(function (c) { return c.status !== 'done'; });
         var done = list.filter(function (c) { return c.status === 'done'; });
+        var pct = list.length ? Math.round(done.length / list.length * 100) : 0;
+        var barColor = pct === 100 ? '#16a34a' : pct >= 60 ? '#f59e0b' : '#3b82f6';
 
-        return '<div class="mb-8">' +
-          '<div class="flex items-center justify-between mb-4">' +
+        return '<div class="mb-8" data-category="' + Hub.utils.esc(category) + '">' +
+          '<div class="flex items-center justify-between mb-2">' +
             '<h2 class="text-2xl font-bold">' + Hub.utils.esc(category) + '</h2>' +
-            '<span class="text-sm text-gray-400">' + pending.length + ' pending / ' + list.length + ' total</span>' +
+            '<span class="text-sm text-gray-400">' + done.length + ' / ' + list.length + ' done</span>' +
+          '</div>' +
+          '<div class="rounded-full overflow-hidden mb-4" style="height:6px;background:#1e2d3d;">' +
+            '<div data-progress-bar style="width:' + pct + '%;height:100%;background:' + barColor + ';border-radius:9999px;transition:width .5s cubic-bezier(0.34,1.1,0.64,1);"></div>' +
           '</div>' +
           '<div class="space-y-3">' +
             [].concat(pending, done).map(function (c) { return self._renderChoreCard(c); }).join('') +
@@ -219,62 +224,140 @@ Hub.chores = {
     }
   },
 
-  /** Render a single chore card */
+  /** Render a single chore card — with animated custom checkbox */
   _renderChoreCard(c) {
     var isDone = c.status === 'done';
-    var completerHtml = '';
-    if (isDone && c.completed_by_name) {
-      completerHtml = '<p class="text-sm text-green-400 mt-2">✓ Completed by ' + Hub.utils.esc(c.completed_by_name) + '</p>';
-    } else if (isDone && c.completer_email) {
-      completerHtml = '<p class="text-sm text-green-400 mt-2">✓ Completed by ' + Hub.utils.esc(c.completer_email) + '</p>';
-    }
+    var completerName = (isDone && c.completed_by_name) ? c.completed_by_name : (isDone && c.completer_email ? c.completer_email : null);
 
-    return '<div class="card ' + (isDone ? 'opacity-60 bg-gray-800' : '') + '">' +
-      '<div class="flex items-start justify-between gap-4">' +
-        '<div class="flex-1 min-w-0">' +
-          '<div class="flex items-start gap-3">' +
-            '<input type="checkbox" ' + (isDone ? 'checked' : '') +
-              ' onchange="Hub.chores.toggleChore(\'' + c.id + '\', this.checked, this)"' +
-              ' class="mt-1 w-5 h-5 rounded border-gray-600 bg-gray-700 checked:bg-green-600 cursor-pointer flex-shrink-0">' +
-            '<div class="flex-1">' +
-              '<h3 class="text-lg font-semibold ' + (isDone ? 'line-through text-gray-500' : '') + '">' + Hub.utils.esc(c.title) + '</h3>' +
-              (c.description ? '<p class="text-gray-400 text-sm mt-1">' + Hub.utils.esc(c.description) + '</p>' : '') +
-              '<div class="flex gap-2 mt-2">' +
-                (c.recurrence ? '<span class="inline-block px-2 py-1 rounded text-xs bg-blue-600">' + Hub.utils.esc(c.recurrence) + '</span>' : '') +
-                (c.priority ? '<span class="inline-block px-2 py-1 rounded text-xs bg-gray-600">' + Hub.utils.esc(c.priority) + '</span>' : '') +
-              '</div>' +
-              completerHtml +
-            '</div>' +
-          '</div>' +
-        '</div>' +
-        '<div class="flex gap-2 flex-shrink-0">' +
-          '<button onclick="Hub.chores.editChore(\'' + c.id + '\')" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg font-semibold transition-colors" title="Edit">✏️</button>' +
-          '<button onclick="Hub.chores.remove(\'' + c.id + '\')" class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded-lg font-semibold transition-colors" title="Delete">🗑️</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>';
+    // SVG animated checkmark: 18×18 viewBox, path draws in on completion
+    var checkSvg = `
+      <svg class="chore-check-svg" viewBox="0 0 20 20" width="22" height="22"
+           onclick="Hub.chores.toggleChore('${c.id}', ${isDone ? 'false' : 'true'}, this)"
+           style="cursor:pointer;flex-shrink:0;margin-top:2px;">
+        <circle cx="10" cy="10" r="9"
+          fill="${isDone ? '#16a34a' : 'transparent'}"
+          stroke="${isDone ? '#16a34a' : '#4b5563'}"
+          stroke-width="1.5"
+          style="transition:fill .25s,stroke .25s;"/>
+        <path class="check-path" d="M5.5 10.5 L8.5 13.5 L14.5 7"
+          fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+          stroke-dasharray="12" stroke-dashoffset="${isDone ? '0' : '12'}"
+          style="transition:stroke-dashoffset .3s ease-out .05s;"/>
+      </svg>`;
+
+    var titleClass = isDone
+      ? 'chore-title text-lg font-semibold text-gray-500 relative'
+      : 'chore-title text-lg font-semibold';
+
+    // Animated strikethrough via pseudo-width
+    var strikeStyle = isDone
+      ? 'text-decoration:line-through;text-decoration-color:rgba(156,163,175,.6);'
+      : '';
+
+    return `<div class="card chore-card${isDone ? ' chore-done' : ''}" data-chore-id="${c.id}"
+        style="transition:opacity .3s,background .3s;${isDone ? 'opacity:.65;' : ''}">
+      <div class="flex items-start justify-between gap-4">
+        <div class="flex items-start gap-3 flex-1 min-w-0">
+          ${checkSvg}
+          <div class="flex-1 min-w-0">
+            <h3 class="${titleClass}" style="${strikeStyle}">${Hub.utils.esc(c.title)}</h3>
+            ${c.description ? `<p class="text-gray-400 text-sm mt-1">${Hub.utils.esc(c.description)}</p>` : ''}
+            <div class="flex gap-2 mt-2 flex-wrap">
+              ${c.recurrence ? `<span class="inline-block px-2 py-0.5 rounded text-xs bg-blue-900 text-blue-300">${Hub.utils.esc(c.recurrence)}</span>` : ''}
+              ${c.category  ? `<span class="inline-block px-2 py-0.5 rounded text-xs bg-gray-700 text-gray-300">${Hub.utils.esc(c.category)}</span>` : ''}
+            </div>
+            ${completerName ? `<p class="text-xs text-green-400 mt-1">✓ ${Hub.utils.esc(completerName)}</p>` : ''}
+          </div>
+        </div>
+        <div class="flex gap-2 flex-shrink-0">
+          <button onclick="Hub.chores.editChore('${c.id}')"
+            class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg font-semibold transition-colors" title="Edit">✏️</button>
+          <button onclick="Hub.chores.remove('${c.id}')"
+            class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded-lg font-semibold transition-colors" title="Delete">🗑️</button>
+        </div>
+      </div>
+    </div>`;
   },
 
-  /** Toggle chore completion via checkbox */
-  async toggleChore(choreId, checked, checkbox) {
-    if (checked) {
-      var name = await this.askWhoDidIt();
-      if (!name) {
-        if (checkbox) checkbox.checked = false;
-        return;
-      }
-      await this.markDone(choreId, name);
-      // Trigger confetti
-      const el = event?.target?.closest('.chore-item');
-      if (el) {
-        const rect = el.getBoundingClientRect();
-        this._createConfetti(rect.left + rect.width/2, rect.top + rect.height/2);
-      }
-    } else {
-      await Hub.db.updateChore(choreId, { status: 'pending', completed_by_name: null });
+  /** Animate a chore card immediately (optimistic), then sync DB */
+  async toggleChore(choreId, nowDone, svgEl) {
+    // Find the card
+    const card = document.querySelector(`[data-chore-id="${choreId}"]`);
+    const circle = svgEl?.closest?.('svg')?.querySelector?.('circle') || card?.querySelector?.('circle');
+    const path   = svgEl?.closest?.('svg')?.querySelector?.('.check-path') || card?.querySelector?.('.check-path');
+    const title  = card?.querySelector?.('.chore-title');
+
+    // Haptic feedback on mobile
+    if (navigator.vibrate) navigator.vibrate(nowDone ? [30] : [10, 10, 10]);
+
+    // Scale pop on the SVG
+    if (svgEl) {
+      const s = svgEl.closest ? svgEl.closest('svg') || svgEl : svgEl;
+      s.style.transform = 'scale(1.35)';
+      setTimeout(() => s.style.transform = '', 200);
+      s.style.transition = 'transform .2s cubic-bezier(0.34,1.56,0.64,1)';
     }
-    await this.load();
+
+    // Optimistic UI — instant visual
+    if (circle) {
+      circle.setAttribute('fill',   nowDone ? '#16a34a' : 'transparent');
+      circle.setAttribute('stroke', nowDone ? '#16a34a' : '#4b5563');
+    }
+    if (path) path.style.strokeDashoffset = nowDone ? '0' : '12';
+    if (card) {
+      card.style.opacity = nowDone ? '0.65' : '1';
+      if (nowDone) card.classList.add('chore-done');
+      else         card.classList.remove('chore-done');
+    }
+    if (title) {
+      title.style.textDecoration = nowDone ? 'line-through' : '';
+      title.style.textDecorationColor = 'rgba(156,163,175,.6)';
+      title.style.color = nowDone ? 'rgb(107,114,128)' : '';
+    }
+
+    // Confetti burst on completion
+    if (nowDone && card) {
+      const rect = card.getBoundingClientRect();
+      this._createConfetti(rect.left + rect.width * 0.5, rect.top + rect.height * 0.5);
+    }
+
+    // DB update
+    try {
+      if (nowDone) {
+        var name = await this.askWhoDidIt();
+        if (!name) {
+          // Rollback
+          if (circle) { circle.setAttribute('fill','transparent'); circle.setAttribute('stroke','#4b5563'); }
+          if (path)   path.style.strokeDashoffset = '12';
+          if (card)   { card.style.opacity = '1'; card.classList.remove('chore-done'); }
+          if (title)  { title.style.textDecoration = ''; title.style.color = ''; }
+          return;
+        }
+        await this.markDone(choreId, name);
+      } else {
+        await Hub.db.updateChore(choreId, { status: 'pending', completed_by_name: null });
+      }
+    } catch (e) {
+      Hub.ui?.toast?.('Failed to save — check connection', 'error');
+    }
+
+    // Animate progress bars in category headers
+    this._updateProgressBars();
     await this.renderDashboard();
+  },
+
+  /** Recalculate and animate all category progress bars */
+  _updateProgressBars() {
+    document.querySelectorAll('[data-progress-bar]').forEach(bar => {
+      const categoryEl = bar.closest('[data-category]');
+      if (!categoryEl) return;
+      const total  = categoryEl.querySelectorAll('.chore-card').length;
+      const done   = categoryEl.querySelectorAll('.chore-done').length;
+      const pct    = total ? Math.round(done / total * 100) : 0;
+      bar.style.transition = 'width .5s cubic-bezier(0.34,1.1,0.64,1)';
+      bar.style.width = pct + '%';
+      bar.style.background = pct === 100 ? '#16a34a' : pct >= 60 ? '#f59e0b' : '#3b82f6';
+    });
   },
 
   /** Edit chore */

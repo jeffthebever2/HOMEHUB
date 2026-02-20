@@ -34,6 +34,13 @@ Hub.router = {
 
   _activate(page) {
     if (!this.VALID_PAGES.includes(page)) page = 'dashboard';
+
+    // Call leave hook on the previous page before switching
+    const prev = Hub.router.current;
+    if (prev && prev !== page) {
+      Hub.app?.onPageLeave?.(prev);
+    }
+
     Hub.router.current = page;
     document.querySelectorAll('.page').forEach(p => { p.classList.remove('active'); p.style.display = 'none'; });
     const el = Hub.utils.$(page + 'Page');

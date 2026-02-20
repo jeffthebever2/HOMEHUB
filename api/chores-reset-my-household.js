@@ -35,7 +35,7 @@ export default async function handler(req, res) {
     if (!email) return res.status(401).json({ error: 'No email in session' });
 
     // 2) Confirm household membership (service role query)
-    const memResp = await fetch(`${SB_URL}/rest/v1/household_members?select=household_id,role&user_email=eq.${encodeURIComponent(email)}&limit=1`, {
+    const memResp = await fetch(`${SB_URL}/rest/v1/household_members?select=household_id,role&email=eq.${encodeURIComponent(email)}&limit=1`, {
       headers: {
         apikey: SB_KEY,
         Authorization: `Bearer ${SB_KEY}`
@@ -81,7 +81,7 @@ export default async function handler(req, res) {
     }
 
     // 5) Reset chores for household
-    const or = encodeURIComponent(`(category.eq.Daily,day_of_week.eq.${dow},category.eq.${dayName})`);
+    const or = encodeURIComponent(`(category.eq.Daily,day_of_week.eq.${dow},category.ilike.${dayName}*)`);
     const patchResp = await fetch(`${SB_URL}/rest/v1/chores?household_id=eq.${householdId}&status=in.(done,skipped)&or=${or}`, {
       method: 'PATCH',
       headers: {

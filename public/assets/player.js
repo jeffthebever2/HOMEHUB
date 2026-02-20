@@ -232,11 +232,26 @@ Hub.player = {
       : null;
   },
 
-  // ── UI (in-place update — no duplication) ─────────────────
+  // ── UI ─────────────────────────────────────────────────────
 
   updateUI() {
     this._renderInPlace('nowPlayingWidget');
     this._renderInPlace('standbyNowPlaying');
+    this._tickProgress();
+  },
+
+  // Live progress ticker for the scrubber
+  _tickProgress() {
+    clearInterval(this._progressTick);
+    if (!this.state.isPlaying || this.state.currentSource === 'radio') return;
+    this._progressTick = setInterval(() => {
+      const bar = document.getElementById('playerScrubber');
+      const cur = document.getElementById('playerCurrentTime');
+      if (!bar || !this.state.startedAt) return;
+      const elapsed = (Date.now() - this.state.startedAt) / 1000;
+      bar.value = Math.min(elapsed, bar.max || elapsed);
+      if (cur) cur.textContent = this._fmtTime(elapsed);
+    }, 500);
   },
 
   _renderInPlace(containerId) {
@@ -245,65 +260,119 @@ Hub.player = {
 
     const isStandby = containerId === 'standbyNowPlaying';
 
-    if (!this.state.currentSource) {
-      if (!container.querySelector('.player-idle')) {
-        if (isStandby) {
-          container.innerHTML = '<p class="text-gray-400">Nothing playing</p>';
-        } else {
-          container.innerHTML = `
-            <div class="player-idle text-center text-gray-500 py-4">
-              <div class="text-3xl mb-2">🎵</div>
-              <p class="text-sm">Nothing playing</p>
-            </div>`;
-        }
-      }
-      return;
-    }
-
-    const icon        = this.state.currentSource === 'radio' ? '📻' : '🎵';
-    const statusText  = this._statusLabel();
-    const statusClass = this.state.isPlaying              ? 'text-green-400'
-                      : this.state.radioStatus === 'failed' ? 'text-red-400'
-                      :                                      'text-yellow-400';
-
-    // Standby: single compact row — no buttons
+    // ── Standby: single compact row ───────────────────────────
     if (isStandby) {
+      if (!this.state.currentSource) {
+        container.innerHTML = '<p class="text-gray-400">Nothing playing</p>';
+        return;
+      }
+      const icon = this.state.currentSource === 'radio' ? '📻' : '🎵';
+      const sc   = this.state.isPlaying ? 'text-green-400' : this.state.radioStatus === 'failed' ? 'text-red-400' : 'text-yellow-400';
       container.innerHTML = `
-        <div class="flex items-center gap-2 leading-tight">
-          <span class="text-base flex-shrink-0">${icon}</span>
+        <div class="flex items-center gap-2 leading-tight overflow-hidden">
+          <span class="flex-shrink-0">${icon}</span>
           <span class="font-semibold truncate flex-1">${Hub.utils.esc(this.state.title)}</span>
-          <span class="${statusClass} text-xs flex-shrink-0">${statusText}</span>
+          <span class="${sc} text-xs flex-shrink-0">${this._statusLabel()}</span>
         </div>`;
       return;
     }
 
-    const sourceLabel = this.state.currentSource === 'radio' ? 'Radio' : 'Music';
-
-    // Full widget — update in-place (no DOM duplication)
-    const existing = container.querySelector('.player-widget');
-    if (existing) {
-      existing.querySelector('.p-icon').textContent  = icon;
-      existing.querySelector('.p-source').textContent = sourceLabel;
-      existing.querySelector('.p-title').textContent  = this.state.title;
-      const statusEl = existing.querySelector('.p-status');
-      statusEl.textContent = statusText;
-      statusEl.className   = `p-status text-xs ${statusClass}`;
-      existing.querySelector('.p-buttons').innerHTML = this._buttonsHTML();
+    // ── Full mini-player ──────────────────────────────────────
+    if (!this.state.currentSource) {
+      container.innerHTML = `
+        <div class="player-idle flex flex-col items-center justify-center gap-3 py-6 text-gray-500">
+          <div style="width:64px;height:64px;border-radius:50%;background:#1e2d3d;display:flex;align-items:center;justify-content:center;font-size:1.8rem;">🎵</div>
+          <p class="text-sm">Nothing playing</p>
+          <p class="text-xs text-gray-600">Use the Radio or Music page to start playback</p>
+        </div>`;
       return;
     }
 
-    // First render of full widget
+    const isPlaying  = this.state.isPlaying;
+    const isRadio    = this.state.currentSource === 'radio';
+    const sc         = isPlaying ? 'text-green-400' : this.state.radioStatus === 'failed' ? 'text-red-400' : 'text-yellow-400';
+    const artBg      = isRadio ? '#1a2535' : '#0f1b2d';
+    const artIcon    = isRadio ? '📻' : '🎵';
+    const volPct     = Math.round(this.state.volume * 100);
+
+    // Visualizer bars (only when playing)
+    const vizBars = isPlaying ? `
+      <div class="player-viz flex items-end gap-0.5" style="height:18px;">
+        ${[1,2,3,4,5].map((_, i) => `
+          <div style="width:3px;border-radius:2px;background:#3b82f6;
+            animation:vizBar ${0.6 + i*0.1}s ease-in-out infinite alternate;
+            animation-delay:${i*0.08}s;"></div>`).join('')}
+      </div>` : '';
+
     container.innerHTML = `
-      <div class="player-widget flex items-center justify-between gap-4">
-        <div class="flex items-center gap-3 flex-1 min-w-0">
-          <div class="p-icon text-3xl">${icon}</div>
+      <div class="player-widget" style="user-select:none;">
+
+        <!-- Art + Info row -->
+        <div class="flex items-center gap-4 mb-4">
+          <!-- Album art / station art -->
+          <div style="width:60px;height:60px;border-radius:.75rem;background:${artBg};
+            display:flex;align-items:center;justify-content:center;font-size:1.8rem;
+            flex-shrink:0;box-shadow:0 4px 16px rgba(0,0,0,.4);">
+            ${artIcon}
+          </div>
+          <!-- Title + status -->
           <div class="flex-1 min-w-0">
-            <p class="p-source text-xs text-gray-400 uppercase tracking-wide">${sourceLabel}</p>
-            <p class="p-title font-semibold truncate">${Hub.utils.esc(this.state.title)}</p>
-            <p class="p-status text-xs ${statusClass}">${statusText}</p>
+            <div class="flex items-center gap-2 mb-0.5">
+              <p class="p-source text-xs text-gray-500 uppercase tracking-wider">${isRadio ? 'Radio' : 'Music'}</p>
+              ${vizBars}
+            </div>
+            <!-- Marquee for long titles -->
+            <div style="overflow:hidden;white-space:nowrap;position:relative;">
+              <p class="p-title font-bold text-base" style="${this.state.title.length > 28 ? 'display:inline-block;animation:marquee 10s linear infinite;padding-right:2rem;' : ''}">${Hub.utils.esc(this.state.title)}</p>
+            </div>
+            <p class="p-status ${sc} text-xs mt-0.5">${this._statusLabel()}</p>
           </div>
         </div>
-        <div class="p-buttons flex gap-2">${this._buttonsHTML()}</div>
+
+        <!-- Progress scrubber (radio = fake, just shows time) -->
+        <div class="flex items-center gap-2 mb-3 text-xs text-gray-500">
+          <span id="playerCurrentTime">${this.getPlaybackDuration()}</span>
+          <input id="playerScrubber" type="range" min="0" max="${isRadio ? 0 : 300}" value="0"
+            class="flex-1" style="accent-color:#3b82f6;height:4px;cursor:${isRadio ? 'default' : 'pointer'};"
+            ${isRadio ? 'disabled' : `oninput="Hub.player._seekTo(this.value)"`}>
+          <span>${isRadio ? 'LIVE' : '—:——'}</span>
+        </div>
+
+        <!-- Transport controls -->
+        <div class="flex items-center justify-between gap-2">
+          <!-- Prev (stub) -->
+          <button onclick="Hub.player.prev?.()" title="Previous"
+            class="btn btn-secondary p-2.5 text-lg" style="border-radius:.6rem;">⏮</button>
+
+          <!-- Play / Pause morph button -->
+          <button id="playerPlayPause"
+            onclick="Hub.player.${isPlaying ? 'pause' : 'resume'}()"
+            class="btn btn-primary flex items-center justify-center"
+            style="width:52px;height:52px;border-radius:50%;font-size:1.25rem;flex-shrink:0;
+              box-shadow:0 4px 16px rgba(59,130,246,.4);transition:transform .1s,box-shadow .2s;"
+            onmousedown="this.style.transform='scale(.92)'" onmouseup="this.style.transform=''">
+            ${isPlaying
+              ? `<svg width="18" height="18" viewBox="0 0 18 18"><rect x="2" y="2" width="5" height="14" rx="1.5" fill="white"/><rect x="11" y="2" width="5" height="14" rx="1.5" fill="white"/></svg>`
+              : `<svg width="18" height="18" viewBox="0 0 18 18"><polygon points="3,2 16,9 3,16" fill="white"/></svg>`}
+          </button>
+
+          <!-- Next (stub) -->
+          <button onclick="Hub.player.next?.()" title="Next"
+            class="btn btn-secondary p-2.5 text-lg" style="border-radius:.6rem;">⏭</button>
+
+          <!-- Stop -->
+          <button onclick="Hub.player.stop()" title="Stop"
+            class="btn btn-secondary p-2.5" style="border-radius:.6rem;font-size:.9rem;">⏹</button>
+
+          <!-- Volume -->
+          <div class="flex items-center gap-1.5 ml-1">
+            <span class="text-gray-400" style="font-size:.9rem;">${volPct < 10 ? '🔇' : volPct < 50 ? '🔉' : '🔊'}</span>
+            <input type="range" min="0" max="100" value="${volPct}"
+              style="width:64px;accent-color:#8b5cf6;height:4px;cursor:pointer;"
+              oninput="Hub.player.setVolume(this.value/100)">
+          </div>
+        </div>
+
       </div>`;
   },
 
@@ -311,23 +380,37 @@ Hub.player = {
     const s = this.state.radioStatus;
     if (s === 'connecting')    return '⏳ Connecting…';
     if (s === 'buffering')     return '⏳ Buffering…';
-    if (s === 'failed')        return '❌ Failed';
+    if (s === 'failed')        return '❌ Failed — tap to retry';
     if (this.state.isPlaying)  return '▶ Playing';
     return '⏸ Paused';
   },
 
-  _buttonsHTML() {
-    const play  = `<button onclick="Hub.player.resume()" class="btn btn-primary p-2">▶</button>`;
-    const pause = `<button onclick="Hub.player.pause()"  class="btn btn-secondary p-2">⏸</button>`;
-    const stop  = `<button onclick="Hub.player.stop()"   class="btn btn-secondary p-2">⏹</button>`;
-    return (this.state.isPlaying ? pause : play) + stop;
+  setVolume(v) {
+    this.state.volume = Math.max(0, Math.min(1, v));
+    if (this.radioAudio) this.radioAudio.volume = this.state.volume;
+    // Update volume icon without full re-render
+    const pct = Math.round(this.state.volume * 100);
+    const icon = document.querySelector('#nowPlayingWidget .player-widget span[data-vol]');
+    if (icon) icon.textContent = pct < 10 ? '🔇' : pct < 50 ? '🔉' : '🔊';
   },
+
+  _seekTo(seconds) {
+    // For browser audio sources; radio doesn't support seeking
+    if (this.radioAudio && this.state.currentSource !== 'radio') {
+      this.radioAudio.currentTime = seconds;
+    }
+  },
+
+  _fmtTime(seconds) {
+    const s = Math.floor(seconds);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  },
+
+  prev() { Hub.ui?.toast?.('Previous track — connect a music service for full control', 'info'); },
+  next() { Hub.ui?.toast?.('Next track — connect a music service for full control', 'info'); },
 
   getPlaybackDuration() {
     if (!this.state.startedAt) return '0:00';
-    const s    = Math.floor((Date.now() - this.state.startedAt) / 1000);
-    const mins = Math.floor(s / 60);
-    const secs = s % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+    return this._fmtTime((Date.now() - this.state.startedAt) / 1000);
   }
 };

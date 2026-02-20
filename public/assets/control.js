@@ -23,8 +23,28 @@ Hub.control = {
   load() {
     const el = document.getElementById('adminPanelContent');
     if (!el) return;
+
+    // Admin-only gate (belt-and-suspenders check)
+    if (Hub.state?.userRole !== 'admin') {
+      el.innerHTML = `
+        <div class="card text-center py-12">
+          <p class="text-4xl mb-4">🔒</p>
+          <h2 class="text-2xl font-bold mb-2">Admin Only</h2>
+          <p class="text-gray-400 mb-6">You don't have admin access to this panel.</p>
+          <button onclick="Hub.router.go('settings')" class="btn btn-secondary">← Back to Settings</button>
+        </div>`;
+      return;
+    }
+
     el.innerHTML = this._renderPanel();
     this._bindTab(this._activeTab);
+  },
+
+  /** Called by router when navigating away — clean up any intervals/listeners */
+  onLeave() {
+    // FPS tracker uses rAF and self-cleans; event log hook is one-time.
+    // Clear any admin-specific setIntervals if they were added.
+    console.log('[Admin] onLeave — cleanup');
   },
 
   // ── Event log ───────────────────────────────────────────
@@ -177,7 +197,76 @@ Hub.control = {
         </button>
       </div>
     </div>
+    ${this._renderPwaCard()}
   `; },
+
+  // ── PWA install card (System tab) ────────────────────────
+  _renderPwaCard() {
+    const kioskCmd = `chromium-browser --app=${location.origin}/#/dashboard --start-fullscreen --noerrdialogs --disable-infobars`;
+    if (Hub.pwa?.installed) {
+      return `
+        <div class="card mt-4" style="border:1px solid rgba(16,185,129,.3);background:rgba(16,185,129,.05);">
+          <div class="flex items-center gap-3">
+            <span class="text-2xl">✅</span>
+            <div>
+              <h3 class="font-bold">App Install (PWA)</h3>
+              <p class="text-green-400 text-sm">HomeHub is installed on this device.</p>
+            </div>
+          </div>
+        </div>`;
+    }
+    if (Hub.pwa?.bipEvent) {
+      return `
+        <div class="card mt-4" style="border:1px solid rgba(59,130,246,.3);background:rgba(59,130,246,.05);">
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <h3 class="font-bold">App Install (PWA)</h3>
+              <p class="text-gray-400 text-sm">Install HomeHub as an app on this device.</p>
+            </div>
+            <button onclick="Hub.control.triggerPwaInstall()"
+              class="btn btn-primary flex-shrink-0" style="background:#2563eb;">
+              📲 Install HomeHub
+            </button>
+          </div>
+        </div>`;
+    }
+    // No install event — show Chromium fallback instructions
+    return `
+      <div class="card mt-4" style="border:1px solid rgba(251,191,36,.3);background:rgba(251,191,36,.05);">
+        <h3 class="font-bold mb-2">App Install (PWA)</h3>
+        <p class="text-gray-300 text-sm mb-3">
+          Install not available via automatic prompt. Use the browser menu instead:
+        </p>
+        <ol class="text-sm text-gray-400 space-y-1 mb-4 list-decimal list-inside">
+          <li>Open Chromium menu <span class="font-mono bg-gray-800 px-1 rounded">⋮</span></li>
+          <li>Select <strong class="text-white">Install HomeHub…</strong></li>
+          <li>Click <strong class="text-white">Install</strong> in the dialog</li>
+        </ol>
+        <p class="text-gray-500 text-xs mb-2">Or launch in kiosk mode directly:</p>
+        <div class="flex gap-2 items-start">
+          <code class="flex-1 text-xs bg-gray-900 text-green-400 p-2 rounded break-all">${Hub.utils.esc(kioskCmd)}</code>
+          <button onclick="navigator.clipboard.writeText('${Hub.utils.esc(kioskCmd)}').then(()=>Hub.ui.toast('Copied','success'))"
+            class="btn btn-secondary text-xs flex-shrink-0">Copy</button>
+        </div>
+      </div>`;
+  },
+
+  async triggerPwaInstall() {
+    if (!Hub.pwa?.bipEvent) {
+      Hub.ui?.toast?.('Install prompt not available — use browser menu', 'error');
+      return;
+    }
+    Hub.pwa.bipEvent.prompt();
+    const { outcome } = await Hub.pwa.bipEvent.userChoice;
+    if (outcome === 'accepted') {
+      Hub.ui?.toast?.('HomeHub installed! ✅', 'success');
+      Hub.pwa.bipEvent = null;
+    } else {
+      Hub.ui?.toast?.('Install dismissed', 'info');
+    }
+    // Re-render the system tab to update the card
+    this.switchTab('system');
+  },
 
   // MEDIA TAB
   _tabMedia() { return `
