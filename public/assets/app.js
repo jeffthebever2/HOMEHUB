@@ -49,6 +49,7 @@ Hub.state = {
 
 Hub.app = {
   _idleTimer: null,
+  _idleListenersBound: false,   // prevents stacking listeners on re-login
   _loggedIn: false,
   _authHandled: false,
   _loginInProgress: false,
@@ -287,7 +288,7 @@ Hub.app = {
   onPageLeave(page) {
     switch (page) {
       case 'admin':   Hub.control?.onLeave?.(); break;
-      case 'standby': Hub.standby?.stop?.();    break;
+      case 'standby': Hub.standby?.onLeave?.(); break;
       case 'grocery': Hub.grocery?.onLeave?.(); break;
       case 'music':   Hub.music?.onLeave?.();   break;
       case 'radio':   Hub.radio?.onLeave?.();   break;
@@ -655,15 +656,22 @@ Hub.app = {
   },
 
   _startIdleTimer() {
+    // Only bind activity listeners once — prevents stacking on re-login
+    if (!this._idleListenersBound) {
+      this._idleListenersBound = true;
+      const debouncedReset = this._debounce(() => this._resetIdleTimer(), APP_CONFIG.IDLE_DEBOUNCE_MS);
+      ['mousedown','mousemove','keypress','scroll','touchstart'].forEach(ev =>
+        window.addEventListener(ev, debouncedReset, { passive: true })
+      );
+    }
     this._resetIdleTimer();
-    const debouncedReset = this._debounce(() => this._resetIdleTimer(), APP_CONFIG.IDLE_DEBOUNCE_MS);
-    ['mousedown','mousemove','keypress','scroll','touchstart'].forEach(ev =>
-      window.addEventListener(ev, debouncedReset, { passive: true })
-    );
   },
 
   _resetIdleTimer() {
     if (this._idleTimer) clearTimeout(this._idleTimer);
+    // Don't schedule a new fire if we're already in standby — nothing to do
+    if (Hub.router?.current === 'standby') return;
+    if (!Hub.state?.user) return;
     const timeout = ((Hub.state.settings?.standby_timeout_min) || 10) * 60 * 1000;
     this._idleTimer = setTimeout(() => {
       if (Hub.router.current !== 'standby' && Hub.state.user) Hub.router.go('standby');

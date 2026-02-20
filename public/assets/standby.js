@@ -5,51 +5,62 @@ window.Hub = window.Hub || {};
 
 Hub.standby = {
   _clockInterval: null,
-  _weatherInterval: null,
-  _dataInterval: null,
+  _dataInterval:  null,
+  _wake:          null,   // stored ref so stop() can clear onclick
 
-  /** Start standby mode */
+  /** Start standby mode — idempotent: stops any previous run first */
   start() {
-    console.log('[Standby] Starting standby mode');
-    
-    // Update clock immediately and every second
+    console.log('[Standby] start()');
+    // Guard: stop any running instance before starting fresh
+    // (prevents stacked intervals if start() is ever called twice)
+    this.stop();
+
+    // Clock — update immediately then every second
     this._updateClock();
     this._clockInterval = setInterval(() => this._updateClock(), 1000);
 
-    // Load initial data
+    // Data — load immediately then refresh every 5 minutes
     this._loadWeather();
     this._loadCalendar();
     this._loadChores();
-
-    // Refresh data every 5 minutes
     this._dataInterval = setInterval(() => {
       this._loadWeather();
       this._loadCalendar();
       this._loadChores();
     }, 300000);
 
-    // Start photo slideshow (unified provider — picks Google / Imgur / Immich per settings)
+    // Photo slideshow (unified: Google Photos / Imgur / Immich per settings)
     Hub.photos.startStandbySlideshow();
 
-    // Wake on interaction
-    const wake = () => {
+    // Wake on tap — store ref so stop() can clear it cleanly
+    this._wake = () => {
       this.stop();
       Hub.router.go('dashboard');
     };
-    Hub.utils.$('standbyContent').onclick = wake;
+    const content = Hub.utils.$('standbyContent');
+    if (content) content.onclick = this._wake;
   },
 
-  /** Stop standby mode */
+  /** Stop standby mode — safe to call multiple times */
   stop() {
-    console.log('[Standby] Stopping standby mode');
+    console.log('[Standby] stop()');
+
     clearInterval(this._clockInterval);
     clearInterval(this._dataInterval);
     this._clockInterval = null;
-    this._dataInterval = null;
-    
-    // Stop photo slideshow
+    this._dataInterval  = null;
+
+    // Remove wake listener
+    const content = Hub.utils.$('standbyContent');
+    if (content && this._wake) content.onclick = null;
+    this._wake = null;
+
+    // Stop slideshow (RAF + visibilitychange handler)
     Hub.photos.stopStandbySlideshow();
   },
+
+  /** Called by router when leaving the standby page */
+  onLeave() { this.stop(); },
 
   /** Update clock display */
   _updateClock() {
