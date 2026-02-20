@@ -278,6 +278,8 @@ Hub.grocery = {
       'padding:8px 6px 16px;',
       'box-shadow:0 -12px 40px rgba(0,0,0,.7);',
       'user-select:none;-webkit-user-select:none;',
+      // Center content; allow up to 1300px wide on desktop
+      'display:flex;flex-direction:column;align-items:center;',
     ].join(''));
 
     this._kb = { root: root, _bsTimer: null, _bsInterval: null, _shifted: false };
@@ -300,8 +302,17 @@ Hub.grocery = {
     var cap = function(k) { return (k.length === 1 && shifted) ? k.toUpperCase() : k; };
 
     var keyStyle = function(k) {
-      var w   = k === 'Space' ? '110px' : k === 'Enter' ? '80px' : k === 'Bksp' ? '68px'
-              : k === 'Shift' ? '58px'  : k === 'Done'  ? '68px' : k === 'Clear' ? '56px' : '38px';
+      // clamp() so keys are bigger on desktop, still usable on small screens
+      var w   = k === 'Space' ? 'clamp(100px,12vw,200px)'
+              : k === 'Enter' ? 'clamp(72px,8vw,130px)'
+              : k === 'Bksp'  ? 'clamp(60px,7vw,110px)'
+              : k === 'Shift' ? 'clamp(52px,6vw,96px)'
+              : k === 'Done'  ? 'clamp(60px,7vw,110px)'
+              : k === 'Clear' ? 'clamp(50px,5.5vw,90px)'
+              : 'clamp(36px,4.2vw,68px)';  // letter/digit keys
+      var h   = 'clamp(52px,6.5vh,72px)';  // taller keys on bigger screens
+      var fs  = k === 'Enter' || k === 'Done' ? 'clamp(.78rem,1.2vw,1rem)'
+              : 'clamp(.88rem,1.4vw,1.1rem)';
       var bg  = k === 'Enter' ? '#1d4ed8'
               : k === 'Bksp'  ? '#7f1d1d'
               : k === 'Shift' ? (shifted ? '#6d28d9' : '#334155')
@@ -309,9 +320,9 @@ Hub.grocery = {
               : k === 'Clear' ? '#374151'
               : '#1e2d40';
       var bdr = k === 'Enter' ? 'rgba(59,130,246,.4)' : 'rgba(255,255,255,.07)';
-      return 'min-width:' + w + ';height:52px;background:' + bg + ';color:#f1f5f9;' +
-             'border:1px solid ' + bdr + ';border-radius:7px;font-size:.9rem;font-weight:500;cursor:pointer;' +
-             'flex-shrink:0;transition:filter .07s;';
+      return 'min-width:' + w + ';height:' + h + ';background:' + bg + ';color:#f1f5f9;' +
+             'border:1px solid ' + bdr + ';border-radius:8px;font-size:' + fs + ';font-weight:600;cursor:pointer;' +
+             'flex-shrink:0;transition:filter .07s,transform .06s;touch-action:manipulation;';
     };
 
     var rows = [
@@ -332,7 +343,7 @@ Hub.grocery = {
       }).join('') +
     '</div>';
 
-    var previewRow = '<div style="display:flex;align-items:center;gap:6px;padding:0 4px 8px;">' +
+    var previewRow = '<div style="display:flex;align-items:center;gap:6px;padding:0 4px 8px;width:100%;max-width:1300px;">' +
       '<div id="kbPreview" style="flex:1;min-height:40px;background:#0f172a;border:1px solid rgba(255,255,255,.12);' +
       'border-radius:8px;padding:8px 12px;font-size:1rem;color:#f1f5f9;word-break:break-word;"></div>' +
       '<button onmousedown="event.preventDefault();Hub.grocery._destroyKeyboard()"' +
@@ -369,7 +380,8 @@ Hub.grocery = {
       '</div>';
     }).join('');
 
-    kb.root.innerHTML = previewRow + chipRow + '<div style="padding:0 2px;">' + kbHtml + '</div>';
+    kb.root.innerHTML = previewRow + chipRow +
+      '<div style="width:100%;max-width:1300px;padding:0 2px;">' + kbHtml + '</div>';
     this._kbSyncPreview();
   },
 

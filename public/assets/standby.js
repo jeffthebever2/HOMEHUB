@@ -86,46 +86,52 @@ Hub.standby = {
 
   /** Load weather for standby */
   async _loadWeather() {
-    const el = Hub.utils.$('standbyWeather');
+    const el         = Hub.utils.$('standbyWeather');
     const tomorrowEl = document.getElementById('standbyTomorrow');
     const alertEl    = document.getElementById('standbyAlertStrip');
     if (!el) return;
 
     try {
+      // Load AI summary + live alerts in parallel
       const agg = await Hub.weather.fetchAggregate();
-      const ai = await Hub.ai.getSummary(agg);
+      const [ai, liveAlerts] = await Promise.all([
+        Hub.ai.getSummary(agg),
+        Hub.weather.fetchAlerts()   // already filters expired alerts
+      ]);
 
       if (ai && ai.today) {
-        el.innerHTML = `
-          <div class="flex items-center gap-2">
-            <span class="weather-icon-animated text-2xl">${this._getWeatherIcon(ai.headline)}</span>
-            <div>
-              <p class="font-semibold">${ai.today.high_f}° / ${ai.today.low_f}°</p>
-              <p class="text-xs text-gray-400">${Hub.utils.esc(ai.headline)}</p>
-            </div>
-          </div>
-        `;
+        el.innerHTML =
+          '<div class="flex items-center gap-2">' +
+            '<span class="weather-icon-animated text-2xl">' + this._getWeatherIcon(ai.headline) + '</span>' +
+            '<div>' +
+              '<p class="font-semibold">' + (ai.today.high_f ?? '--') + '° / ' + (ai.today.low_f ?? '--') + '°</p>' +
+              '<p class="text-xs text-gray-400">' + Hub.utils.esc(ai.headline) + '</p>' +
+            '</div>' +
+          '</div>';
 
-        // Tomorrow weather (smaller)
         if (tomorrowEl && ai.tomorrow) {
-          tomorrowEl.textContent = `Tomorrow: ${ai.tomorrow.high_f}° / ${ai.tomorrow.low_f}°`;
+          tomorrowEl.textContent = 'Tomorrow: ' + (ai.tomorrow.high_f ?? '--') + '° / ' + (ai.tomorrow.low_f ?? '--') + '°';
           tomorrowEl.classList.remove('hidden');
-        }
-
-        // Alert strip
-        if (alertEl) {
-          if (ai.hazards?.length) {
-            const text = ai.hazards.join(' — ');
-            alertEl.innerHTML = `<span class="marquee-text">⚠️ ${Hub.utils.esc(text)} &nbsp;&nbsp;&nbsp; ⚠️ ${Hub.utils.esc(text)}</span>`;
-            alertEl.classList.remove('hidden');
-          } else {
-            alertEl.classList.add('hidden');
-          }
         }
       } else {
         el.innerHTML = '<p class="text-gray-500 text-sm">Weather unavailable</p>';
       }
+
+      // Alert strip — use LIVE alerts (not AI hazards) so expiry is always respected
+      if (alertEl) {
+        if (liveAlerts.length > 0) {
+          // Build NWS event names for the ticker, deduplicated
+          const threats = [...new Set(liveAlerts.map(a => a.event || a.headline).filter(Boolean))];
+          const segment = threats.map(t => '⚠ ' + t).join('  ·  ');
+          const ticker  = segment + '  ·  ' + segment; // duplicate for seamless CSS loop
+          alertEl.innerHTML = '<span class="marquee-text">' + Hub.utils.esc(ticker) + '</span>';
+          alertEl.classList.remove('hidden');
+        } else {
+          alertEl.classList.add('hidden');
+        }
+      }
     } catch (e) {
+      console.warn('[Standby] Weather load error:', e.message);
       el.innerHTML = '<p class="text-gray-500 text-sm">Weather unavailable</p>';
     }
   },

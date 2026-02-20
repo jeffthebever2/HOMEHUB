@@ -81,7 +81,7 @@ export default async function handler(req, res) {
     }
 
     // 5) Reset chores for household
-    const or = encodeURIComponent(`(category.eq.Daily,day_of_week.eq.${dow},category.ilike.${dayName}*)`);
+    const or = encodeURIComponent(`(category.eq.Daily,day_of_week.eq.${dow},category.ilike.${dayName}%)`);
     const patchResp = await fetch(`${SB_URL}/rest/v1/chores?household_id=eq.${householdId}&status=in.(done,skipped)&or=${or}`, {
       method: 'PATCH',
       headers: {

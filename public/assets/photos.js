@@ -59,9 +59,24 @@ Hub.photos = {
           console.log('[Photos] Google Photos:', urls.length, 'images');
           return urls;
         }
-        console.warn('[Photos] Google Photos returned 0 images, falling back to Imgur');
+        if (urls && urls.error) {
+          console.warn('[Photos] Google Photos error:', urls.error);
+          // Detect auth/scope issues and show clear guidance
+          const err = urls.error || '';
+          if (err.includes('403') || err.includes('PERMISSION_DENIED') || err.includes('REQUEST_DENIED')) {
+            Hub.ui?.toast?.('Google Photos: permission denied — sign out and back in to re-grant Photos access', 'error');
+          } else if (err.includes('401')) {
+            Hub.ui?.toast?.('Google Photos: session expired — sign out and back in', 'error');
+          } else {
+            Hub.ui?.toast?.('Google Photos unavailable — using Imgur fallback', 'info');
+          }
+        } else {
+          console.warn('[Photos] Google Photos returned 0 images, falling back to Imgur');
+          Hub.ui?.toast?.('Google Photos album is empty — using Imgur fallback', 'info');
+        }
       } catch (e) {
         console.warn('[Photos] Google Photos error:', e.message);
+        Hub.ui?.toast?.('Google Photos error — using Imgur fallback', 'info');
       }
       return this._fallback('imgur');
     }
@@ -99,10 +114,10 @@ Hub.photos = {
 
   async _fetchImmich() {
     const s        = Hub.state?.settings || {};
-    const cfg      = Hub.immich?._hardcodedConfig || {};
-    const url      = cfg.immichUrl  || s.immich_base_url || '';
-    const key      = cfg.immichKey  || s.immich_api_key  || '';
-    const library  = cfg.useWholeLibrary ?? false;
+    // Read Immich config from settings ONLY — never from hardcoded values
+    const url      = s.immich_base_url || '';
+    const key      = s.immich_api_key  || '';
+    const library  = true; // always use whole library when Immich is selected
 
     if (!url || !key) return this._placeholders();
 

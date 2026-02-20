@@ -14,46 +14,139 @@ Hub.ui = {
     Hub.utils.$(id)?.classList.remove('hidden');
   },
 
-  /** Show alert banner */
-  showBanner(text, severity) {
+  /** Alert banner auto-dismiss watchdog interval */
+  _bannerWatchdog: null,
+
+  /**
+   * showBanner(threats, severity)
+   * threats: string | string[] — event names to scroll in the ticker
+   * severity: 'warning' | 'watch' | 'advisory'
+   * Renders a scrolling ticker with a ✕ close button.
+   * Starts a watchdog that re-checks live alerts every 2 min and
+   * hides the banner automatically when all alerts have expired.
+   */
+  showBanner(threats, severity) {
     const banner = Hub.utils.$('alertBanner');
     if (!banner) return;
-    banner.className = 'alert-banner ' + (severity || 'watch');
-    banner.innerHTML = '⚠️ ' + Hub.utils.esc(text);
+
+    const threatList = Array.isArray(threats) ? threats : [threats];
+    if (!threatList.length) { this.hideBanner(); return; }
+
+    // Deduplicate
+    const unique = [...new Set(threatList.filter(Boolean))];
+
+    // Build ticker text repeated twice for seamless CSS loop
+    const segment = unique.map(t => '⚠ ' + t).join('  ·  ');
+    const ticker  = segment + '  ·  ' + segment;
+
+    const sev = (severity || 'watch').toLowerCase();
+    banner.className = 'alert-banner alert-banner--ticker ' + sev;
+    banner.innerHTML =
+      '<div class="alert-banner__track" aria-label="Weather alert ticker">' +
+        '<span class="alert-banner__text">' + Hub.utils.esc(ticker) + '</span>' +
+      '</div>' +
+      '<button class="alert-banner__close" onclick="Hub.ui.hideBanner()" aria-label="Dismiss alert">✕</button>';
+
     banner.classList.remove('hidden');
+
+    // Watchdog: re-fetch live alerts every 2 minutes; auto-hide when all expired
+    if (this._bannerWatchdog) clearInterval(this._bannerWatchdog);
+    this._bannerWatchdog = setInterval(async () => {
+      try {
+        const live = await Hub.weather.fetchAlerts();
+        if (!live.length) {
+          console.log('[UI] Banner watchdog: all alerts expired — hiding banner');
+          this.hideBanner();
+        } else {
+          // Refresh banner text in case event names changed
+          const fresh  = [...new Set(live.map(a => a.event || a.headline).filter(Boolean))];
+          const seg    = fresh.map(t => '⚠ ' + t).join('  ·  ');
+          const tick   = seg + '  ·  ' + seg;
+          const track  = banner.querySelector('.alert-banner__text');
+          if (track) track.textContent = tick;
+        }
+      } catch (e) { /* network error — keep showing until next check */ }
+    }, 2 * 60 * 1000); // every 2 minutes
   },
 
-  /** Hide alert banner */
+  /** Hide alert banner and cancel its watchdog */
   hideBanner() {
     Hub.utils.$('alertBanner')?.classList.add('hidden');
+    if (this._bannerWatchdog) {
+      clearInterval(this._bannerWatchdog);
+      this._bannerWatchdog = null;
+    }
   },
 
-  /** Show alert popup (respects quiet hours + seen state) */
-  async showAlertPopup(alertData) {
-    if (!alertData?.active) return;
-    const s = Hub.state.settings || {};
+  /**
+   * showAlertPopup(alerts)
+   * alerts: raw alert objects from fetchAlerts() — already expiry-filtered.
+   * Shows a modal for the highest-severity active alert if not already acknowledged.
+   */
+  async showAlertPopup(alerts) {
+    if (!alerts || !alerts.length) return;
+
+    // Respect quiet hours — suppress advisory/watch during quiet, keep warning
+    const s       = Hub.state.settings || {};
     const isQuiet = Hub.utils.isQuietHours(s.quiet_hours_start, s.quiet_hours_end);
 
-    // During quiet hours, suppress popup unless severity is "warning"
-    if (isQuiet && alertData.severity !== 'warning') return;
+    // Sort by severity: extreme > severe > moderate > minor
+    const sevOrder = { extreme: 0, severe: 1, moderate: 2, minor: 3, unknown: 4 };
+    const sorted   = [...alerts].sort((a, b) =>
+      (sevOrder[(a.severity||'').toLowerCase()] ?? 4) - (sevOrder[(b.severity||'').toLowerCase()] ?? 4)
+    );
 
-    // Check if already seen
-    const alertId = alertData.banner_text || 'unknown';
+    const top = sorted[0];
+    if (isQuiet && !['extreme','severe'].includes((top.severity||'').toLowerCase())) return;
+
+    // Use alert id + event as the seen-key so each unique alert type is tracked
+    const alertId = (top.id || top.event || top.headline || 'alert').slice(0, 200);
     if (Hub.state.user) {
-      const seen = await Hub.db.isAlertSeen(Hub.state.user.id, alertId);
-      if (seen) return;
+      try {
+        const seen = await Hub.db.isAlertSeen(Hub.state.user.id, alertId);
+        if (seen) return;
+      } catch (e) {}
     }
 
-    Hub.utils.$('alertPopupText').textContent = alertData.banner_text || 'Weather alert active';
-    Hub.utils.$('alertPopup').classList.remove('hidden');
+    const popupText = Hub.utils.$('alertPopupText');
+    if (popupText) {
+      popupText.dataset.alertId = alertId;
+      const expireMs = top.expires ? new Date(top.expires).getTime() : null;
+      const expiresStr = expireMs
+        ? new Date(expireMs).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+        : null;
+      popupText.textContent =
+        (top.event || top.headline || 'Weather Alert') +
+        (top.area      ? ' · ' + top.area        : '') +
+        (expiresStr    ? ' (expires ' + expiresStr + ')' : '');
+
+      // Auto-close popup when its own expiry arrives (to the second)
+      if (expireMs) {
+        const msUntilExpiry = expireMs - Date.now();
+        if (msUntilExpiry > 0) {
+          setTimeout(() => {
+            const popup = Hub.utils.$('alertPopup');
+            if (popup && !popup.classList.contains('hidden')) {
+              console.log('[UI] Popup auto-closed: alert expired');
+              popup.classList.add('hidden');
+            }
+          }, msUntilExpiry);
+        } else {
+          // Already expired — don't show at all
+          return;
+        }
+      }
+    }
+    Hub.utils.$('alertPopup')?.classList.remove('hidden');
   },
 
   /** Dismiss alert popup and mark as seen */
   async dismissAlert() {
-    const text = Hub.utils.$('alertPopupText')?.textContent || '';
-    Hub.utils.$('alertPopup').classList.add('hidden');
-    if (Hub.state.user && text) {
-      await Hub.db.markAlertSeen(Hub.state.user.id, text, 'acknowledged');
+    const popupText = Hub.utils.$('alertPopupText');
+    const alertId   = popupText?.dataset.alertId || popupText?.textContent || '';
+    Hub.utils.$('alertPopup')?.classList.add('hidden');
+    if (Hub.state.user && alertId) {
+      try { await Hub.db.markAlertSeen(Hub.state.user.id, alertId, 'acknowledged'); } catch (e) {}
     }
   },
 

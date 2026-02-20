@@ -13,11 +13,9 @@ Hub.immich = {
     useImgur: true
   },
 
-  _hardcodedConfig: {
-    immichUrl: 'http://192.168.7.248:2283',
-    immichKey: 'LH6mLNi6tO8whoeiRkgkQkDjK7hmCUsAba02l7iazNI',
-    useWholeLibrary: true
-  },
+  // SECURITY: Immich URL and API key come from Settings (Hub.state.settings),
+  // never hardcoded here. _hardcodedConfig is intentionally empty.
+  _hardcodedConfig: {},
 
   // ── Slideshow Controller ───────────────────────────────────
   _ss: {

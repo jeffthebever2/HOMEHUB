@@ -46,6 +46,13 @@ Hub.googlePhotos = {
 
     if (!resp.ok) {
       const txt = await resp.text().catch(() => '');
+      // Surface specific guidance for auth/scope errors
+      if (resp.status === 403) {
+        return { error: `403 Forbidden — Google Photos access was denied. Sign out and sign back in to re-grant the Photos permission scope. Detail: ${txt.slice(0, 150)}` };
+      }
+      if (resp.status === 401) {
+        return { error: `401 Unauthorized — session expired. Sign out and back in. Detail: ${txt.slice(0, 150)}` };
+      }
       return { error: `HTTP ${resp.status}: ${txt.slice(0, 200)}` };
     }
     return resp.json();

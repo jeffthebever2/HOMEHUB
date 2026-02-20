@@ -88,7 +88,7 @@ export default async function handler(req, res) {
       //  PATCH: set status=pending, clear completer fields
       const choreFilter = `household_id=eq.${hh.id}`
         + `&status=in.(done,skipped)`
-        + `&or=(category.eq.Daily,day_of_week.eq.${dow},category.like.${dayName}*)`;
+        + `&or=(category.eq.Daily,day_of_week.eq.${dow},category.ilike.${encodeURIComponent(dayName + '%')})`;
 
       await sbFetch(`chores?${choreFilter}`, 'PATCH', {
         status:             'pending',

@@ -33,15 +33,22 @@ Hub.weather = {
     }
   },
 
-  /** Fetch weather alerts */
+  /** Fetch weather alerts — always fresh, never cached */
   async fetchAlerts() {
-    const loc = Hub.utils.getLocation();
+    const loc  = Hub.utils.getLocation();
     const base = Hub.utils.apiBase();
     try {
-      const resp = await fetch(`${base}/api/weather-alerts?lat=${loc.lat}&lon=${loc.lon}`);
+      // cache-bust with timestamp so browser never serves a stale response
+      const url  = `${base}/api/weather-alerts?lat=${loc.lat}&lon=${loc.lon}&_t=${Date.now()}`;
+      const resp = await fetch(url, { cache: 'no-store' });
       if (!resp.ok) return [];
       const data = await resp.json();
-      return data.alerts || [];
+      const now  = Date.now();
+      // Filter out anything whose expires timestamp has already passed
+      return (data.alerts || []).filter(a => {
+        if (!a.expires) return true;   // no expiry field → keep (NWS sometimes omits it)
+        return new Date(a.expires).getTime() > now;
+      });
     } catch (e) {
       console.error('Weather alerts error:', e);
       return [];
@@ -317,6 +324,13 @@ Hub.weather = {
     // Load Leaflet on demand
     await this._ensureLeaflet();
 
+    // Destroy any existing map to prevent "container already initialized" error
+    if (this._radarMap) {
+      try { this._radarMap.remove(); } catch (_) {}
+      this._radarMap = null;
+      this._radarLayer = null;
+    }
+
     // Create map
     const map = window.L.map('radarMap', {
       center: [loc.lat, loc.lon],
@@ -340,15 +354,30 @@ Hub.weather = {
     // Store map ref for cleanup
     this._radarMap = map;
 
+    // Pause animation when page is hidden (tab switch, Pi screensaver, etc.)
+    this._radarVisHandler = () => {
+      if (!document.hidden && this._radarInterval) {
+        // Resume: advance one frame immediately when becoming visible again
+        this._radarIndex = (this._radarIndex + 1) % this._radarFrames.length;
+        updateFrame();
+      }
+    };
+    document.addEventListener('visibilitychange', this._radarVisHandler);
+
     const updateFrame = () => {
       const frame = this._radarFrames[this._radarIndex];
       // Correct RainViewer tile URL: {path}/{size}/{z}/{x}/{y}/{color}/{options}.png
       const tileUrl = `https://tilecache.rainviewer.com${frame.path}/256/{z}/{x}/{y}/6/1_1.png`;
 
-      if (this._radarLayer) { map.removeLayer(this._radarLayer); }
-      this._radarLayer = window.L.tileLayer(tileUrl, {
-        opacity: 0.72, maxZoom: 12, tileSize: 256,
-      }).addTo(map);
+      // Reuse existing layer via setUrl to avoid creating a new layer every frame
+      // (creating many layers → 429s from RainViewer; setUrl reuses the same layer)
+      if (this._radarLayer) {
+        this._radarLayer.setUrl(tileUrl);
+      } else {
+        this._radarLayer = window.L.tileLayer(tileUrl, {
+          opacity: 0.72, maxZoom: 12, tileSize: 256,
+        }).addTo(map);
+      }
 
       const timeEl = Hub.utils.$('radarTime');
       if (timeEl) {
@@ -384,9 +413,10 @@ Hub.weather = {
         } else {
           playBtn.textContent = '⏸ Pause';
           this._radarInterval = setInterval(() => {
+            if (document.hidden) return; // pause when tab not visible
             this._radarIndex = (this._radarIndex + 1) % this._radarFrames.length;
             updateFrame();
-          }, 600);
+          }, 1400); // 1400ms — slow enough to avoid 429s from RainViewer
         }
       };
     }
@@ -412,15 +442,34 @@ Hub.weather = {
   _updateRadarFrame() {},
   _toggleRadarAnimation() {},
 
-  /** Stop radar animation (called when leaving weather page) */
+  /** Fully teardown radar — safe to call multiple times */
   stopRadarAnimation() {
+    // Stop animation interval
     if (this._radarInterval) {
       clearInterval(this._radarInterval);
       this._radarInterval = null;
     }
-    if (this._radarMap) {
-      this._radarMap.remove();
-      this._radarMap = null;
+    // Remove visibility listener if any
+    if (this._radarVisHandler) {
+      document.removeEventListener('visibilitychange', this._radarVisHandler);
+      this._radarVisHandler = null;
     }
+    // Destroy map
+    if (this._radarMap) {
+      try { this._radarMap.remove(); } catch (_) {}
+      this._radarMap  = null;
+      this._radarLayer = null;
+    }
+    // Belt-and-suspenders: delete Leaflet's internal ID from the container
+    // so L.map() can safely re-init on next visit
+    const container = document.getElementById('radarMap');
+    if (container && container._leaflet_id) {
+      delete container._leaflet_id;
+    }
+  },
+
+  /** Called by app.js onPageLeave('weather') */
+  onLeave() {
+    this.stopRadarAnimation();
   }
 };

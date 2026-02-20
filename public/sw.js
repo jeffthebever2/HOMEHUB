@@ -6,8 +6,8 @@
 //   - Images: cache-first with 7-day TTL
 // ============================================================
 
-const CACHE_NAME  = 'homehub-v1';
-const CACHE_SHELL = 'homehub-shell-v1';
+const CACHE_NAME  = 'homehub-v2';
+const CACHE_SHELL = 'homehub-shell-v2';
 
 // Static app-shell assets to pre-cache on install
 const SHELL_URLS = [
@@ -34,6 +34,10 @@ const SHELL_URLS = [
   '/assets/radio.js',
   '/assets/music.js',
   '/assets/standby.js',
+  '/assets/siteControl.js',
+  '/vendor/twemoji-stub.js',
+  '/manifest.webmanifest',
+  '/favicon.svg',
 ];
 
 // ── Install: pre-cache app shell ─────────────────────────
@@ -101,7 +105,7 @@ self.addEventListener('fetch', (evt) => {
   }
 
   // CDN assets (Twemoji, Leaflet, etc.) — cache-first, no background update
-  const isCdn = url.hostname.includes('cdnjs') || url.hostname.includes('cdn.jsdelivr');
+  const isCdn = url.hostname.includes('cdnjs') || url.hostname.includes('cdn.jsdelivr') || url.hostname.includes('unpkg.com');
   if (isCdn) {
     evt.respondWith(
       caches.match(request).then(cached => cached || fetch(request).then(resp => {

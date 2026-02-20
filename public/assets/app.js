@@ -287,11 +287,13 @@ Hub.app = {
   /** Called by router BEFORE switching away from a page */
   onPageLeave(page) {
     switch (page) {
-      case 'admin':   Hub.control?.onLeave?.(); break;
-      case 'standby': Hub.standby?.onLeave?.(); break;
-      case 'grocery': Hub.grocery?.onLeave?.(); break;
-      case 'music':   Hub.music?.onLeave?.();   break;
-      case 'radio':   Hub.radio?.onLeave?.();   break;
+      case 'admin':   Hub.control?.onLeave?.();        break;
+      case 'standby': Hub.standby?.onLeave?.();        break;
+      case 'grocery': Hub.grocery?.onLeave?.();        break;
+      case 'music':   Hub.music?.onLeave?.();          break;
+      case 'radio':   Hub.radio?.onLeave?.();          break;
+      case 'weather': Hub.weather?.onLeave?.();        break;
+      case 'control': Hub.siteControl?.onLeave?.();    break;
     }
   },
 
@@ -320,7 +322,7 @@ Hub.app = {
       case 'radio':     Hub.radio?.onEnter?.(); break;
       case 'settings':  this._loadSettingsForm(); break;
       case 'status':    this._loadStatusPage(); break;
-      case 'control':   Hub.control?.load?.(); break;
+      case 'control':   Hub.siteControl?.load?.(); break;
       case 'admin':     Hub.control?.load?.(); break;
       case 'grocery':   Hub.grocery?.onEnter?.(); break;
     }
@@ -341,9 +343,18 @@ Hub.app = {
   async _loadDashboardWeather() {
     try {
       await Hub.weather.renderDashboard();
+      // fetchAlerts() already filters out expired alerts client-side
       const alerts = await Hub.weather.fetchAlerts();
       if (alerts.length > 0) {
-        Hub.ui.showBanner(alerts[0].headline || 'Weather Alert', alerts[0].severity || 'warning');
+        // Build threat list from real NWS event names
+        const threats = alerts.map(a => a.event || a.headline).filter(Boolean);
+        // Worst severity wins banner colour
+        const sevOrder = { extreme: 0, severe: 1, moderate: 2, minor: 3 };
+        const sorted   = [...alerts].sort((a, b) =>
+          (sevOrder[(a.severity||'').toLowerCase()] ?? 4) - (sevOrder[(b.severity||'').toLowerCase()] ?? 4));
+        Hub.ui.showBanner(threats, sorted[0].severity);
+        // Show popup for highest-severity unacknowledged alert
+        Hub.ui.showAlertPopup(alerts).catch(() => {});
       } else {
         Hub.ui.hideBanner();
       }
@@ -697,8 +708,23 @@ Hub.app = {
         body: JSON.stringify({ tz: 'America/New_York' })
       });
 
+      if (!resp.ok) {
+        let errBody = '';
+        try { errBody = JSON.stringify(await resp.json()); } catch (_) { errBody = await resp.text().catch(() => ''); }
+        console.error('[App] Chore reset HTTP error:', resp.status, errBody);
+        // Non-blocking toast so user knows something went wrong without interrupting flow
+        Hub.ui?.toast?.(`Chore reset error (${resp.status}) — chores may not have reset`, 'error');
+        return;
+      }
+
       const result = await resp.json();
-      console.log('[App] Chore reset:', result.didReset ? 'Reset today' : result.reason || 'No reset needed');
+      if (result.error) {
+        console.error('[App] Chore reset returned error:', result.error, result.detail || '');
+        Hub.ui?.toast?.('Chore reset failed: ' + result.error, 'error');
+        return;
+      }
+
+      console.log('[App] Chore reset:', result.didReset ? `Reset (${result.dayName})` : result.reason || 'already reset today');
 
       if (result.didReset && Hub.router.current === 'chores') {
         Hub.chores?.load?.();

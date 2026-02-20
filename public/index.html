@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>🏠 Home Hub</title>
   <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="shortcut icon" href="/favicon.svg">
   <meta name="theme-color" content="#1e293b">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -75,8 +77,18 @@
     .photo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
     .photo-item { aspect-ratio: 16/9; background: #1f2937; border-radius: .5rem; overflow: hidden; }
     .photo-item img { width: 100%; height: 100%; object-fit: cover; transition: opacity 1s; }
-    .alert-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 50; padding: .75rem 1rem; text-align: center; font-weight: 700; }
-    .alert-banner.warning { background: #ef4444; } .alert-banner.watch { background: #f59e0b; color: #000; } .alert-banner.advisory { background: #eab308; color: #000; }
+    /* ── Alert banner — scrolling ticker ── */
+    .alert-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 50; font-weight: 700; display: flex; align-items: center; overflow: hidden; height: 2.4rem; }
+    .alert-banner.warning  { background: #ef4444; color: #fff; }
+    .alert-banner.watch    { background: #f59e0b; color: #000; }
+    .alert-banner.advisory { background: #eab308; color: #000; }
+    /* Ticker track — clips content and scrolls */
+    .alert-banner__track { flex: 1; overflow: hidden; white-space: nowrap; }
+    @keyframes alertTicker { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+    .alert-banner__text { display: inline-block; animation: alertTicker 18s linear infinite; padding-right: 2rem; font-size: .88rem; letter-spacing: .02em; }
+    /* Close button */
+    .alert-banner__close { flex-shrink: 0; background: rgba(0,0,0,.25); border: none; color: inherit; padding: 0 .75rem; height: 100%; cursor: pointer; font-size: 1rem; font-weight: 900; line-height: 2.4rem; }
+    .alert-banner__close:hover { background: rgba(0,0,0,.4); }
     .status-dot { display: inline-block; width: .75rem; height: .75rem; border-radius: 50%; }
     .status-dot.green { background: #10b981; } .status-dot.red { background: #ef4444; } .status-dot.yellow { background: #f59e0b; }
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 60; padding: 1rem; }
@@ -941,42 +953,20 @@
     <!-- ========== RADIO PAGE ========== -->
     <div id="radioPage" class="page">
       <div class="max-w-4xl mx-auto p-4 md:p-6">
-        <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary mb-4">← Back to Dashboard</button>
-        <h1 class="text-3xl md:text-4xl font-bold mb-4">📻 Radio</h1>
-
-        <!-- Full TuneIn site — browse and play all stations -->
-        <div style="border-radius:1rem;overflow:hidden;height:72vh;min-height:480px;border:1px solid rgba(255,255,255,.1);">
-          <iframe
-            src="https://tunein.com"
-            style="width:100%;height:100%;border:0;background:#111;"
-            allow="autoplay; fullscreen; encrypted-media"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation"
-            loading="lazy"
-            title="TuneIn Radio">
-          </iframe>
-        </div>
-        <p class="text-xs text-gray-500 text-center mt-2 mb-4">Browse and play any station via TuneIn</p>
-
-        <!-- Bluetooth audio output -->
-        <div class="card">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-3">
-              <span class="text-2xl">🔵</span>
-              <div>
-                <h3 class="font-semibold">Bluetooth Audio</h3>
-                <p id="radioBtStatus" class="text-sm text-gray-400">No device connected</p>
-              </div>
-            </div>
-            <button id="btnRadioBluetooth" onclick="Hub.radio.handleBluetooth()"
-                    class="btn btn-secondary">Connect Bluetooth</button>
-          </div>
+        <header class="flex items-center justify-between mb-6">
+          <h1 class="text-3xl md:text-4xl font-bold">📻 Radio</h1>
+          <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
+        </header>
+        <!-- Radio player rendered by Hub.radio._renderPage() into this container -->
+        <div id="radioPlayerArea">
+          <p class="text-gray-400 text-center py-12">Loading radio…</p>
         </div>
       </div>
     </div>
 
     <!-- ========== GROCERY LIST ========== -->
     <div id="groceryPage" class="page">
-      <div class="max-w-2xl mx-auto p-4 md:p-6">
+      <div class="max-w-5xl mx-auto p-4 md:p-6">
         <header class="flex items-center justify-between mb-6">
           <h1 class="text-3xl font-bold">🛒 Grocery List</h1>
           <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
@@ -1015,6 +1005,7 @@
   <script src="assets/treats.js"></script>
   <script src="assets/chores.js"></script>
   <script src="assets/control.js"></script>
+  <script src="assets/siteControl.js"></script>
   <script src="assets/grocery.js"></script>
   <script src="assets/standby.js"></script>
   <script src="assets/immich.js"></script>
@@ -1025,22 +1016,37 @@
   <script src="assets/music.js"></script>
   <script src="assets/app.js"></script>
 
-  <!-- Twemoji: replaces emoji characters with SVG images for Chromium/Pi kiosk compatibility -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/twemoji.min.js" crossorigin="anonymous"></script>
+  <!-- Twemoji: replaces emoji with SVGs for Chromium/Pi kiosk. 
+       Primary CDN: unpkg (correct MIME). Fallback: local stub (no-op, native emoji). -->
   <script>
-    // Parse only page headings and standby panel headers — not the full DOM (perf-safe)
-    document.addEventListener('DOMContentLoaded', () => {
-      const parseTargets = () => {
-        // Standby panel headers, page headers, dashboard title
-        document.querySelectorAll('.glass-panel h3, #dashboardPage h1, .page header h1, .card h2').forEach(el => {
-          twemoji.parse(el, { folder: 'svg', ext: '.svg', base: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/' });
-        });
-      };
-      // Run after fonts load
-      setTimeout(parseTargets, 500);
-      // Re-run on navigation (router emits hashchange)
-      window.addEventListener('hashchange', () => setTimeout(parseTargets, 300));
-    });
+    (function() {
+      function loadTwemoji(cb) {
+        var s = document.createElement('script');
+        s.src = 'https://unpkg.com/twemoji@14.0.2/dist/twemoji.min.js';
+        s.crossOrigin = 'anonymous';
+        s.onload = cb;
+        s.onerror = function() {
+          // CDN failed — load local stub so twemoji is always defined
+          var s2 = document.createElement('script');
+          s2.src = '/vendor/twemoji-stub.js';
+          s2.onload = cb;
+          document.head.appendChild(s2);
+        };
+        document.head.appendChild(s);
+      }
+
+      loadTwemoji(function() {
+        var OPTS = { folder: 'svg', ext: '.svg', base: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/' };
+        function parseTargets() {
+          if (!window.twemoji || !window.twemoji.parse) return; // guard
+          document.querySelectorAll('.glass-panel h3, #dashboardPage h1, .page header h1, .card h2').forEach(function(el) {
+            try { twemoji.parse(el, OPTS); } catch(e) {}
+          });
+        }
+        setTimeout(parseTargets, 500);
+        window.addEventListener('hashchange', function() { setTimeout(parseTargets, 300); });
+      });
+    })();
   </script>
 
   <!-- Service Worker registration (PWA — no UI here, install UI lives in Admin Panel only) -->
