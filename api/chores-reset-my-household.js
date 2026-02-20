@@ -75,8 +75,9 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'Household lookup failed', detail: t });
     }
 
-    const hh = (await hhResp.json())[0] || {};
-    if (hh.last_chore_reset_date === today) {
+    const hh    = (await hhResp.json())[0] || {};
+    const force = !!(req.body && req.body.force);  // bypass idempotency guard when true
+    if (!force && hh.last_chore_reset_date === today) {
       return res.status(200).json({ ok: true, didReset: false, reason: 'already_reset_today', today, tz });
     }
 

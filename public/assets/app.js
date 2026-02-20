@@ -602,6 +602,7 @@ Hub.app = {
     Hub.utils.$('btnSaveSettings')?.addEventListener('click',     () => Hub.app._saveSettings());
     Hub.utils.$('btnUseLocation')?.addEventListener('click',      () => Hub.app._useCurrentLocation());
     Hub.utils.$('btnRefreshStatus')?.addEventListener('click',    () => Hub.app._loadStatusPage());
+    Hub.utils.$('btnManualResetChores')?.addEventListener('click', () => Hub.app._forceResetChores());
     Hub.utils.$('btnLoadCalendars')?.addEventListener('click',    () => Hub.app._fetchAndDisplayCalendars());
     Hub.utils.$('btnLoadGoogleAlbums')?.addEventListener('click', () => Hub.app._loadGooglePhotoAlbums());
     Hub.utils.$('btnTestSlideshow')?.addEventListener('click',    () => Hub.app._testSlideshow());
@@ -731,6 +732,45 @@ Hub.app = {
       }
     } catch (e) {
       console.warn('[App] Chore reset failed (non-critical):', e.message);
+    }
+  },
+
+  /**
+   * Manual chore reset — bypasses "already reset today" guard.
+   * Called by "🔄 Reset Today" button on the Chores page.
+   */
+  async _forceResetChores() {
+    const btn = Hub.utils.$('btnManualResetChores');
+    if (btn) { btn.disabled = true; btn.textContent = 'Resetting…'; }
+
+    try {
+      const session = await Hub.auth.getSession();
+      const token   = session?.access_token;
+      if (!token) { Hub.ui?.toast?.('Not signed in', 'error'); return; }
+
+      const apiBase = window.HOME_HUB_CONFIG?.apiBase || '';
+      const resp = await fetch(`${apiBase}/api/chores-reset-my-household`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({ tz: 'America/New_York', force: true })
+      });
+
+      const result = await resp.json().catch(() => ({}));
+
+      if (!resp.ok) {
+        console.error('[App] Force reset failed:', resp.status, result);
+        Hub.ui?.toast?.('Reset failed: ' + (result.error || resp.status), 'error');
+        return;
+      }
+
+      console.log('[App] Force reset result:', result);
+      Hub.ui?.toast?.(result.didReset ? '✅ Chores reset!' : (result.reason === 'already_reset_today' ? 'Already reset today — use force' : '✅ Done'), 'success');
+      Hub.chores?.load?.();
+    } catch (e) {
+      console.error('[App] Force reset error:', e.message);
+      Hub.ui?.toast?.('Reset error: ' + e.message, 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '🔄 Reset Today'; }
     }
   },
 

@@ -79,9 +79,12 @@
     .photo-item img { width: 100%; height: 100%; object-fit: cover; transition: opacity 1s; }
     /* ── Alert banner — scrolling ticker ── */
     .alert-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 50; font-weight: 700; display: flex; align-items: center; overflow: hidden; height: 2.4rem; }
-    .alert-banner.warning  { background: #ef4444; color: #fff; }
-    .alert-banner.watch    { background: #f59e0b; color: #000; }
-    .alert-banner.advisory { background: #eab308; color: #000; }
+    .alert-banner.warning, .alert-banner.extreme, .alert-banner.severe { background: #ef4444; color: #fff; }
+    .alert-banner.watch,   .alert-banner.moderate { background: #f59e0b; color: #000; }
+    .alert-banner.advisory,.alert-banner.minor    { background: #eab308; color: #000; }
+    /* Twemoji <img class="emoji"> sizing — must match current font size */
+    img.emoji { width: 1em; height: 1em; max-width: 1em; max-height: 1em;
+                vertical-align: -0.15em; display: inline-block; line-height: 1; }
     /* Ticker track — clips content and scrolls */
     .alert-banner__track { flex: 1; overflow: hidden; white-space: nowrap; }
     @keyframes alertTicker { from { transform: translateX(0); } to { transform: translateX(-50%); } }
@@ -516,8 +519,9 @@
       <div class="max-w-7xl mx-auto p-4 md:p-6">
         <header class="flex items-center justify-between mb-6">
           <h1 class="text-3xl font-bold">✅ Chores</h1>
-          <div class="flex gap-3">
+          <div class="flex gap-3 flex-wrap">
             <button id="btnAddChore" class="btn btn-primary">+ Add Chore</button>
+            <button id="btnManualResetChores" class="btn btn-secondary text-sm" title="Force-reset all daily/weekly chores to pending">🔄 Reset Today</button>
             <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
           </div>
         </header>

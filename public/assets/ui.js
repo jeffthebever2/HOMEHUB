@@ -39,7 +39,10 @@ Hub.ui = {
     const segment = unique.map(t => '⚠ ' + t).join('  ·  ');
     const ticker  = segment + '  ·  ' + segment;
 
-    const sev = (severity || 'watch').toLowerCase();
+    // Map NWS severity names to CSS classes (CSS defines warning/watch/advisory)
+    const rawSev = (severity || 'watch').toLowerCase();
+    const sevMap = { extreme: 'warning', severe: 'warning', moderate: 'watch', minor: 'advisory' };
+    const sev    = sevMap[rawSev] || rawSev; // pass through warning/watch/advisory unchanged
     banner.className = 'alert-banner alert-banner--ticker ' + sev;
     banner.innerHTML =
       '<div class="alert-banner__track" aria-label="Weather alert ticker">' +
