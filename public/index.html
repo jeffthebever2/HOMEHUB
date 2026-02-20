@@ -799,7 +799,42 @@
       <div class="max-w-4xl mx-auto p-4 md:p-6">
         <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary mb-4">← Back to Dashboard</button>
         <h1 class="text-3xl md:text-4xl font-bold mb-6">📻 Radio</h1>
-        <div id="radioStationList"></div>
+
+        <!-- TuneIn embedded player -->
+        <div class="card mb-4" style="padding:0;overflow:hidden;border-radius:1rem;">
+          <iframe
+            src="https://tunein.com/embed/player/s25111/"
+            style="width:100%;height:100px;border:0;"
+            scrolling="no"
+            frameborder="no">
+          </iframe>
+        </div>
+
+        <!-- Full TuneIn browse -->
+        <div class="card mb-4" style="padding:0;overflow:hidden;border-radius:1rem;">
+          <iframe
+            src="https://tunein.com/embed/browse/r0/"
+            style="width:100%;height:500px;border:0;"
+            scrolling="no"
+            frameborder="no">
+          </iframe>
+        </div>
+
+        <!-- Bluetooth audio output -->
+        <div class="card">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <span class="text-2xl">🔵</span>
+              <div>
+                <h3 class="font-semibold">Bluetooth Audio</h3>
+                <p id="radioBtStatus" class="text-sm text-gray-400">No device connected</p>
+              </div>
+            </div>
+            <button id="btnRadioBluetooth" onclick="Hub.radio.handleBluetooth()"
+                    class="btn btn-secondary">Connect Bluetooth</button>
+          </div>
+        </div>
+
       </div>
     </div>
 
