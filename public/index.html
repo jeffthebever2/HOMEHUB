@@ -395,41 +395,39 @@
           <div id="standbyDate" class="text-base sm:text-lg md:text-xl text-gray-300 font-light"></div>
         </div>
 
-        <!-- Info Cards - compact and responsive -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 max-w-6xl w-full mb-4">
+        <!-- Info Cards — fixed 2×2 grid, always one screen -->
+        <div class="max-w-5xl w-full mb-4" style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;">
 
-          <!-- Calendar Events - compact -->
-          <div class="glass-panel rounded-xl p-3 sm:p-4">
-            <h3 class="text-sm font-semibold mb-2 text-blue-400">📅 Upcoming Events</h3>
-            <div id="standbyCalendar" class="space-y-2 text-xs sm:text-sm max-h-32 overflow-hidden">
+          <!-- Calendar Events -->
+          <div class="glass-panel rounded-xl p-3">
+            <h3 class="text-xs font-semibold mb-1 text-blue-400 uppercase tracking-wide">📅 Upcoming</h3>
+            <div id="standbyCalendar" class="space-y-1 text-xs max-h-24 overflow-hidden">
               <p class="text-gray-400">Loading...</p>
             </div>
           </div>
 
-          <!-- Due Chores - compact -->
-          <div class="glass-panel rounded-xl p-3 sm:p-4">
-            <h3 class="text-sm font-semibold mb-2 text-green-400">✅ Chores Due</h3>
-            <div id="standbyChores" class="space-y-2 text-xs sm:text-sm max-h-32 overflow-hidden">
+          <!-- Due Chores -->
+          <div class="glass-panel rounded-xl p-3">
+            <h3 class="text-xs font-semibold mb-1 text-green-400 uppercase tracking-wide">✅ Chores Due</h3>
+            <div id="standbyChores" class="space-y-1 text-xs max-h-24 overflow-hidden">
               <p class="text-gray-400">Loading...</p>
             </div>
           </div>
 
-          <!-- Weather - today + tomorrow + alert -->
-          <div class="glass-panel rounded-xl p-3 sm:p-4 sm:col-span-2 lg:col-span-1">
-            <h3 class="text-sm font-semibold mb-2 text-yellow-400">🌤️ Weather</h3>
-            <div id="standbyWeather" class="text-xs sm:text-sm">
+          <!-- Weather -->
+          <div class="glass-panel rounded-xl p-3">
+            <h3 class="text-xs font-semibold mb-1 text-yellow-400 uppercase tracking-wide">🌤️ Weather</h3>
+            <div id="standbyWeather" class="text-xs">
               <p class="text-gray-400">Loading...</p>
             </div>
-            <!-- Tomorrow weather (smaller) -->
-            <div id="standbyTomorrow" class="text-xs text-gray-400 mt-2 hidden"></div>
-            <!-- Alert strip -->
-            <div id="standbyAlertStrip" class="standby-alert-strip mt-2 hidden"></div>
+            <div id="standbyTomorrow" class="text-xs text-gray-400 mt-1 hidden"></div>
+            <div id="standbyAlertStrip" class="standby-alert-strip mt-1 hidden"></div>
           </div>
 
-          <!-- Now Playing - compact single row -->
-          <div class="glass-panel rounded-xl p-3 sm:p-4">
-            <h3 class="text-sm font-semibold mb-2 text-purple-400">🎵 Now Playing</h3>
-            <div id="standbyNowPlaying" class="text-xs sm:text-sm">
+          <!-- Now Playing — single compact row -->
+          <div class="glass-panel rounded-xl p-3 flex flex-col justify-center">
+            <h3 class="text-xs font-semibold mb-1 text-purple-400 uppercase tracking-wide">🎵 Now Playing</h3>
+            <div id="standbyNowPlaying" class="text-xs">
               <p class="text-gray-400">Nothing playing</p>
             </div>
           </div>
