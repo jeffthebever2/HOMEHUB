@@ -180,6 +180,37 @@
     .accordion-toggle { cursor: pointer; user-select: none; }
     .accordion-toggle::after { content: ' ▼'; font-size:.7em; transition:transform .2s; display:inline-block; }
     .accordion-toggle.open::after { transform: rotate(180deg); }
+
+    /* ── Performance: GPU-hint scroll containers ── */
+    .page { contain: layout style; }
+    .card { contain: layout; }
+    img   { content-visibility: auto; }
+
+    /* ── Touchscreen mode — larger hit areas ── */
+    .touchscreen-mode .btn { min-height: 52px; min-width: 52px; font-size: 1.05rem; }
+    .touchscreen-mode .card { margin-bottom: 1.25rem; }
+    body:not(.touchscreen-mode) .card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+
+    /* ── Three-finger-tap hint ── */
+    #adminQuickFab {
+      position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9000;
+      width: 52px; height: 52px; border-radius: 50%;
+      background: rgba(239,68,68,.85); border: 1px solid rgba(255,255,255,.2);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.4rem; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.5);
+      transition: transform .2s, opacity .2s;
+    }
+    #adminQuickFab:active { transform: scale(0.9); }
+
+    /* ── Grocery list ── */
+    #groceryList .card { transition: opacity .2s; }
+
+    /* ── On-screen keyboard key active ── */
+    #oskOverlay button:active { filter: brightness(1.4); transform: scale(0.95); }
+
+    /* ── Admin panel grid tiles ── */
+    #adminPanelContent .card { transition: background .15s, transform .1s; }
+    #adminPanelContent .card:active { transform: scale(0.96); }
   </style>
 </head>
 <body>
@@ -260,6 +291,7 @@
             <button onclick="Hub.router.go('settings')" class="btn btn-secondary text-sm py-2 px-4">⚙️ Settings</button>
             <button onclick="Hub.router.go('music')" class="btn btn-secondary text-sm py-2 px-4">🎵 Music</button>
             <button onclick="Hub.router.go('radio')" class="btn btn-secondary text-sm py-2 px-4">📻 Radio</button>
+            <button onclick="Hub.router.go('grocery')" class="btn btn-secondary text-sm py-2 px-4">🛒 Grocery</button>
             <button id="btnSignOut" class="btn btn-secondary text-sm py-2 px-4">Sign Out</button>
           </div>
         </header>
@@ -394,7 +426,7 @@
             <div id="standbyAlertStrip" class="standby-alert-strip mt-2 hidden"></div>
           </div>
 
-          <!-- Now Playing - compact -->
+          <!-- Now Playing - compact single row -->
           <div class="glass-panel rounded-xl p-3 sm:p-4">
             <h3 class="text-sm font-semibold mb-2 text-purple-400">🎵 Now Playing</h3>
             <div id="standbyNowPlaying" class="text-xs sm:text-sm">
@@ -718,6 +750,20 @@
             <p id="fullscreenStatus" class="text-xs text-gray-500 mt-2 text-center"></p>
           </div>
 
+          <!-- Admin Panel -->
+          <div class="card" style="border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.05);">
+            <div class="flex items-center justify-between">
+              <div>
+                <h2 class="text-xl font-bold">🛠 Admin Panel</h2>
+                <p class="text-gray-400 text-sm mt-1">Live control console — system, media, display, debug, simulation</p>
+              </div>
+              <button onclick="Hub.router.go('admin')"
+                class="btn btn-primary px-6 py-3 text-base font-bold" style="background:#dc2626;">
+                Open Admin →
+              </button>
+            </div>
+          </div>
+
           <button id="btnSaveSettings" class="btn btn-primary w-full py-3">💾 Save All Settings</button>
           <p class="text-center text-sm text-gray-500 mt-2">Settings are automatically saved to your account and persist forever</p>
         </div>
@@ -798,27 +844,20 @@
     <div id="radioPage" class="page">
       <div class="max-w-4xl mx-auto p-4 md:p-6">
         <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary mb-4">← Back to Dashboard</button>
-        <h1 class="text-3xl md:text-4xl font-bold mb-6">📻 Radio</h1>
+        <h1 class="text-3xl md:text-4xl font-bold mb-4">📻 Radio</h1>
 
-        <!-- TuneIn embedded player -->
-        <div class="card mb-4" style="padding:0;overflow:hidden;border-radius:1rem;">
+        <!-- Full TuneIn site — browse and play all stations -->
+        <div style="border-radius:1rem;overflow:hidden;height:72vh;min-height:480px;border:1px solid rgba(255,255,255,.1);">
           <iframe
-            src="https://tunein.com/embed/player/s25111/"
-            style="width:100%;height:100px;border:0;"
-            scrolling="no"
-            frameborder="no">
+            src="https://tunein.com"
+            style="width:100%;height:100%;border:0;background:#111;"
+            allow="autoplay; fullscreen; encrypted-media"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation"
+            loading="lazy"
+            title="TuneIn Radio">
           </iframe>
         </div>
-
-        <!-- Full TuneIn browse -->
-        <div class="card mb-4" style="padding:0;overflow:hidden;border-radius:1rem;">
-          <iframe
-            src="https://tunein.com/embed/browse/r0/"
-            style="width:100%;height:500px;border:0;"
-            scrolling="no"
-            frameborder="no">
-          </iframe>
-        </div>
+        <p class="text-xs text-gray-500 text-center mt-2 mb-4">Browse and play any station via TuneIn</p>
 
         <!-- Bluetooth audio output -->
         <div class="card">
@@ -834,9 +873,40 @@
                     class="btn btn-secondary">Connect Bluetooth</button>
           </div>
         </div>
-
       </div>
     </div>
+
+    <!-- ========== GROCERY LIST ========== -->
+    <div id="groceryPage" class="page">
+      <div class="max-w-2xl mx-auto p-4 md:p-6">
+        <header class="flex items-center justify-between mb-6">
+          <h1 class="text-3xl font-bold">🛒 Grocery List</h1>
+          <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
+        </header>
+        <div id="groceryList">
+          <p class="text-gray-400 text-center py-8">Loading…</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== ADMIN PANEL ========== -->
+    <div id="adminPage" class="page">
+      <div class="max-w-4xl mx-auto p-4 md:p-6">
+        <header class="flex items-center justify-between mb-6">
+          <div>
+            <h1 class="text-3xl font-bold">🛠 Admin Panel</h1>
+            <p class="text-gray-400 text-sm">Live control console · Tap = immediate effect</p>
+          </div>
+          <button onclick="Hub.router.go('settings')" class="btn btn-secondary">← Settings</button>
+        </header>
+        <div id="adminPanelContent">
+          <p class="text-gray-400 text-center py-8">Loading admin panel…</p>
+        </div>
+      </div>
+    </div>
+
+  <!-- Admin quick-access FAB (always visible on screen) -->
+  <div id="adminQuickFab" title="Admin Panel" onclick="Hub.router.go('admin')" style="display:none;">🛠</div>
 
   <!-- Scripts (order matters) -->
   <script src="assets/utils.js"></script>
@@ -849,6 +919,7 @@
   <script src="assets/treats.js"></script>
   <script src="assets/chores.js"></script>
   <script src="assets/control.js"></script>
+  <script src="assets/grocery.js"></script>
   <script src="assets/standby.js"></script>
   <script src="assets/immich.js"></script>
   <script src="assets/player.js"></script>

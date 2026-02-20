@@ -243,26 +243,43 @@ Hub.player = {
     const container = document.getElementById(containerId);
     if (!container) return;
 
+    const isStandby = containerId === 'standbyNowPlaying';
+
     if (!this.state.currentSource) {
-      // Only write if not already in idle state
       if (!container.querySelector('.player-idle')) {
-        container.innerHTML = `
-          <div class="player-idle text-center text-gray-500 py-4">
-            <div class="text-3xl mb-2">🎵</div>
-            <p class="text-sm">Nothing playing</p>
-          </div>`;
+        if (isStandby) {
+          container.innerHTML = '<p class="text-gray-400">Nothing playing</p>';
+        } else {
+          container.innerHTML = `
+            <div class="player-idle text-center text-gray-500 py-4">
+              <div class="text-3xl mb-2">🎵</div>
+              <p class="text-sm">Nothing playing</p>
+            </div>`;
+        }
       }
       return;
     }
 
     const icon        = this.state.currentSource === 'radio' ? '📻' : '🎵';
-    const sourceLabel = this.state.currentSource === 'radio' ? 'Radio' : 'Music';
     const statusText  = this._statusLabel();
     const statusClass = this.state.isPlaying              ? 'text-green-400'
                       : this.state.radioStatus === 'failed' ? 'text-red-400'
                       :                                      'text-yellow-400';
 
-    // Update existing widget in-place
+    // Standby: single compact row — no buttons
+    if (isStandby) {
+      container.innerHTML = `
+        <div class="flex items-center gap-2 leading-tight">
+          <span class="text-base flex-shrink-0">${icon}</span>
+          <span class="font-semibold truncate flex-1">${Hub.utils.esc(this.state.title)}</span>
+          <span class="${statusClass} text-xs flex-shrink-0">${statusText}</span>
+        </div>`;
+      return;
+    }
+
+    const sourceLabel = this.state.currentSource === 'radio' ? 'Radio' : 'Music';
+
+    // Full widget — update in-place (no DOM duplication)
     const existing = container.querySelector('.player-widget');
     if (existing) {
       existing.querySelector('.p-icon').textContent  = icon;
@@ -275,7 +292,7 @@ Hub.player = {
       return;
     }
 
-    // First render
+    // First render of full widget
     container.innerHTML = `
       <div class="player-widget flex items-center justify-between gap-4">
         <div class="flex items-center gap-3 flex-1 min-w-0">

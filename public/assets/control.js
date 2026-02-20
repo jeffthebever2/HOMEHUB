@@ -1,599 +1,809 @@
 // ============================================================
-// assets/control.js — Simple Working Admin Control (v4 - FIXED)
+// public/assets/control.js — Admin Panel (full control console)
+// Philosophy: Tap → immediate effect. No forms. No save buttons.
+// Tabbed: System | Media | Display | Input | Debug | Simulate | Nav
 // ============================================================
 window.Hub = window.Hub || {};
 
 Hub.control = {
-  _loaded: null,
-  _resetCheckInterval: null,
+  _activeTab: 'system',
+  _eventLog: [],
+  _fpsMeter: null,
+  _lastFps: 0,
 
   init() {
-    console.log('[Control] Init started');
-    
-    // Bind existing buttons
-    const bind = (id, fn) => {
-      const el = document.getElementById(id);
-      if (!el || el._bound) return;
-      el._bound = true;
-      el.addEventListener('click', fn);
-    };
-
-    bind('btnControlLoad', () => this.load());
-    bind('btnControlSave', () => this.save());
-    bind('btnControlCopyJson', () => this._copyJson());
-    
-    // Start auto-reset checker
-    this.startAutoResetChecker();
-    
-    // Add admin controls
-    setTimeout(() => this.addAdminControls(), 500);
+    console.log('[Admin] Init');
+    this.startAutoResetChecker?.();
+    // Start FPS tracking always in background
+    this._trackFPS();
+    // Log events globally
+    this._hookEventLog();
   },
 
-  // ============================================================
-  // ADD ADMIN CONTROLS TO EXISTING PAGE
-  // ============================================================
-  addAdminControls() {
-    console.log('[Control] Adding admin controls');
-    const controlContent = document.getElementById('controlContent');
-    if (!controlContent) {
-      console.log('[Control] controlContent not found, retrying...');
-      setTimeout(() => this.addAdminControls(), 500);
-      return;
-    }
-
-    // Check if already added
-    if (document.getElementById('adminControlsSection')) {
-      console.log('[Control] Admin controls already added');
-      return;
-    }
-
-    const autoResetEnabled = localStorage.getItem('chore_auto_reset_enabled') === 'true';
-    const lastReset = localStorage.getItem('chore_last_reset_date');
-    
-    const adminHTML = `
-      <div id="adminControlsSection" class="space-y-6 mb-8">
-        <!-- Admin Stats -->
-        <div class="card bg-blue-900 bg-opacity-30">
-          <h2 class="text-xl font-bold mb-4">🔧 Admin Dashboard</h2>
-          <div id="adminStats">
-            <p class="text-gray-400">Loading stats...</p>
-          </div>
-        </div>
-
-        <!-- Chore Reset Control -->
-        <div class="card ${autoResetEnabled ? 'bg-green-900 bg-opacity-20 border border-green-600' : 'bg-gray-800'}">
-          <h2 class="text-xl font-bold mb-4">🔄 Automatic Chore Reset</h2>
-          
-          <div class="mb-4 p-4 bg-gray-900 rounded-lg">
-            <div class="flex items-center justify-between mb-2">
-              <span class="font-semibold">Status:</span>
-              <span class="${autoResetEnabled ? 'text-green-400' : 'text-gray-400'} font-bold">
-                ${autoResetEnabled ? '✓ ENABLED' : '○ DISABLED'}
-              </span>
-            </div>
-            ${lastReset ? `
-              <p class="text-sm text-gray-400">Last reset: ${new Date(lastReset).toLocaleString()}</p>
-            ` : ''}
-          </div>
-
-          <div class="space-y-3">
-            <button id="btnToggleAutoReset" class="btn ${autoResetEnabled ? 'btn-danger' : 'btn-success'} w-full">
-              ${autoResetEnabled ? '⏸️ Disable Auto-Reset' : '▶️ Enable Auto-Reset'}
-            </button>
-            
-            <button id="btnManualResetChores" class="btn btn-primary w-full">
-              🔄 Reset All Chores Now (Manual)
-            </button>
-            
-            <button id="btnViewChoreStats" class="btn btn-secondary w-full">
-              📊 View Completion Statistics
-            </button>
-          </div>
-
-          <div class="mt-4 p-3 bg-gray-900 rounded text-sm text-gray-400">
-            <p class="font-semibold mb-2">How it works:</p>
-            <ul class="list-disc pl-5 space-y-1">
-              <li><strong>Daily chores:</strong> Reset at midnight every day</li>
-              <li><strong>Weekly chores:</strong> Reset on their assigned day</li>
-              <li><strong>Logs preserved:</strong> Completion history never deleted</li>
-              <li><strong>Automatic:</strong> Works even when you're not logged in</li>
-            </ul>
-          </div>
-        </div>
-
-        <!-- Statistics Display -->
-        <div id="choreStatsSection" class="card bg-gray-800 hidden">
-          <div class="flex items-center justify-between mb-4">
-            <h2 class="text-xl font-bold">📊 Chore Statistics</h2>
-            <button id="btnHideStats" class="btn btn-secondary text-sm">← Back</button>
-          </div>
-          <div id="choreStatsContent">
-            <p class="text-gray-400">Loading...</p>
-          </div>
-        </div>
-      </div>
-    `;
-
-    // Insert at the top
-    controlContent.insertAdjacentHTML('afterbegin', adminHTML);
-    
-    // Bind new buttons
-    this._bindAdminButtons();
-    
-    // Load stats
-    this.loadStats();
-    
-    console.log('[Control] Admin controls added successfully');
-  },
-
-  _bindAdminButtons() {
-    const bind = (id, fn) => {
-      const el = document.getElementById(id);
-      if (!el || el._bound) return;
-      el._bound = true;
-      el.addEventListener('click', fn);
-      console.log('[Control] Bound button:', id);
-    };
-
-    bind('btnToggleAutoReset', () => this.toggleAutoReset());
-    bind('btnManualResetChores', () => this.manualResetChores());
-    bind('btnViewChoreStats', () => this.showStats());
-    bind('btnHideStats', () => this.hideStats());
-  },
-
-  // ============================================================
-  // LOAD STATS
-  // ============================================================
-  async loadStats() {
-    const el = document.getElementById('adminStats');
+  load() {
+    const el = document.getElementById('adminPanelContent');
     if (!el) return;
-
-    try {
-      const chores = await Hub.db.loadChores(Hub.state.household_id);
-      const totalChores = chores.length;
-      const pendingChores = chores.filter(c => c.status === 'pending').length;
-      const doneChores = totalChores - pendingChores;
-      const completionRate = totalChores > 0 ? Math.round((doneChores / totalChores) * 100) : 0;
-
-      el.innerHTML = `
-        <div class="grid grid-cols-3 gap-4">
-          <div class="text-center">
-            <p class="text-3xl font-bold text-blue-400">${totalChores}</p>
-            <p class="text-sm text-gray-400">Total Chores</p>
-          </div>
-          <div class="text-center">
-            <p class="text-3xl font-bold text-yellow-400">${pendingChores}</p>
-            <p class="text-sm text-gray-400">Pending</p>
-          </div>
-          <div class="text-center">
-            <p class="text-3xl font-bold text-green-400">${completionRate}%</p>
-            <p class="text-sm text-gray-400">Completed</p>
-          </div>
-        </div>
-      `;
-    } catch (e) {
-      console.error('[Control] Stats error:', e);
-      el.innerHTML = '<p class="text-red-400">Failed to load stats</p>';
-    }
+    el.innerHTML = this._renderPanel();
+    this._bindTab(this._activeTab);
   },
 
-  // ============================================================
-  // AUTO-RESET FUNCTIONALITY
-  // ============================================================
-  
-  startAutoResetChecker() {
-    console.log('[Control] Starting auto-reset checker');
-    
-    // Clear any existing interval
-    if (this._resetCheckInterval) {
-      clearInterval(this._resetCheckInterval);
-    }
-    
-    // Check every 30 seconds
-    this._resetCheckInterval = setInterval(() => {
-      this.checkAndReset();
-    }, 30000);
-    
-    // Also check immediately
-    setTimeout(() => this.checkAndReset(), 2000);
+  // ── Event log ───────────────────────────────────────────
+  _hookEventLog() {
+    const orig = Hub.router.go.bind(Hub.router);
+    Hub.router.go = (page) => { this._log(`→ Navigate: ${page}`); orig(page); };
   },
 
-  async checkAndReset() {
-    const enabled = localStorage.getItem('chore_auto_reset_enabled') === 'true';
-    if (!enabled) {
-      console.log('[Control] Auto-reset disabled, skipping check');
-      return;
-    }
+  _log(msg) {
+    this._eventLog.unshift({ t: new Date().toLocaleTimeString(), msg });
+    if (this._eventLog.length > 50) this._eventLog.pop();
+    const el = document.getElementById('adminEventLog');
+    if (el) el.innerHTML = this._eventLog.map(e =>
+      `<div class="text-xs border-b border-gray-800 py-1"><span class="text-gray-500">${e.t}</span> ${Hub.utils.esc(e.msg)}</div>`
+    ).join('');
+  },
 
-    const now = new Date();
-    const lastReset = localStorage.getItem('chore_last_reset_date');
-    const lastResetDate = lastReset ? new Date(lastReset) : null;
-    
-    // Check if we need to reset (new day)
-    const needsReset = !lastResetDate || 
-                      lastResetDate.toDateString() !== now.toDateString();
-    
-    if (needsReset) {
-      console.log('[Control] Auto-reset triggered - new day detected');
-      await this.performReset(false);
+  // ── FPS tracker ─────────────────────────────────────────
+  _trackFPS() {
+    let frames = 0, last = performance.now();
+    const tick = (now) => {
+      frames++;
+      if (now - last >= 1000) {
+        this._lastFps = frames;
+        frames = 0; last = now;
+        const el = document.getElementById('adminFPS');
+        if (el) el.textContent = this._lastFps + ' fps';
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  },
+
+  // ── Panel render ─────────────────────────────────────────
+  _renderPanel() {
+    const tabs = [
+      { id: 'system',   icon: '🖥', label: 'System'   },
+      { id: 'media',    icon: '🎵', label: 'Media'    },
+      { id: 'display',  icon: '🎨', label: 'Display'  },
+      { id: 'input',    icon: '🖐', label: 'Input'    },
+      { id: 'debug',    icon: '🔍', label: 'Debug'    },
+      { id: 'simulate', icon: '🧪', label: 'Simulate' },
+      { id: 'nav',      icon: '🗺', label: 'Nav'      },
+    ];
+
+    return `
+      <!-- Quick Actions Strip -->
+      <div class="grid grid-cols-4 gap-2 mb-6">
+        ${this._quickTile('🔄','Restart Hub',     'Hub.control.restartHub()')}
+        ${this._quickTile('📡','Reload Data',     'Hub.control.reloadData()')}
+        ${this._quickTile('🔇','Silence All',     'Hub.control.silenceAll()')}
+        ${this._quickTile('🧹','Clear State',     'Hub.control.clearState()')}
+        ${this._quickTile('👀','Debug Overlay',   'Hub.control.toggleDebugOverlay()')}
+        ${this._quickTile('🛡','Safe Mode',       'Hub.control.safeMode()')}
+        ${this._quickTile('🧪','Demo Mode',       'Hub.control.demoMode()')}
+        ${this._quickTile('💬','Explain Events',  'Hub.control.explainEvents()')}
+      </div>
+
+      <!-- Tabs -->
+      <div class="flex gap-1 mb-4 overflow-x-auto pb-1">
+        ${tabs.map(t => `
+          <button onclick="Hub.control.switchTab('${t.id}')"
+            id="adminTab_${t.id}"
+            class="btn text-sm px-3 py-2 flex-shrink-0 ${this._activeTab === t.id ? 'btn-primary' : 'btn-secondary'}">
+            ${t.icon} ${t.label}
+          </button>`).join('')}
+      </div>
+
+      <!-- Tab content -->
+      <div id="adminTabContent">${this._renderTab(this._activeTab)}</div>
+    `;
+  },
+
+  _quickTile(icon, label, action) {
+    return `
+      <button onclick="${action}"
+        class="card flex flex-col items-center justify-center gap-1 py-4 cursor-pointer hover:bg-blue-900 hover:bg-opacity-30 transition-all text-center"
+        style="margin:0;border-radius:.75rem;">
+        <span class="text-2xl">${icon}</span>
+        <span class="text-xs font-semibold text-gray-300">${label}</span>
+      </button>`;
+  },
+
+  switchTab(tab) {
+    this._activeTab = tab;
+    document.querySelectorAll('[id^="adminTab_"]').forEach(b => {
+      b.className = 'btn text-sm px-3 py-2 flex-shrink-0 ' + (b.id === `adminTab_${tab}` ? 'btn-primary' : 'btn-secondary');
+    });
+    const content = document.getElementById('adminTabContent');
+    if (content) content.innerHTML = this._renderTab(tab);
+    this._bindTab(tab);
+  },
+
+  _bindTab(tab) {
+    if (tab === 'display') this._bindDisplaySliders();
+    if (tab === 'debug')   { this._renderLog(); this._renderSystemStats(); }
+  },
+
+  // ── Tabs ────────────────────────────────────────────────
+
+  _renderTab(tab) {
+    const t = {
+      system:   this._tabSystem(),
+      media:    this._tabMedia(),
+      display:  this._tabDisplay(),
+      input:    this._tabInput(),
+      debug:    this._tabDebug(),
+      simulate: this._tabSimulate(),
+      nav:      this._tabNav(),
+    };
+    return t[tab] || '';
+  },
+
+  _tile(icon, label, sub, action, color) {
+    const bg = color ? `background:${color};` : '';
+    return `
+      <button onclick="${action}"
+        class="card flex flex-col items-start gap-1 p-4 cursor-pointer hover:opacity-90 transition-all text-left"
+        style="margin:0;border-radius:.75rem;${bg}">
+        <span class="text-xl">${icon}</span>
+        <span class="font-semibold text-sm">${label}</span>
+        ${sub ? `<span class="text-xs text-gray-400">${sub}</span>` : ''}
+      </button>`;
+  },
+
+  // SYSTEM TAB
+  _tabSystem() { return `
+    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      ${this._tile('⛶','Fullscreen','Enter kiosk mode','Hub.ui.enterFullscreen()')}
+      ${this._tile('✕','Exit Fullscreen','Return to window','Hub.ui.exitFullscreen()')}
+      ${this._tile('🔒','Lock Fullscreen','Auto re-enter','Hub.control.lockFullscreen()')}
+      ${this._tile('💤','Force Standby','Enter standby now','Hub.router.go("standby")')}
+      ${this._tile('☀️','Wake Screen','Exit standby','Hub.router.go("dashboard")')}
+      ${this._tile('🔄','Reload App','Hard reload page','location.reload()')}
+      ${this._tile('🧹','Clear Cache','Clear app storage','Hub.control.clearCache()')}
+      ${this._tile('🚫','No Context Menu','Disable right-click','Hub.control.disableContextMenu()')}
+      ${this._tile('📵','Disable Back Nav','Prevent accidental back','Hub.control.preventBack()')}
+      ${this._tile('😴','Wake Lock','Prevent sleep','Hub.control.requestWakeLock()')}
+      ${this._tile('⚙️','Reset Settings','Restore defaults','Hub.control.resetSettings()')}
+      ${this._tile('📋','Chore Reset','Reset all chores','Hub.control.manualChoreReset()')}
+    </div>
+    <div class="card mt-4">
+      <h3 class="font-bold mb-2 text-sm text-gray-400">AUTO CHORE RESET</h3>
+      <div class="flex items-center justify-between">
+        <span class="text-sm">Daily reset at 4am</span>
+        <button onclick="Hub.control.toggleAutoReset(this)"
+          id="btnAutoReset"
+          class="btn ${localStorage.getItem('chore_auto_reset_enabled')==='true' ? 'btn-success' : 'btn-secondary'} text-sm">
+          ${localStorage.getItem('chore_auto_reset_enabled')==='true' ? '✓ Enabled' : 'Disabled'}
+        </button>
+      </div>
+    </div>
+  `; },
+
+  // MEDIA TAB
+  _tabMedia() { return `
+    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      ${this._tile('🔇','Kill Audio','Stop all playback','Hub.control.silenceAll()')}
+      ${this._tile('🔄','Reload Stream','Force restart radio','Hub.control.reloadStream()')}
+      ${this._tile('▶️','Force Autoplay','Unlock browser audio','Hub.control.unlockAudio()')}
+      ${this._tile('⏸','Pause Slideshow','Stop photo rotation','Hub.immich._ss.paused=true;Hub.ui.toast("Slideshow paused","info")')}
+      ${this._tile('▶','Resume Slideshow','Restart photo rotation','Hub.immich._ss.paused=false;Hub.immich._ss.lastSwitchTime=performance.now();Hub.ui.toast("Slideshow resumed","success")')}
+      ${this._tile('⏭','Next Photo','Skip to next image','Hub.control.slideshowNext()')}
+      ${this._tile('⏮','Prev Photo','Back one image','Hub.control.slideshowPrev()')}
+      ${this._tile('🔀','Shuffle Photos','Re-randomize order','Hub.control.slideshowShuffle()')}
+    </div>
+    <div class="card mt-4">
+      <h3 class="font-bold mb-2 text-sm text-gray-400">VOLUME LIMITER</h3>
+      <div class="flex items-center gap-3">
+        <span class="text-sm w-16">Max vol</span>
+        <input type="range" id="adminVolLimit" min="0" max="1" step="0.05"
+          value="${Hub.player?.state?.volume ?? 0.7}"
+          oninput="Hub.player?.setVolume(parseFloat(this.value));document.getElementById('adminVolVal').textContent=Math.round(this.value*100)+'%'"
+          class="flex-1">
+        <span id="adminVolVal" class="text-sm w-10 text-right">${Math.round((Hub.player?.state?.volume ?? 0.7)*100)}%</span>
+      </div>
+    </div>
+    <div class="card mt-3" id="audioDebugCard">
+      <h3 class="font-bold mb-2 text-sm text-gray-400">AUDIO DEBUG</h3>
+      <div class="text-xs space-y-1 font-mono">
+        <div>Source: <span class="text-blue-400">${Hub.player?.state?.currentSource || 'none'}</span></div>
+        <div>Status: <span class="text-green-400">${Hub.player?.state?.radioStatus || '—'}</span></div>
+        <div>Playing: <span class="${Hub.player?.state?.isPlaying ? 'text-green-400' : 'text-red-400'}">${Hub.player?.state?.isPlaying ? 'yes' : 'no'}</span></div>
+        <div>ReadyState: <span class="text-yellow-400">${Hub.player?.radioAudio?.readyState ?? '—'}</span></div>
+      </div>
+      <button onclick="Hub.control.refreshAudioDebug()" class="btn btn-secondary text-xs mt-2">↻ Refresh</button>
+    </div>
+  `; },
+
+  // DISPLAY TAB
+  _tabDisplay() { return `
+    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+      ${this._tile('🌙','Night Mode','Warm dark filter','Hub.control.toggleNightMode()')}
+      ${this._tile('☀️','Day Mode','Clear all filters','Hub.control.clearFilters()')}
+      ${this._tile('🔆','High Contrast','Accessibility','Hub.control.toggleHighContrast()')}
+      ${this._tile('📝','Large Text','Bigger fonts','Hub.control.toggleLargeText()')}
+      ${this._tile('🚫','No Animations','Stop all motion','document.body.classList.toggle("reduce-motion");Hub.ui.toast("Motion toggled","info")')}
+      ${this._tile('🐌','Slow Motion','0.5x transitions','Hub.control.setMotionSpeed(0.5)')}
+      ${this._tile('💫','Fast Motion','2x transitions','Hub.control.setMotionSpeed(2)')}
+      ${this._tile('🔲','Outline Mode','Show button borders','Hub.control.toggleOutlineMode()')}
+    </div>
+    <div class="card space-y-4">
+      <h3 class="font-bold text-sm text-gray-400">THEME CONTROLS</h3>
+      ${this._slider('Accent Hue','accentHue','0','360','220','Hub.control.setAccentHue(this.value)')}
+      ${this._slider('Background Dim','bgDim','0','100','11','Hub.control.setBgDim(this.value)')}
+      ${this._slider('Blur Strength','blurStr','0','40','20','Hub.control.setBlur(this.value)')}
+      ${this._slider('Saturation','satVal','0','200','100','Hub.control.setSaturation(this.value)')}
+    </div>
+  `; },
+
+  _slider(label, id, min, max, val, oninput) { return `
+    <div class="flex items-center gap-3">
+      <span class="text-sm w-28 flex-shrink-0">${label}</span>
+      <input type="range" id="admin_${id}" min="${min}" max="${max}" value="${val}" oninput="${oninput}" class="flex-1">
+      <span id="adminV_${id}" class="text-xs w-8 text-right">${val}</span>
+    </div>`; },
+
+  // INPUT TAB
+  _tabInput() { return `
+    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+      ${this._tile('🖐','Touch Mode','Big hit areas','document.body.dataset.input="touch";document.body.classList.add("touchscreen-mode");Hub.ui.toast("Touch mode","info")')}
+      ${this._tile('🖱','Desktop Mode','Normal UI','document.body.dataset.input="desktop";document.body.classList.remove("touchscreen-mode");Hub.ui.toast("Desktop mode","info")')}
+      ${this._tile('🎯','Precision Mode','Stylus/fine','document.body.dataset.input="precision";Hub.ui.toast("Precision mode","info")')}
+      ${this._tile('💧','Tap Ripples','Show touch points','Hub.control.toggleTapRipples()')}
+      ${this._tile('🔎','Tap Heatmap','Debug touch areas','Hub.control.toggleHeatmap()')}
+      ${this._tile('📜','Kinetic Scroll','Smooth momentum','Hub.control.toggleKineticScroll()')}
+      ${this._tile('⬆','Swipe Gestures','Enable nav swipes','Hub.control.enableGestures()')}
+      ${this._tile('🧒','Kid Mode','Lock danger buttons','Hub.control.toggleKidMode()')}
+    </div>
+    <div class="card">
+      <h3 class="font-bold mb-2 text-sm text-gray-400">SWIPE GESTURES</h3>
+      <div class="text-xs text-gray-400 space-y-1">
+        <div>↓ Swipe down → Dashboard</div>
+        <div>↑ Swipe up → Standby</div>
+        <div>← Swipe left → Back</div>
+        <div>→ Swipe right → Forward</div>
+      </div>
+      <button onclick="Hub.control.enableGestures()" class="btn btn-secondary text-xs mt-2">Enable Gestures</button>
+    </div>
+  `; },
+
+  // DEBUG TAB
+  _tabDebug() { return `
+    <div class="grid grid-cols-3 gap-2 mb-4">
+      <div class="card text-center" style="margin:0;">
+        <div id="adminFPS" class="text-2xl font-bold text-green-400">${this._lastFps} fps</div>
+        <div class="text-xs text-gray-500">FPS</div>
+      </div>
+      <div class="card text-center" style="margin:0;">
+        <div id="adminMem" class="text-2xl font-bold text-blue-400">—</div>
+        <div class="text-xs text-gray-500">Memory</div>
+      </div>
+      <div class="card text-center" style="margin:0;">
+        <div id="adminUptime" class="text-2xl font-bold text-purple-400">${this._uptime()}</div>
+        <div class="text-xs text-gray-500">Uptime</div>
+      </div>
+    </div>
+    <div class="card mb-3">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="font-bold text-sm text-gray-400">EVENT LOG</h3>
+        <button onclick="Hub.control._eventLog=[];Hub.control._renderLog()" class="text-xs text-red-400">Clear</button>
+      </div>
+      <div id="adminEventLog" class="max-h-48 overflow-y-auto font-mono">
+        ${this._eventLog.length ? this._eventLog.map(e =>
+          `<div class="text-xs border-b border-gray-800 py-1"><span class="text-gray-500">${e.t}</span> ${Hub.utils.esc(e.msg)}</div>`
+        ).join('') : '<div class="text-xs text-gray-500">No events yet</div>'}
+      </div>
+    </div>
+    <div class="card mb-3" id="sysStatsCard">
+      <h3 class="font-bold mb-2 text-sm text-gray-400">SYSTEM INFO</h3>
+      <div id="adminSysStats" class="text-xs font-mono space-y-1 text-gray-300"></div>
+      <button onclick="Hub.control._renderSystemStats()" class="btn btn-secondary text-xs mt-2">↻ Refresh</button>
+    </div>
+    <div class="grid grid-cols-2 gap-2">
+      ${this._tile('🔍','Inspect Element','Tap-to-inspect mode','Hub.control.enableInspector()')}
+      ${this._tile('📊','Network Ping','Test latency','Hub.control.pingTest()')}
+    </div>
+  `; },
+
+  // SIMULATE TAB
+  _tabSimulate() { return `
+    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      ${this._tile('❄️','Simulate Snow','Inject storm data','Hub.control.simWeather("snow")')}
+      ${this._tile('⛈','Simulate Storm','Inject thunder data','Hub.control.simWeather("storm")')}
+      ${this._tile('☀️','Clear Weather','Sunny forecast','Hub.control.simWeather("clear")')}
+      ${this._tile('⚠️','Trigger Alert','Show weather alert','Hub.control.simAlert()')}
+      ${this._tile('📡','Offline Mode','Simulate no network','Hub.control.simOffline()')}
+      ${this._tile('🌅','Force Sunrise','Override time','Hub.control.simTime("06:00")')}
+      ${this._tile('🌇','Force Sunset','Override time','Hub.control.simTime("19:00")')}
+      ${this._tile('⏰','Freeze Time','Stop clock updates','Hub.control.freezeTime()')}
+      ${this._tile('📋','Sim Many Chores','Fill test data','Hub.control.simChores()')}
+      ${this._tile('🎵','Sim Now Playing','Test player UI','Hub.control.simNowPlaying()')}
+      ${this._tile('📸','Slideshow Timer','Show countdown overlay','Hub.control.showSlideshowTimer()')}
+      ${this._tile('👁','Sim Tab Hide','Test visibility pause','Hub.control.simVisibility()')}
+    </div>
+  `; },
+
+  // NAV TAB
+  _tabNav() {
+    const pages = ['dashboard','weather','chores','treats','music','radio','settings','grocery','standby'];
+    return `
+    <div class="grid grid-cols-3 gap-3 mb-4">
+      ${pages.map(p => this._tile(this._pageIcon(p), p.charAt(0).toUpperCase()+p.slice(1), '', `Hub.router.go('${p}')`)).join('')}
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      ${this._tile('🔙','Go Back','Browser back','history.back()')}
+      ${this._tile('🔄','Refresh','Reload current page','location.reload()')}
+    </div>
+  `; },
+
+  _pageIcon(p) {
+    const m = {dashboard:'🏠',weather:'🌤️',chores:'✅',treats:'🐕',music:'🎵',radio:'📻',settings:'⚙️',grocery:'🛒',standby:'💤'};
+    return m[p] || '📄';
+  },
+
+  // ── Action implementations ────────────────────────────────
+
+  restartHub() {
+    if (confirm('Reload Home Hub?')) location.reload();
+  },
+
+  reloadData() {
+    Hub.app?._loadDashboard?.();
+    Hub.ui?.toast?.('Data refreshed', 'success');
+    this._log('Reload data');
+  },
+
+  silenceAll() {
+    Hub.player?.stop?.();
+    Hub.ui?.toast?.('Audio stopped', 'info');
+    this._log('Silence all');
+  },
+
+  clearState() {
+    Hub.player?.stop?.();
+    Hub.ui?.toast?.('UI state cleared', 'info');
+    this._log('Clear state');
+  },
+
+  safeMode() {
+    document.body.classList.add('reduce-motion');
+    Hub.player?.stop?.();
+    Hub.ui?.toast?.('Safe mode: animations off, audio stopped', 'info');
+    this._log('Safe mode');
+  },
+
+  demoMode() {
+    Hub.ui?.toast?.('Demo mode — simulating activity', 'success');
+    this.simNowPlaying();
+    this._log('Demo mode');
+  },
+
+  explainEvents() {
+    const recent = this._eventLog.slice(0, 10).map(e => `${e.t}: ${e.msg}`).join('\n');
+    alert('Recent events:\n\n' + (recent || 'No events recorded yet.'));
+  },
+
+  lockFullscreen() {
+    Hub.ui.enterFullscreen();
+    document.addEventListener('fullscreenchange', () => {
+      if (!document.fullscreenElement) {
+        setTimeout(() => Hub.ui.enterFullscreen(), 300);
+      }
+    });
+    Hub.ui?.toast?.('Fullscreen locked', 'info');
+  },
+
+  requestWakeLock() {
+    if ('wakeLock' in navigator) {
+      navigator.wakeLock.request('screen').then(() => {
+        Hub.ui?.toast?.('Wake lock active — screen won\'t sleep', 'success');
+      }).catch(e => Hub.ui?.toast?.('Wake lock: ' + e.message, 'error'));
     } else {
-      console.log('[Control] Auto-reset check: already reset today');
+      Hub.ui?.toast?.('Wake Lock not supported in this browser', 'error');
     }
   },
 
-  async performReset(isManual = false) {
-    try {
-      console.log('[Control] Performing chore reset...');
-      
-      if (!Hub.state.household_id) {
-        console.error('[Control] No household_id');
-        if (isManual) Hub.ui.toast('Error: No household ID', 'error');
-        return;
-      }
-
-      // Get all chores
-      const chores = await Hub.db.loadChores(Hub.state.household_id);
-      console.log('[Control] Loaded', chores.length, 'chores');
-      
-      const today = new Date().getDay(); // 0=Sun, 1=Mon, etc.
-      
-      // Filter chores to reset
-      const choresToReset = chores.filter(c => {
-        // Only reset done chores
-        if (c.status !== 'done') return false;
-        
-        // Daily chores
-        if (c.category === 'Daily') return true;
-        
-        // Weekly chores for today
-        if (typeof c.day_of_week === 'number' && c.day_of_week === today) return true;
-        
-        // Fallback: parse category
-        if (c.day_of_week == null && c.category && Hub.chores?.DAY_MAP) {
-          const dayNum = Hub.chores.DAY_MAP[c.category];
-          if (dayNum === today) return true;
-        }
-        
-        return false;
-      });
-
-      console.log('[Control] Resetting', choresToReset.length, 'chores');
-
-      // Reset each chore
-      for (const chore of choresToReset) {
-        await Hub.sb
-          .from('chores')
-          .update({ status: 'pending' })
-          .eq('id', chore.id);
-      }
-
-      // Update last reset time
-      localStorage.setItem('chore_last_reset_date', new Date().toISOString());
-
-      console.log('[Control] Reset complete!');
-      
-      if (isManual) {
-        Hub.ui.toast(`Reset ${choresToReset.length} chores successfully!`, 'success');
-        this.addAdminControls(); // Refresh UI
-        this.loadStats();
-      }
-
-      // Refresh dashboard if visible
-      if (Hub.router?.current === 'dashboard') {
-        setTimeout(() => Hub.chores?.renderDashboard?.(), 500);
-      }
-
-    } catch (e) {
-      console.error('[Control] Reset error:', e);
-      if (isManual) Hub.ui.toast('Reset failed: ' + e.message, 'error');
+  clearCache() {
+    if ('caches' in window) {
+      caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))))
+        .then(() => Hub.ui?.toast?.('Cache cleared', 'success'));
+    } else {
+      Hub.ui?.toast?.('Cache API not available', 'error');
     }
   },
 
-  // ============================================================
-  // USER ACTIONS
-  // ============================================================
-  
+  disableContextMenu() {
+    document.addEventListener('contextmenu', e => e.preventDefault());
+    Hub.ui?.toast?.('Context menu disabled', 'info');
+  },
+
+  preventBack() {
+    history.pushState(null, '', location.href);
+    window.addEventListener('popstate', () => history.pushState(null, '', location.href));
+    Hub.ui?.toast?.('Back navigation blocked', 'info');
+  },
+
+  resetSettings() {
+    if (!confirm('Reset all settings to defaults?')) return;
+    const keys = Object.keys(localStorage).filter(k => k.startsWith('hub_'));
+    keys.forEach(k => localStorage.removeItem(k));
+    Hub.ui?.toast?.('Settings reset', 'success');
+  },
+
   toggleAutoReset() {
-    const currentState = localStorage.getItem('chore_auto_reset_enabled') === 'true';
-    const newState = !currentState;
-    
-    localStorage.setItem('chore_auto_reset_enabled', newState ? 'true' : 'false');
-    
-    if (newState) {
-      Hub.ui.toast('✓ Auto-reset ENABLED! Chores will reset at midnight.', 'success');
-      // Check if we need to reset now
-      this.checkAndReset();
+    const enabled = localStorage.getItem('chore_auto_reset_enabled') === 'true';
+    localStorage.setItem('chore_auto_reset_enabled', String(!enabled));
+    const btn = document.getElementById('btnAutoReset');
+    if (btn) {
+      btn.className = 'btn text-sm ' + (!enabled ? 'btn-success' : 'btn-secondary');
+      btn.textContent = !enabled ? '✓ Enabled' : 'Disabled';
+    }
+    Hub.ui?.toast?.(`Auto reset ${!enabled ? 'enabled' : 'disabled'}`, 'info');
+  },
+
+  manualChoreReset() {
+    if (!confirm('Reset ALL chores to pending?')) return;
+    Hub.db?.resetChores?.(Hub.state?.household_id).then(() => {
+      Hub.ui?.toast?.('All chores reset!', 'success');
+      this._log('Manual chore reset');
+    }).catch(e => Hub.ui?.toast?.('Reset failed: ' + e.message, 'error'));
+  },
+
+  reloadStream() {
+    if (Hub.player?.state?.currentSource === 'radio') {
+      const name = Hub.player.state.title;
+      const src  = Hub.player.radioAudio?.src;
+      if (src) { Hub.player.playRadio(name, src); Hub.ui?.toast?.('Stream reloading', 'info'); }
+    } else { Hub.ui?.toast?.('No radio stream active', 'error'); }
+  },
+
+  unlockAudio() {
+    const ctx = new AudioContext();
+    ctx.resume().then(() => Hub.ui?.toast?.('Audio context resumed', 'success'));
+    const buf = ctx.createBuffer(1,1,22050);
+    const src = ctx.createBufferSource();
+    src.buffer = buf; src.connect(ctx.destination); src.start(0);
+    Hub.ui?.toast?.('Audio unlocked', 'success');
+  },
+
+  slideshowNext() {
+    const ss = Hub.immich._ss;
+    if (!ss.images.length) { Hub.ui?.toast?.('No slideshow running', 'error'); return; }
+    ss.index = (ss.index + 1) % ss.images.length;
+    ss.crossfade(ss.images[ss.index]);
+    Hub.ui?.toast?.(`Photo ${ss.index + 1}/${ss.images.length}`, 'info');
+  },
+
+  slideshowPrev() {
+    const ss = Hub.immich._ss;
+    if (!ss.images.length) { Hub.ui?.toast?.('No slideshow running', 'error'); return; }
+    ss.index = (ss.index - 1 + ss.images.length) % ss.images.length;
+    ss.crossfade(ss.images[ss.index]);
+    Hub.ui?.toast?.(`Photo ${ss.index + 1}/${ss.images.length}`, 'info');
+  },
+
+  slideshowShuffle() {
+    const ss = Hub.immich._ss;
+    ss.images.sort(() => Math.random() - 0.5);
+    Hub.ui?.toast?.('Photos reshuffled', 'info');
+  },
+
+  showSlideshowTimer() {
+    const ss = Hub.immich._ss;
+    const overlay = document.getElementById('slideshowTimerOverlay') || document.createElement('div');
+    overlay.id = 'slideshowTimerOverlay';
+    overlay.style.cssText = 'position:fixed;top:1rem;right:1rem;z-index:9998;background:rgba(0,0,0,.7);color:#fff;padding:.5rem 1rem;border-radius:.5rem;font-family:monospace;font-size:1rem;pointer-events:none;';
+    document.body.appendChild(overlay);
+    const tick = () => {
+      const elapsed = performance.now() - ss.lastSwitchTime;
+      const remain  = Math.max(0, ss.displayMs - elapsed);
+      overlay.textContent = `📸 ${(remain/1000).toFixed(1)}s | ${ss.index+1}/${ss.images.length}`;
+      if (document.contains(overlay)) requestAnimationFrame(tick);
+    };
+    tick();
+    setTimeout(() => overlay.remove(), 30000);
+  },
+
+  simVisibility() {
+    Hub.ui?.toast?.('Simulating tab hide for 3s…', 'info');
+    document.dispatchEvent(new Event('visibilitychange'));
+    setTimeout(() => {
+      Object.defineProperty(document, 'hidden', { value: false, writable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }, 3000);
+  },
+
+  refreshAudioDebug() {
+    const el = document.getElementById('audioDebugCard');
+    if (el) el.querySelector('.font-mono').innerHTML = `
+      <div>Source: <span class="text-blue-400">${Hub.player?.state?.currentSource || 'none'}</span></div>
+      <div>Status: <span class="text-green-400">${Hub.player?.state?.radioStatus || '—'}</span></div>
+      <div>Playing: <span class="${Hub.player?.state?.isPlaying ? 'text-green-400' : 'text-red-400'}">${Hub.player?.state?.isPlaying ? 'yes' : 'no'}</span></div>
+      <div>ReadyState: <span class="text-yellow-400">${Hub.player?.radioAudio?.readyState ?? '—'}</span></div>
+    `;
+  },
+
+  toggleDebugOverlay() {
+    let ov = document.getElementById('debugStatusOverlay');
+    if (ov) { ov.remove(); return; }
+    ov = document.createElement('div');
+    ov.id = 'debugStatusOverlay';
+    ov.style.cssText = 'position:fixed;top:0;left:0;z-index:9997;background:rgba(0,0,0,.8);color:#0f0;font-family:monospace;font-size:.7rem;padding:.5rem;pointer-events:none;min-width:180px;';
+    document.body.appendChild(ov);
+    const update = () => {
+      if (!document.contains(ov)) return;
+      ov.innerHTML = `FPS: ${this._lastFps}<br>Route: ${Hub.router.current}<br>Playing: ${Hub.player?.state?.isPlaying ? '▶' : '⏸'}<br>Source: ${Hub.player?.state?.currentSource || '—'}<br>Slide: ${Hub.immich._ss.index+1}/${Hub.immich._ss.images.length||0}`;
+      setTimeout(update, 500);
+    };
+    update();
+  },
+
+  toggleNightMode() {
+    document.body.style.filter = document.body.style.filter ? '' : 'sepia(0.4) brightness(0.85) saturate(0.8)';
+    Hub.ui?.toast?.('Night mode toggled', 'info');
+  },
+
+  clearFilters() { document.body.style.filter = ''; Hub.ui?.toast?.('Filters cleared', 'info'); },
+
+  toggleHighContrast() {
+    document.body.classList.toggle('high-contrast');
+    Hub.ui?.toast?.('High contrast toggled', 'info');
+  },
+
+  toggleLargeText() {
+    const cur = parseFloat(document.documentElement.style.fontSize || '16');
+    document.documentElement.style.fontSize = (cur === 16 ? '20' : '16') + 'px';
+    Hub.ui?.toast?.('Font size toggled', 'info');
+  },
+
+  toggleOutlineMode() {
+    const s = document.getElementById('outlineStyle') || document.createElement('style');
+    s.id = 'outlineStyle';
+    if (s.textContent) { s.textContent = ''; Hub.ui?.toast?.('Outlines off', 'info'); }
+    else { s.textContent = '* { outline: 1px solid rgba(59,130,246,.4) !important; }'; Hub.ui?.toast?.('Outlines on', 'info'); }
+    document.head.appendChild(s);
+  },
+
+  setMotionSpeed(speed) {
+    const s = document.getElementById('motionSpeedStyle') || document.createElement('style');
+    s.id = 'motionSpeedStyle';
+    s.textContent = `* { transition-duration: calc(var(--tw-transition-duration, 200ms) * ${speed}) !important; animation-duration: calc(0.4s * ${speed}) !important; }`;
+    document.head.appendChild(s);
+    Hub.ui?.toast?.(`Motion ${speed}x`, 'info');
+  },
+
+  setAccentHue(h) {
+    document.getElementById('adminV_accentHue').textContent = h;
+    document.documentElement.style.setProperty('--accent-primary', `hsl(${h},70%,55%)`);
+  },
+
+  setBgDim(v) {
+    document.getElementById('adminV_bgDim').textContent = v;
+    document.documentElement.style.setProperty('--bg-base', `hsl(222,35%,${Math.round(v/10)}%)`);
+  },
+
+  setBlur(v) {
+    document.getElementById('adminV_blurStr').textContent = v;
+    const s = document.getElementById('blurStyle') || document.createElement('style');
+    s.id = 'blurStyle';
+    s.textContent = `.glass-panel,.backdrop-blur-md{backdrop-filter:blur(${v}px) saturate(180%)!important;}`;
+    document.head.appendChild(s);
+  },
+
+  setSaturation(v) {
+    document.getElementById('adminV_satVal').textContent = v;
+    document.body.style.filter = `saturate(${v}%)`;
+  },
+
+  toggleTapRipples() {
+    if (window._tapRipple) {
+      document.removeEventListener('touchstart', window._tapRipple);
+      document.removeEventListener('click', window._tapRipple);
+      window._tapRipple = null;
+      Hub.ui?.toast?.('Tap ripples off', 'info');
     } else {
-      Hub.ui.toast('Auto-reset disabled', 'success');
-    }
-    
-    // Refresh UI
-    this.addAdminControls();
-  },
-
-  async manualResetChores() {
-    if (!confirm('Reset all daily chores to pending now?\n\nCompletion logs will be preserved for statistics.')) {
-      return;
-    }
-    
-    await this.performReset(true);
-  },
-
-  async showStats() {
-    const section = document.getElementById('choreStatsSection');
-    const content = document.getElementById('choreStatsContent');
-    if (!section || !content) return;
-
-    section.classList.remove('hidden');
-    content.innerHTML = '<p class="text-gray-400">Loading statistics...</p>';
-
-    try {
-      // Get completion logs
-      const { data: logs } = await Hub.sb
-        .from('chore_logs')
-        .select('*, chores(title, category)')
-        .eq('household_id', Hub.state.household_id)
-        .order('completed_at', { ascending: false })
-        .limit(50);
-
-      if (!logs || logs.length === 0) {
-        content.innerHTML = '<p class="text-gray-400">No completion history yet</p>';
-        return;
+      window._tapRipple = (e) => {
+        const t = e.touches?.[0] || e;
+        const r = document.createElement('div');
+        r.style.cssText = `position:fixed;left:${t.clientX-20}px;top:${t.clientY-20}px;width:40px;height:40px;border-radius:50%;background:rgba(59,130,246,.4);pointer-events:none;z-index:99999;animation:ripple .5s ease-out forwards;`;
+        document.body.appendChild(r);
+        setTimeout(() => r.remove(), 550);
+      };
+      if (!document.getElementById('rippleStyle')) {
+        const s = document.createElement('style');
+        s.id = 'rippleStyle';
+        s.textContent = '@keyframes ripple{from{opacity:1;transform:scale(0)}to{opacity:0;transform:scale(2)}}';
+        document.head.appendChild(s);
       }
-
-      const totalCompletions = logs.length;
-      
-      // Last 7 days
-      const weekAgo = new Date();
-      weekAgo.setDate(weekAgo.getDate() - 7);
-      const last7Days = logs.filter(l => new Date(l.completed_at) >= weekAgo).length;
-
-      // By member
-      const byMember = {};
-      logs.forEach(log => {
-        const member = log.completed_by_name || 'Unknown';
-        byMember[member] = (byMember[member] || 0) + 1;
-      });
-
-      content.innerHTML = `
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          <div class="bg-blue-900 bg-opacity-30 rounded-lg p-4 text-center">
-            <p class="text-3xl font-bold text-blue-400">${totalCompletions}</p>
-            <p class="text-sm text-gray-400">Total Completions</p>
-          </div>
-          <div class="bg-green-900 bg-opacity-30 rounded-lg p-4 text-center">
-            <p class="text-3xl font-bold text-green-400">${last7Days}</p>
-            <p class="text-sm text-gray-400">Last 7 Days</p>
-          </div>
-        </div>
-
-        <div class="mb-6">
-          <h3 class="font-bold mb-3">By Family Member</h3>
-          <div class="space-y-2">
-            ${Object.entries(byMember).sort((a, b) => b[1] - a[1]).map(([member, count]) => `
-              <div class="flex items-center justify-between p-3 bg-gray-900 rounded">
-                <span class="font-semibold">${Hub.utils.esc(member)}</span>
-                <span class="text-gray-400">${count} chores</span>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-
-        <div>
-          <h3 class="font-bold mb-3">Recent Completions</h3>
-          <div class="space-y-2 max-h-64 overflow-y-auto">
-            ${logs.slice(0, 15).map(log => `
-              <div class="p-2 bg-gray-900 rounded text-sm">
-                <p class="font-semibold">${Hub.utils.esc(log.chores?.title || 'Deleted chore')}</p>
-                <p class="text-xs text-gray-400">
-                  ${Hub.utils.esc(log.completed_by_name || 'Unknown')} • 
-                  ${new Date(log.completed_at).toLocaleString()}
-                </p>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      `;
-
-    } catch (e) {
-      console.error('[Control] Stats error:', e);
-      content.innerHTML = '<p class="text-red-400">Failed to load statistics</p>';
+      document.addEventListener('touchstart', window._tapRipple, {passive:true});
+      document.addEventListener('click', window._tapRipple);
+      Hub.ui?.toast?.('Tap ripples on', 'success');
     }
   },
 
-  hideStats() {
-    const section = document.getElementById('choreStatsSection');
-    if (section) section.classList.add('hidden');
+  toggleHeatmap() {
+    Hub.ui?.toast?.('Heatmap: tap around the screen — dots show touch frequency', 'info');
+    const counts = {};
+    const handler = (e) => {
+      const t = e.touches?.[0] || e;
+      const key = `${Math.round(t.clientX/50)}_${Math.round(t.clientY/50)}`;
+      counts[key] = (counts[key] || 0) + 1;
+      const dot = document.getElementById('hm_' + key) || (() => {
+        const d = document.createElement('div');
+        d.id = 'hm_' + key;
+        d.style.cssText = `position:fixed;left:${Math.round(t.clientX/50)*50}px;top:${Math.round(t.clientY/50)*50}px;width:48px;height:48px;border-radius:50%;pointer-events:none;z-index:99998;display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:bold;`;
+        document.body.appendChild(d); return d;
+      })();
+      const c = counts[key];
+      dot.style.background = `rgba(239,68,68,${Math.min(0.8, c*0.15)})`;
+      dot.textContent = c;
+    };
+    document.addEventListener('click', handler);
+    document.addEventListener('touchstart', handler, {passive:true});
+    setTimeout(() => {
+      document.removeEventListener('click', handler);
+      document.removeEventListener('touchstart', handler);
+      document.querySelectorAll('[id^="hm_"]').forEach(d => d.remove());
+    }, 15000);
   },
 
-  // ============================================================
-  // EXISTING SITE CONTROL METHODS
-  // ============================================================
-  
-  async load() {
-    const gate = document.getElementById('controlAdminGate');
-    const content = document.getElementById('controlContent');
-    const status = document.getElementById('controlStatus');
-
-    // Gate: admin only
-    if (Hub.state?.userRole !== 'admin') {
-      if (gate) gate.classList.remove('hidden');
-      if (content) content.classList.add('hidden');
-      return;
-    }
-    if (gate) gate.classList.add('hidden');
-    if (content) content.classList.remove('hidden');
-
-    if (status) status.textContent = 'Loading…';
-
-    const siteName = (document.getElementById('controlSiteName')?.value || 'main').trim() || 'main';
-
-    try {
-      const row = await Hub.db.loadSiteControlSettings(Hub.state.household_id, siteName);
-      this._loaded = row || null;
-      this._fillForm(row || { site_name: siteName });
-      this._renderPreview();
-      this._renderSnippet();
-      if (status) status.textContent = `Loaded ${siteName}${row ? '' : ' (new)'}`;
-    } catch (e) {
-      console.error('[Control] load error:', e);
-      this._loaded = null;
-
-      const msg = (e?.message || '').toLowerCase();
-      if (msg.includes('relation') && msg.includes('does not exist')) {
-        if (status) status.textContent = 'Missing table: site_control_settings';
-        this._showMissingTable();
-        return;
+  enableGestures() {
+    let startX, startY;
+    const threshold = 80;
+    document.addEventListener('touchstart', e => { startX = e.touches[0].clientX; startY = e.touches[0].clientY; }, {passive:true});
+    document.addEventListener('touchend', e => {
+      const dx = e.changedTouches[0].clientX - startX;
+      const dy = e.changedTouches[0].clientY - startY;
+      if (Math.abs(dx) < threshold && Math.abs(dy) < threshold) return;
+      if (Math.abs(dy) > Math.abs(dx)) {
+        if (dy > threshold) Hub.router.go('dashboard');
+        if (dy < -threshold) Hub.router.go('standby');
       }
+    }, {passive:true});
+    Hub.ui?.toast?.('Swipe gestures enabled (↑ standby, ↓ home)', 'success');
+  },
 
-      if (status) status.textContent = 'Load failed: ' + (e.message || 'error');
-      this._renderPreview({ error: e.message || 'error' });
-      this._renderSnippet();
+  toggleKidMode() {
+    const on = document.body.classList.toggle('kid-mode');
+    if (on) {
+      const s = document.getElementById('kidStyle') || document.createElement('style');
+      s.id = 'kidStyle';
+      s.textContent = '.btn-danger,.btn-secondary[onclick*="remove"],[onclick*="delete"],[onclick*="reset"]{opacity:.3!important;pointer-events:none!important;}';
+      document.head.appendChild(s);
+    } else {
+      document.getElementById('kidStyle')?.remove();
+    }
+    Hub.ui?.toast?.(`Kid mode ${on ? 'on — danger buttons locked' : 'off'}`, 'info');
+  },
+
+  toggleKineticScroll() {
+    const s = document.getElementById('kineticStyle') || document.createElement('style');
+    s.id = 'kineticStyle';
+    if (s.textContent) { s.textContent = ''; Hub.ui?.toast?.('Kinetic scroll off', 'info'); }
+    else {
+      s.textContent = `* { -webkit-overflow-scrolling: touch !important; scroll-behavior: smooth !important; }`;
+      document.head.appendChild(s);
+      Hub.ui?.toast?.('Kinetic scroll on', 'success');
     }
   },
 
-  async save() {
-    const status = document.getElementById('controlStatus');
-    if (Hub.state?.userRole !== 'admin') {
-      Hub.ui.toast('Admin only', 'error');
-      return;
-    }
-
-    const siteName = (document.getElementById('controlSiteName')?.value || 'main').trim() || 'main';
-
-    const payload = {
-      base_url: (document.getElementById('controlBaseUrl')?.value || '').trim() || null,
-      maintenance_mode: !!document.getElementById('controlMaintenance')?.checked,
-      banner_message: (document.getElementById('controlBannerMessage')?.value || '').trim() || null,
-      banner_severity: (document.getElementById('controlBannerSeverity')?.value || 'info').trim(),
-      disabled_paths: this._parseLines(document.getElementById('controlDisabledPaths')?.value || ''),
-      public_read: !!document.getElementById('controlPublicRead')?.checked
+  enableInspector() {
+    Hub.ui?.toast?.('Tap any element to inspect it', 'info');
+    const handler = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const el = e.target;
+      const info = `id: ${el.id||'—'}\nclasses: ${el.className||'—'}\nsize: ${Math.round(el.offsetWidth)}×${Math.round(el.offsetHeight)}\ntag: ${el.tagName}`;
+      alert(info);
+      document.removeEventListener('click', handler, true);
     };
+    document.addEventListener('click', handler, true);
+  },
 
+  async pingTest() {
+    const start = performance.now();
     try {
-      if (status) status.textContent = 'Saving…';
-      const saved = await Hub.db.saveSiteControlSettings(Hub.state.household_id, siteName, Hub.state.user?.id, payload);
-      this._loaded = saved;
-      this._fillForm(saved);
-      this._renderPreview();
-      this._renderSnippet();
-      if (status) status.textContent = 'Saved ✓';
-      Hub.ui.toast('Saved control settings', 'success');
-    } catch (e) {
-      console.error('[Control] save error:', e);
-      if (status) status.textContent = 'Save failed: ' + (e.message || 'error');
-      Hub.ui.toast('Save failed', 'error');
+      await fetch('/api/health?t=' + Date.now(), {cache:'no-store'});
+      const ms = Math.round(performance.now() - start);
+      Hub.ui?.toast?.(`Ping: ${ms}ms`, ms < 200 ? 'success' : 'error');
+    } catch {
+      Hub.ui?.toast?.('Network offline or API unreachable', 'error');
     }
   },
 
-  _fillForm(row) {
-    const setVal = (id, v) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.value = v == null ? '' : String(v);
+  simWeather(type) {
+    const data = {
+      snow:  { headline:'Heavy snow expected', today:{high_f:28,low_f:18}, hazards:['Winter storm warning'] },
+      storm: { headline:'Severe thunderstorms', today:{high_f:65,low_f:55}, hazards:['Tornado watch'] },
+      clear: { headline:'Beautiful sunny day', today:{high_f:75,low_f:60}, hazards:[] },
     };
-    const setChk = (id, v) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.checked = !!v;
+    Hub.ai._simData = data[type];
+    Hub.ui?.toast?.(`Simulating: ${type}`, 'info');
+    Hub.standby?._loadWeather?.();
+  },
+
+  simAlert() {
+    Hub.ui?.showBanner?.('SIMULATED ALERT: Severe thunderstorm warning in effect', 'warning');
+    Hub.ui?.toast?.('Alert simulated', 'info');
+  },
+
+  simOffline() {
+    Hub.ui?.toast?.('Simulating offline — API calls will appear to fail', 'info');
+    window._origFetch = window.fetch;
+    window.fetch = () => Promise.reject(new Error('Simulated offline'));
+    setTimeout(() => {
+      window.fetch = window._origFetch;
+      Hub.ui?.toast?.('Network restored', 'success');
+    }, 10000);
+  },
+
+  simTime(time) {
+    const [h, m] = time.split(':').map(Number);
+    const orig = Date;
+    window.Date = class extends orig {
+      constructor(...a) { super(...a); if (!a.length) { const d = new orig(); d.setHours(h,m,0); return d; } }
+      static now() { const d = new orig(); d.setHours(h,m,0); return d.getTime(); }
     };
-
-    setVal('controlSiteName', row.site_name || 'main');
-    setVal('controlBaseUrl', row.base_url || '');
-    setChk('controlMaintenance', row.maintenance_mode);
-    setVal('controlBannerMessage', row.banner_message || '');
-    setVal('controlBannerSeverity', row.banner_severity || 'info');
-    setChk('controlPublicRead', row.public_read);
-
-    const paths = Array.isArray(row.disabled_paths) ? row.disabled_paths : [];
-    setVal('controlDisabledPaths', paths.join('\n'));
+    Hub.ui?.toast?.(`Time frozen at ${time}`, 'info');
+    setTimeout(() => { window.Date = orig; Hub.ui?.toast?.('Time restored', 'info'); }, 30000);
   },
 
-  _parseLines(text) {
-    return String(text)
-      .split('\n')
-      .map(s => s.trim())
-      .filter(Boolean)
-      .slice(0, 200);
+  freezeTime() {
+    const now = new Date();
+    const orig = Date;
+    window.Date = class extends orig { constructor(...a) { super(...a); if (!a.length) return new orig(now); } static now() { return now.getTime(); } };
+    Hub.ui?.toast?.(`Time frozen at ${now.toLocaleTimeString()}`, 'info');
   },
 
-  _toPublicJson() {
-    const row = this._loaded || {
-      site_name: (document.getElementById('controlSiteName')?.value || 'main').trim() || 'main',
-      base_url: (document.getElementById('controlBaseUrl')?.value || '').trim() || null,
-      maintenance_mode: !!document.getElementById('controlMaintenance')?.checked,
-      banner_message: (document.getElementById('controlBannerMessage')?.value || '').trim() || null,
-      banner_severity: (document.getElementById('controlBannerSeverity')?.value || 'info').trim(),
-      disabled_paths: this._parseLines(document.getElementById('controlDisabledPaths')?.value || ''),
-      public_read: !!document.getElementById('controlPublicRead')?.checked,
-      updated_at: null
-    };
-
-    return {
-      site_name: row.site_name || 'main',
-      base_url: row.base_url || null,
-      maintenance_mode: !!row.maintenance_mode,
-      banner: {
-        message: row.banner_message || null,
-        severity: row.banner_severity || 'info'
-      },
-      disabled_paths: Array.isArray(row.disabled_paths) ? row.disabled_paths : [],
-      public_read: !!row.public_read,
-      updated_at: row.updated_at || null
-    };
+  simChores() {
+    Hub.ui?.toast?.('Chore simulation — use real chore page to add items', 'info');
+    Hub.router.go('chores');
   },
 
-  _renderPreview(objOverride) {
-    const pre = document.getElementById('controlJsonPreview');
-    if (!pre) return;
-    const obj = objOverride || this._toPublicJson();
-    pre.textContent = JSON.stringify(obj, null, 2);
+  simNowPlaying() {
+    Hub.player.state.currentSource = 'radio';
+    Hub.player.state.title = 'WNYC 93.9 FM';
+    Hub.player.state.isPlaying = true;
+    Hub.player.state.radioStatus = 'playing';
+    Hub.player.updateUI();
+    Hub.ui?.toast?.('Now Playing simulated', 'info');
   },
 
-  _renderSnippet() {
-    const pre = document.getElementById('controlSnippet');
-    if (!pre) return;
-
-    const cfg = window.HOME_HUB_CONFIG || {};
-    const supabaseUrl = cfg.supabaseUrl || '<YOUR_SUPABASE_URL>';
-    const anonKey = cfg.supabaseAnonKey || '<YOUR_SUPABASE_ANON_KEY>';
-    const householdId = Hub.state?.household_id || '<HOUSEHOLD_UUID>';
-    const siteName = (document.getElementById('controlSiteName')?.value || 'main').trim() || 'main';
-
-    const rest = `${supabaseUrl}/rest/v1/site_control_settings?select=*&household_id=eq.${householdId}&site_name=eq.${encodeURIComponent(siteName)}`;
-
-    pre.textContent = `// Remote config fetch
-async function fetchSiteControl() {
-  const url = ${JSON.stringify(rest)};
-  const resp = await fetch(url, {
-    headers: {
-      'apikey': ${JSON.stringify(anonKey)},
-      'Authorization': 'Bearer ' + ${JSON.stringify(anonKey)}
-    }
-  });
-  if (!resp.ok) return null;
-  const rows = await resp.json();
-  return rows?.[0] || null;
-}`;
+  _renderLog() {
+    const el = document.getElementById('adminEventLog');
+    if (!el) return;
+    el.innerHTML = this._eventLog.length
+      ? this._eventLog.map(e => `<div class="text-xs border-b border-gray-800 py-1"><span class="text-gray-500">${e.t}</span> ${Hub.utils.esc(e.msg)}</div>`).join('')
+      : '<div class="text-xs text-gray-500">No events yet</div>';
   },
 
-  async _copyJson() {
-    const text = document.getElementById('controlJsonPreview')?.textContent || '';
-    try {
-      await navigator.clipboard.writeText(text);
-      Hub.ui.toast('Copied', 'success');
-    } catch (e) {
-      Hub.ui.toast('Copy failed', 'error');
-    }
+  _renderSystemStats() {
+    const el = document.getElementById('adminSysStats');
+    if (!el) return;
+    const mem = performance.memory ? `${Math.round(performance.memory.usedJSHeapSize/1048576)}MB / ${Math.round(performance.memory.totalJSHeapSize/1048576)}MB` : 'N/A';
+    if (document.getElementById('adminMem')) document.getElementById('adminMem').textContent = mem.split(' ')[0];
+    el.innerHTML = `
+      <div>User Agent: ${navigator.userAgent.slice(0,50)}…</div>
+      <div>Memory: ${mem}</div>
+      <div>Uptime: ${this._uptime()}</div>
+      <div>Route: ${Hub.router.current}</div>
+      <div>Household: ${Hub.state?.household_id?.slice(0,8) || '—'}…</div>
+      <div>Role: ${Hub.state?.userRole || '—'}</div>
+      <div>Slideshow: ${Hub.immich._ss.images.length} photos, index ${Hub.immich._ss.index}</div>
+    `;
   },
 
-  _showMissingTable() {
-    const pre = document.getElementById('controlJsonPreview');
-    if (pre) {
-      pre.textContent = JSON.stringify({
-        error: 'Missing table: site_control_settings',
-        fix: 'Run migration-site-control.sql in Supabase SQL Editor'
-      }, null, 2);
-    }
+  _bindDisplaySliders() {
+    // sliders are rendered inline — no extra binding needed
+  },
+
+  _uptime() {
+    if (!this._startTime) this._startTime = Date.now();
+    const s = Math.floor((Date.now() - this._startTime) / 1000);
+    const m = Math.floor(s / 60);
+    const h = Math.floor(m / 60);
+    return h ? `${h}h ${m%60}m` : `${m}m ${s%60}s`;
+  },
+
+  startAutoResetChecker() {
+    // Stub — auto reset is controlled by toggle in System tab
   }
 };

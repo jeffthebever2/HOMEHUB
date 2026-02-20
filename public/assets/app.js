@@ -42,8 +42,11 @@ Hub.app = {
     Hub.radio?.init?.();
     Hub.music?.init?.();
     Hub.control?.init?.();
+    Hub.grocery?.init?.();
     // Load saved touchscreen preferences on startup
     Hub.ui?.loadTouchscreenMode?.();
+    // Three-finger tap → admin panel (works anywhere)
+    this._initAdminGesture();
 
     // ── TEST BYPASS: visit /#letmein (DEV ONLY) ──
     if (window.location.hash === '#letmein') {
@@ -315,6 +318,8 @@ Hub.app = {
       case 'settings':  this._loadSettingsForm(); break;
       case 'status':    this._loadStatusPage(); break;
       case 'control':   Hub.control?.load?.(); break;
+      case 'admin':     Hub.control?.load?.(); break;
+      case 'grocery':   Hub.grocery?.onEnter?.(); break;
     }
   },
 
@@ -706,6 +711,30 @@ Hub.app = {
       console.error('[App] Chore reset endpoint error:', error);
       // Don't throw - this is a fallback, cron is primary
     }
+  },
+
+  _initAdminGesture() {
+    // Show floating admin FAB in settings/admin pages
+    const fab = document.getElementById('adminQuickFab');
+    if (fab) {
+      // Always show FAB for easy access
+      fab.style.display = 'flex';
+    }
+
+    // Three-finger tap anywhere → open admin
+    let tapCount = 0, tapTimer = null;
+    document.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 3) {
+        tapCount++;
+        clearTimeout(tapTimer);
+        tapTimer = setTimeout(() => { tapCount = 0; }, 600);
+        if (tapCount >= 1) {
+          tapCount = 0;
+          Hub.ui?.toast?.('Admin Panel opened', 'info');
+          Hub.router.go('admin');
+        }
+      }
+    }, { passive: true });
   }
 };
 
