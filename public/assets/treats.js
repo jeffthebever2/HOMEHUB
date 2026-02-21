@@ -82,59 +82,16 @@ Hub.treats = {
     const pct = Math.min((totalCal / limit) * 100, 100);
     const color = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-yellow-500' : 'bg-green-500';
 
-    const ringColor = pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#f97316';
-    const r = 52, circ = +(2 * Math.PI * r).toFixed(3);
     Hub.utils.$('calorieProgress').innerHTML = `
-      <div class="flex items-center gap-5">
-        <!-- Animated SVG ring -->
-        <div class="relative flex-shrink-0" style="width:128px;height:128px;">
-          <svg width="128" height="128" style="transform:rotate(-90deg);">
-            <circle cx="64" cy="64" r="${r}" fill="none" stroke="#1e2d3d" stroke-width="12"/>
-            <circle id="calorieRingArc" cx="64" cy="64" r="${r}" fill="none"
-              stroke="${ringColor}" stroke-width="12" stroke-linecap="round"
-              stroke-dasharray="${circ}" stroke-dashoffset="${circ}"
-              style="transition:stroke-dashoffset 1.4s cubic-bezier(0.34,1.1,0.64,1);"/>
-          </svg>
-          <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;">
-            <span id="calorieRingPct" class="text-2xl font-bold leading-none" style="color:${ringColor};">0%</span>
-            <span class="text-xs text-gray-400">of limit</span>
-          </div>
-        </div>
-        <!-- Stats -->
-        <div class="flex-1 space-y-2 text-sm">
-          <div class="flex justify-between">
-            <span class="text-gray-400">Consumed</span>
-            <span class="font-bold" style="color:${ringColor};">${totalCal} cal</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-gray-400">Daily limit</span>
-            <span class="font-semibold">${limit} cal</span>
-          </div>
-          <div class="flex justify-between border-t border-gray-700 pt-2 mt-1">
-            <span class="text-gray-400">Remaining</span>
-            <span class="font-semibold ${remaining > 0 ? 'text-green-400' : 'text-red-400'}">${remaining > 0 ? remaining + ' cal' : '⚠️ Limit reached'}</span>
-          </div>
-        </div>
+      <div class="flex justify-between mb-2">
+        <span class="text-sm text-gray-400">Daily Calories</span>
+        <span class="font-bold">${totalCal} / ${limit} cal</span>
       </div>
+      <div class="progress-bar">
+        <div class="progress-fill ${color}" style="width:${pct}%"></div>
+      </div>
+      <p class="text-sm mt-2 ${remaining > 0 ? 'text-green-400' : 'text-red-400'}">${remaining > 0 ? remaining + ' cal remaining' : 'Limit reached!'}</p>
     `;
-    // Animate ring after paint — skip if prefers-reduced-motion
-    requestAnimationFrame(() => {
-      const arc   = document.getElementById('calorieRingArc');
-      const numEl = document.getElementById('calorieRingPct');
-      if (!arc || !numEl) return;
-      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      const targetOffset = circ - circ * Math.min(pct, 100) / 100;
-      if (reduced) { arc.style.strokeDashoffset = targetOffset; numEl.textContent = Math.round(pct) + '%'; return; }
-      arc.style.strokeDashoffset = targetOffset;
-      const dur = 1400, start = performance.now();
-      const tick = (now) => {
-        const t = Math.min((now - start) / dur, 1);
-        const ease = 1 - Math.pow(1 - t, 3); // ease-out cubic
-        numEl.textContent = Math.round(ease * Math.min(pct, 100)) + '%';
-        if (t < 1) requestAnimationFrame(tick);
-      };
-      requestAnimationFrame(tick);
-    });
 
     // Today treats list
     if (todayTreats.length === 0) {
