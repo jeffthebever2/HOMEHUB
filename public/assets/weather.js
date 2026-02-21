@@ -33,15 +33,22 @@ Hub.weather = {
     }
   },
 
-  /** Fetch weather alerts */
+  /** Fetch weather alerts — always fresh, never cached */
   async fetchAlerts() {
-    const loc = Hub.utils.getLocation();
+    const loc  = Hub.utils.getLocation();
     const base = Hub.utils.apiBase();
     try {
-      const resp = await fetch(`${base}/api/weather-alerts?lat=${loc.lat}&lon=${loc.lon}`);
+      // cache-bust with timestamp so browser never serves a stale response
+      const url  = `${base}/api/weather-alerts?lat=${loc.lat}&lon=${loc.lon}&_t=${Date.now()}`;
+      const resp = await fetch(url, { cache: 'no-store' });
       if (!resp.ok) return [];
       const data = await resp.json();
-      return data.alerts || [];
+      const now  = Date.now();
+      // Filter out anything whose expires timestamp has already passed
+      return (data.alerts || []).filter(a => {
+        if (!a.expires) return true;   // no expiry field → keep (NWS sometimes omits it)
+        return new Date(a.expires).getTime() > now;
+      });
     } catch (e) {
       console.error('Weather alerts error:', e);
       return [];
@@ -278,10 +285,11 @@ Hub.weather = {
   },
 
   /** Render RainViewer animated radar */
+  /** Render RainViewer animated radar using Leaflet — proper tile coordinates */
   async renderRainRadar() {
     const el = Hub.utils.$('rainRadar');
     if (!el) return;
-    
+
     el.innerHTML = '<p class="text-gray-400 text-sm text-center py-8">Loading radar...</p>';
 
     const rainData = await this.fetchRainViewerData();
@@ -291,115 +299,172 @@ Hub.weather = {
     }
 
     this._radarFrames = rainData.radar.past;
-    this._radarIndex = this._radarFrames.length - 1; // Start with latest
+    this._radarIndex  = this._radarFrames.length - 1;
 
     const loc = Hub.utils.getLocation();
-    
+
     el.innerHTML = `
-      <div class="text-center">
-        <p class="text-lg font-bold mb-1">🌧️ Rain Radar</p>
-        <p class="text-sm text-gray-400 mb-3">Past 2 Hours · 10-Minute Intervals</p>
-        <div class="relative bg-gray-900 rounded-lg overflow-hidden mx-auto shadow-2xl" style="max-width: 800px;">
-          <img id="radarImage" src="" alt="Rain radar" class="w-full" style="min-height: 400px; background: #1f2937;">
-          <div class="absolute top-4 right-4 bg-black bg-opacity-70 rounded-lg px-3 py-2">
-            <span id="radarTime" class="text-white text-sm font-mono"></span>
-          </div>
-          <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black/80 to-transparent p-4">
-            <div class="flex items-center justify-center gap-4">
-              <button id="radarPlayPause" class="btn btn-primary px-6 py-2">▶️ Play Animation</button>
-              <span class="text-white text-sm" id="radarFrameInfo"></span>
-            </div>
-          </div>
+      <div class="flex items-center justify-between mb-2">
+        <div>
+          <p class="text-lg font-bold">🌧️ Rain Radar</p>
+          <p class="text-xs text-gray-400">Past 2 hrs · 10-min intervals · 📍 ${loc.name || 'Home'}</p>
         </div>
-        <div class="mt-4 text-xs text-gray-500 space-y-1">
-          <p>📍 Centered on your location: ${loc.name || 'Home'}</p>
-          <p>Source: <a href="https://www.rainviewer.com" target="_blank" class="text-blue-400 hover:text-blue-300">RainViewer.com</a></p>
-        </div>
+        <span id="radarTime" class="text-gray-300 text-sm font-mono bg-black bg-opacity-50 px-2 py-1 rounded"></span>
       </div>
+      <div id="radarMap" style="width:100%;height:420px;border-radius:.75rem;overflow:hidden;background:#1a2235;"></div>
+      <div class="flex items-center gap-3 mt-3">
+        <button id="radarPlayPause" class="btn btn-primary px-5 py-2">▶ Play</button>
+        <input id="radarScrubber" type="range" min="0" max="${this._radarFrames.length - 1}"
+          value="${this._radarIndex}" class="flex-1" style="accent-color:#3b82f6;">
+        <span id="radarFrameInfo" class="text-gray-400 text-sm w-20 text-right"></span>
+      </div>
+      <p class="text-xs text-gray-600 mt-2 text-right">Source: <a href="https://rainviewer.com" target="_blank" class="text-blue-500">RainViewer</a></p>
     `;
 
-    // Set up radar animation
-    this._updateRadarFrame(loc);
-    
+    // Load Leaflet on demand
+    await this._ensureLeaflet();
+
+    // Destroy any existing map to prevent "container already initialized" error
+    if (this._radarMap) {
+      try { this._radarMap.remove(); } catch (_) {}
+      this._radarMap = null;
+      this._radarLayer = null;
+    }
+
+    // Create map
+    const map = window.L.map('radarMap', {
+      center: [loc.lat, loc.lon],
+      zoom: 7,
+      zoomControl: true,
+      attributionControl: false,
+    });
+
+    // Dark base layer
+    window.L.tileLayer(
+      'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+      { subdomains: 'abcd', maxZoom: 12, detectRetina: true }
+    ).addTo(map);
+
+    // Blue dot for home location
+    window.L.circleMarker([loc.lat, loc.lon], {
+      radius: 8, color: '#1d4ed8', fillColor: '#60a5fa',
+      fillOpacity: 0.9, weight: 2,
+    }).addTo(map).bindPopup('📍 ' + (loc.name || 'Home'));
+
+    // Store map ref for cleanup
+    this._radarMap = map;
+
+    // Pause animation when page is hidden (tab switch, Pi screensaver, etc.)
+    this._radarVisHandler = () => {
+      if (!document.hidden && this._radarInterval) {
+        // Resume: advance one frame immediately when becoming visible again
+        this._radarIndex = (this._radarIndex + 1) % this._radarFrames.length;
+        updateFrame();
+      }
+    };
+    document.addEventListener('visibilitychange', this._radarVisHandler);
+
+    const updateFrame = () => {
+      const frame = this._radarFrames[this._radarIndex];
+      // Correct RainViewer tile URL: {path}/{size}/{z}/{x}/{y}/{color}/{options}.png
+      const tileUrl = `https://tilecache.rainviewer.com${frame.path}/256/{z}/{x}/{y}/6/1_1.png`;
+
+      // Reuse existing layer via setUrl to avoid creating a new layer every frame
+      // (creating many layers → 429s from RainViewer; setUrl reuses the same layer)
+      if (this._radarLayer) {
+        this._radarLayer.setUrl(tileUrl);
+      } else {
+        this._radarLayer = window.L.tileLayer(tileUrl, {
+          opacity: 0.72, maxZoom: 12, tileSize: 256,
+        }).addTo(map);
+      }
+
+      const timeEl = Hub.utils.$('radarTime');
+      if (timeEl) {
+        const d = new Date(frame.time * 1000);
+        timeEl.textContent = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      }
+      const infoEl = Hub.utils.$('radarFrameInfo');
+      if (infoEl) infoEl.textContent = `${this._radarIndex + 1}/${this._radarFrames.length}`;
+
+      const scrubber = Hub.utils.$('radarScrubber');
+      if (scrubber) scrubber.value = this._radarIndex;
+    };
+
+    updateFrame();
+
+    // Scrubber
+    const scrubber = Hub.utils.$('radarScrubber');
+    if (scrubber) {
+      scrubber.oninput = () => {
+        this._radarIndex = parseInt(scrubber.value);
+        updateFrame();
+      };
+    }
+
+    // Play/Pause
     const playBtn = Hub.utils.$('radarPlayPause');
     if (playBtn) {
-      playBtn.onclick = () => this._toggleRadarAnimation(loc);
-    }
-  },
-
-  /** Update radar frame */
-  _updateRadarFrame(loc) {
-    const img = Hub.utils.$('radarImage');
-    const timeEl = Hub.utils.$('radarTime');
-    const frameInfoEl = Hub.utils.$('radarFrameInfo');
-    
-    if (!img || !this._radarFrames.length) return;
-
-    const frame = this._radarFrames[this._radarIndex];
-    const host = 'https://tilecache.rainviewer.com';
-    
-    // Use coordinate-based tile (size 512, zoom 5, color scheme 6, smoothed, with snow)
-    const tileUrl = `${host}${frame.path}/512/5/${loc.lat.toFixed(2)}/${loc.lon.toFixed(2)}/6/1_1.png`;
-    
-    img.src = tileUrl;
-    img.onerror = () => {
-      img.style.backgroundColor = '#1f2937';
-      console.error('[Weather] Radar image failed to load');
-    };
-    
-    if (timeEl) {
-      const date = new Date(frame.time * 1000);
-      timeEl.textContent = date.toLocaleTimeString('en-US', { 
-        hour: 'numeric', 
-        minute: '2-digit',
-        hour12: true 
-      });
-    }
-
-    if (frameInfoEl) {
-      frameInfoEl.textContent = `Frame ${this._radarIndex + 1} of ${this._radarFrames.length}`;
-    }
-  },
-
-  /** Toggle radar animation */
-  _toggleRadarAnimation(loc) {
-    const playBtn = Hub.utils.$('radarPlayPause');
-    if (!playBtn) return;
-
-    if (this._radarInterval) {
-      clearInterval(this._radarInterval);
-      this._radarInterval = null;
-      playBtn.textContent = '▶ Play Animation';
-    } else {
-      playBtn.textContent = '⏸ Pause';
-      // Register visibility handler to pause when tab is hidden
-      if (!this._radarVisHandler) {
-        this._radarVisHandler = () => {
-          // When page becomes visible again, immediately advance one frame
-          if (!document.hidden && this._radarInterval) {
+      playBtn.onclick = () => {
+        if (this._radarInterval) {
+          clearInterval(this._radarInterval);
+          this._radarInterval = null;
+          playBtn.textContent = '▶ Play';
+        } else {
+          playBtn.textContent = '⏸ Pause';
+          this._radarInterval = setInterval(() => {
+            if (document.hidden) return; // pause when tab not visible
             this._radarIndex = (this._radarIndex + 1) % this._radarFrames.length;
-            this._updateRadarFrame(loc);
-          }
-        };
-        document.addEventListener('visibilitychange', this._radarVisHandler);
-      }
-      this._radarInterval = setInterval(() => {
-        if (document.hidden) return; // skip frames when tab is hidden
-        this._radarIndex = (this._radarIndex + 1) % this._radarFrames.length;
-        this._updateRadarFrame(loc);
-      }, 1200); // 1200ms: slow enough to avoid RainViewer 429s
+            updateFrame();
+          }, 1400); // 1400ms — slow enough to avoid 429s from RainViewer
+        }
+      };
     }
   },
 
-  /** Stop radar animation and clean up visibility listener */
+  /** Load Leaflet CSS+JS on demand */
+  async _ensureLeaflet() {
+    if (window.L) return;
+    await new Promise((resolve, reject) => {
+      const link = document.createElement('link');
+      link.rel  = 'stylesheet';
+      link.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';
+      document.head.appendChild(link);
+      const script = document.createElement('script');
+      script.src  = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';
+      script.onload  = resolve;
+      script.onerror = () => reject(new Error('Leaflet failed to load'));
+      document.head.appendChild(script);
+    });
+  },
+
+  // Legacy stub — kept for compat
+  _updateRadarFrame() {},
+  _toggleRadarAnimation() {},
+
+  /** Fully teardown radar — safe to call multiple times */
   stopRadarAnimation() {
+    // Stop animation interval
     if (this._radarInterval) {
       clearInterval(this._radarInterval);
       this._radarInterval = null;
     }
+    // Remove visibility listener if any
     if (this._radarVisHandler) {
       document.removeEventListener('visibilitychange', this._radarVisHandler);
       this._radarVisHandler = null;
+    }
+    // Destroy map
+    if (this._radarMap) {
+      try { this._radarMap.remove(); } catch (_) {}
+      this._radarMap  = null;
+      this._radarLayer = null;
+    }
+    // Belt-and-suspenders: delete Leaflet's internal ID from the container
+    // so L.map() can safely re-init on next visit
+    const container = document.getElementById('radarMap');
+    if (container && container._leaflet_id) {
+      delete container._leaflet_id;
     }
   },
 

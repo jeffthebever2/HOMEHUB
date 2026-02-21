@@ -5,51 +5,62 @@ window.Hub = window.Hub || {};
 
 Hub.standby = {
   _clockInterval: null,
-  _weatherInterval: null,
-  _dataInterval: null,
+  _dataInterval:  null,
+  _wake:          null,   // stored ref so stop() can clear onclick
 
-  /** Start standby mode */
+  /** Start standby mode — idempotent: stops any previous run first */
   start() {
-    console.log('[Standby] Starting standby mode');
-    
-    // Update clock immediately and every second
+    console.log('[Standby] start()');
+    // Guard: stop any running instance before starting fresh
+    // (prevents stacked intervals if start() is ever called twice)
+    this.stop();
+
+    // Clock — update immediately then every second
     this._updateClock();
     this._clockInterval = setInterval(() => this._updateClock(), 1000);
 
-    // Load initial data
+    // Data — load immediately then refresh every 5 minutes
     this._loadWeather();
     this._loadCalendar();
     this._loadChores();
-
-    // Refresh data every 5 minutes
     this._dataInterval = setInterval(() => {
       this._loadWeather();
       this._loadCalendar();
       this._loadChores();
     }, 300000);
 
-    // Start photo slideshow
-    Hub.immich.startStandbySlideshow();
+    // Photo slideshow (unified: Google Photos / Imgur / Immich per settings)
+    Hub.photos.startStandbySlideshow();
 
-    // Wake on interaction
-    const wake = () => {
+    // Wake on tap — store ref so stop() can clear it cleanly
+    this._wake = () => {
       this.stop();
       Hub.router.go('dashboard');
     };
-    Hub.utils.$('standbyContent').onclick = wake;
+    const content = Hub.utils.$('standbyContent');
+    if (content) content.onclick = this._wake;
   },
 
-  /** Stop standby mode */
+  /** Stop standby mode — safe to call multiple times */
   stop() {
-    console.log('[Standby] Stopping standby mode');
+    console.log('[Standby] stop()');
+
     clearInterval(this._clockInterval);
     clearInterval(this._dataInterval);
     this._clockInterval = null;
-    this._dataInterval = null;
-    
-    // Stop photo slideshow
-    Hub.immich.stopStandbySlideshow();
+    this._dataInterval  = null;
+
+    // Remove wake listener
+    const content = Hub.utils.$('standbyContent');
+    if (content && this._wake) content.onclick = null;
+    this._wake = null;
+
+    // Stop slideshow (RAF + visibilitychange handler)
+    Hub.photos.stopStandbySlideshow();
   },
+
+  /** Called by router when leaving the standby page */
+  onLeave() { this.stop(); },
 
   /** Update clock display */
   _updateClock() {
@@ -75,28 +86,52 @@ Hub.standby = {
 
   /** Load weather for standby */
   async _loadWeather() {
-    const el = Hub.utils.$('standbyWeather');
+    const el         = Hub.utils.$('standbyWeather');
+    const tomorrowEl = document.getElementById('standbyTomorrow');
+    const alertEl    = document.getElementById('standbyAlertStrip');
     if (!el) return;
 
     try {
+      // Load AI summary + live alerts in parallel
       const agg = await Hub.weather.fetchAggregate();
-      const ai = await Hub.ai.getSummary(agg);
-      
+      const [ai, liveAlerts] = await Promise.all([
+        Hub.ai.getSummary(agg),
+        Hub.weather.fetchAlerts()   // already filters expired alerts
+      ]);
+
       if (ai && ai.today) {
-        el.innerHTML = `
-          <div class="flex items-center gap-2 mb-2">
-            <span class="text-2xl">${this._getWeatherIcon(ai.headline)}</span>
-            <div>
-              <p class="font-semibold">${ai.today.high_f}° / ${ai.today.low_f}°</p>
-              <p class="text-xs text-gray-400">${Hub.utils.esc(ai.headline)}</p>
-            </div>
-          </div>
-          ${ai.hazards?.length ? `<p class="text-yellow-400 text-xs">⚠️ ${Hub.utils.esc(ai.hazards[0])}</p>` : ''}
-        `;
+        el.innerHTML =
+          '<div class="flex items-center gap-2">' +
+            '<span class="weather-icon-animated text-2xl">' + this._getWeatherIcon(ai.headline) + '</span>' +
+            '<div>' +
+              '<p class="font-semibold">' + (ai.today.high_f ?? '--') + '° / ' + (ai.today.low_f ?? '--') + '°</p>' +
+              '<p class="text-xs text-gray-400">' + Hub.utils.esc(ai.headline) + '</p>' +
+            '</div>' +
+          '</div>';
+
+        if (tomorrowEl && ai.tomorrow) {
+          tomorrowEl.textContent = 'Tomorrow: ' + (ai.tomorrow.high_f ?? '--') + '° / ' + (ai.tomorrow.low_f ?? '--') + '°';
+          tomorrowEl.classList.remove('hidden');
+        }
       } else {
         el.innerHTML = '<p class="text-gray-500 text-sm">Weather unavailable</p>';
       }
+
+      // Alert strip — use LIVE alerts (not AI hazards) so expiry is always respected
+      if (alertEl) {
+        if (liveAlerts.length > 0) {
+          // Build NWS event names for the ticker, deduplicated
+          const threats = [...new Set(liveAlerts.map(a => a.event || a.headline).filter(Boolean))];
+          const segment = threats.map(t => '⚠ ' + t).join('  ·  ');
+          const ticker  = segment + '  ·  ' + segment; // duplicate for seamless CSS loop
+          alertEl.innerHTML = '<span class="marquee-text">' + Hub.utils.esc(ticker) + '</span>';
+          alertEl.classList.remove('hidden');
+        } else {
+          alertEl.classList.add('hidden');
+        }
+      }
     } catch (e) {
+      console.warn('[Standby] Weather load error:', e.message);
       el.innerHTML = '<p class="text-gray-500 text-sm">Weather unavailable</p>';
     }
   },

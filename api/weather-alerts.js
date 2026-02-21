@@ -17,23 +17,38 @@ export default async function handler(req, res) {
     }
 
     const data = await resp.json();
-    const alerts = (data.features || []).map(f => {
-      const p = f.properties || {};
-      return {
-        id: p.id || f.id,
-        headline: p.headline || p.event,
-        event: p.event,
-        severity: p.severity,
-        urgency: p.urgency,
-        certainty: p.certainty,
-        expires: p.expires,
-        area: p.areaDesc,
-        description: p.description,
-        instruction: p.instruction
-      };
-    });
+    const now = Date.now();
 
-    res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=30');
+    const alerts = (data.features || [])
+      .filter(f => {
+        const p = f.properties || {};
+        // Drop cancelled / test / expired status alerts immediately on the server
+        const status = (p.status || '').toLowerCase();
+        if (status === 'cancel' || status === 'test' || status === 'draft') return false;
+        // Drop anything whose effective expiry is already in the past
+        // NWS uses both `expires` and `ends` fields; check both
+        const expiry = p.ends || p.expires;
+        if (expiry && new Date(expiry).getTime() <= now) return false;
+        return true;
+      })
+      .map(f => {
+        const p = f.properties || {};
+        return {
+          id:          p.id || f.id,
+          headline:    p.headline || p.event,
+          event:       p.event,
+          severity:    p.severity,
+          urgency:     p.urgency,
+          certainty:   p.certainty,
+          status:      p.status,
+          expires:     p.ends || p.expires,   // normalise to a single field
+          area:        p.areaDesc,
+          description: p.description,
+          instruction: p.instruction
+        };
+      });
+
+    res.setHeader('Cache-Control', 'no-store'); // alerts must always be fresh — no stale data
     return res.status(200).json({
       active: alerts.length > 0,
       alerts,
