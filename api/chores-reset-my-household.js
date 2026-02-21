@@ -35,7 +35,7 @@ export default async function handler(req, res) {
     if (!email) return res.status(401).json({ error: 'No email in session' });
 
     // 2) Confirm household membership (service role query)
-    const memResp = await fetch(`${SB_URL}/rest/v1/household_members?select=household_id,role&email=eq.${encodeURIComponent(email)}&limit=1`, {
+    const memResp = await fetch(`${SB_URL}/rest/v1/household_members?select=household_id,role&user_email=eq.${encodeURIComponent(email)}&limit=1`, {
       headers: {
         apikey: SB_KEY,
         Authorization: `Bearer ${SB_KEY}`
@@ -75,14 +75,13 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'Household lookup failed', detail: t });
     }
 
-    const hh    = (await hhResp.json())[0] || {};
-    const force = !!(req.body && req.body.force);  // bypass idempotency guard when true
-    if (!force && hh.last_chore_reset_date === today) {
+    const hh = (await hhResp.json())[0] || {};
+    if (hh.last_chore_reset_date === today) {
       return res.status(200).json({ ok: true, didReset: false, reason: 'already_reset_today', today, tz });
     }
 
     // 5) Reset chores for household
-    const or = encodeURIComponent(`(category.eq.Daily,day_of_week.eq.${dow},category.ilike.${dayName}%)`);
+    const or = encodeURIComponent(`(category.eq.Daily,day_of_week.eq.${dow},category.eq.${dayName})`);
     const patchResp = await fetch(`${SB_URL}/rest/v1/chores?household_id=eq.${householdId}&status=in.(done,skipped)&or=${or}`, {
       method: 'PATCH',
       headers: {

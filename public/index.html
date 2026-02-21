@@ -3,15 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>🏠 Home Hub</title>
-  <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="shortcut icon" href="/favicon.svg">
-  <meta name="theme-color" content="#1e293b">
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <title>Home Hub</title>
 
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -60,15 +52,6 @@
     .btn-secondary { background: #374151; color: #fff; } .btn-secondary:hover { background: #4b5563; }
     .btn-danger { background: #ef4444; color: #fff; } .btn-danger:hover { background: #dc2626; }
     .btn-success { background: #10b981; color: #fff; } .btn-success:hover { background: #059669; }
-    /* ── Typography scale ── */
-    :root {
-      --font-display: 2.5rem/1.1 'Inter', system-ui, sans-serif;
-      --font-title:   1.5rem/1.2 'Inter', system-ui, sans-serif;
-      --font-body:    1rem/1.5   'Inter', system-ui, sans-serif;
-      --font-caption: 0.875rem/1.4 'Inter', system-ui, sans-serif;
-      --font-micro:   0.75rem/1.3  'Inter', system-ui, sans-serif;
-    }
-
     .input { background: #374151; border: 1px solid #4b5563; border-radius: .5rem; padding: .5rem 1rem; color: #fff; width: 100%; box-sizing: border-box; }
     .input:focus { outline: none; border-color: #3b82f6; }
     .hidden { display: none !important; }
@@ -77,175 +60,80 @@
     .photo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
     .photo-item { aspect-ratio: 16/9; background: #1f2937; border-radius: .5rem; overflow: hidden; }
     .photo-item img { width: 100%; height: 100%; object-fit: cover; transition: opacity 1s; }
-    /* ── Alert banner — scrolling ticker ── */
-    .alert-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 50; font-weight: 700; display: flex; align-items: center; overflow: hidden; height: 2.4rem; }
-    .alert-banner.warning, .alert-banner.extreme, .alert-banner.severe { background: #ef4444; color: #fff; }
-    .alert-banner.watch,   .alert-banner.moderate { background: #f59e0b; color: #000; }
-    .alert-banner.advisory,.alert-banner.minor    { background: #eab308; color: #000; }
-    /* Twemoji <img class="emoji"> sizing — must match current font size */
-    img.emoji { width: 1em; height: 1em; max-width: 1em; max-height: 1em;
-                vertical-align: -0.15em; display: inline-block; line-height: 1; }
-    /* Ticker track — clips content and scrolls */
-    .alert-banner__track { flex: 1; overflow: hidden; white-space: nowrap; }
-    @keyframes alertTicker { from { transform: translateX(0); } to { transform: translateX(-50%); } }
-    .alert-banner__text { display: inline-block; animation: alertTicker 18s linear infinite; padding-right: 2rem; font-size: .88rem; letter-spacing: .02em; }
-    /* Close button */
-    .alert-banner__close { flex-shrink: 0; background: rgba(0,0,0,.25); border: none; color: inherit; padding: 0 .75rem; height: 100%; cursor: pointer; font-size: 1rem; font-weight: 900; line-height: 2.4rem; }
-    .alert-banner__close:hover { background: rgba(0,0,0,.4); }
+    /* ── Alert Banner ─────────────────────────────────────────── */
+    .alert-banner {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 9000;
+      padding: .65rem 3.5rem .65rem 1.25rem;
+      font-weight: 700; font-size: .925rem; letter-spacing: .01em;
+      text-align: center;
+      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      border-bottom: 2px solid rgba(255,255,255,.15);
+      box-shadow: 0 4px 20px rgba(0,0,0,.5);
+    }
+    /* severity backgrounds */
+    .alert-banner.extreme,
+    .alert-banner.severe,
+    .alert-banner.warning   { background: rgba(185,28,28,.92);  color: #fee2e2; border-color: rgba(239,68,68,.5); }
+    .alert-banner.moderate  { background: rgba(154,52,18,.92);  color: #fed7aa; border-color: rgba(234,88,12,.5); }
+    .alert-banner.watch     { background: rgba(146,64,14,.92);  color: #fef3c7; border-color: rgba(245,158,11,.5); }
+    .alert-banner.minor,
+    .alert-banner.advisory,
+    .alert-banner.statement { background: rgba(133,100,4,.88);  color: #fef9c3; border-color: rgba(234,179,8,.5); }
+    .alert-banner.info,
+    .alert-banner.unknown   { background: rgba(30,58,138,.9);   color: #bfdbfe; border-color: rgba(59,130,246,.5); }
+    /* close button */
+    .alert-banner-close {
+      position: absolute; top: 50%; right: .75rem; transform: translateY(-50%);
+      background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25);
+      color: inherit; width: 1.8rem; height: 1.8rem;
+      border-radius: .35rem; cursor: pointer; font-size: 1.1rem; line-height: 1;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .15s;
+    }
+    .alert-banner-close:hover { background: rgba(255,255,255,.28); }
+    /* icon in banner */
+    .hh-icon { display: inline-block; }
     .status-dot { display: inline-block; width: .75rem; height: .75rem; border-radius: 50%; }
     .status-dot.green { background: #10b981; } .status-dot.red { background: #ef4444; } .status-dot.yellow { background: #f59e0b; }
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 60; padding: 1rem; }
     .progress-bar { height: 1rem; background: #374151; border-radius: 9999px; overflow: hidden; }
     .progress-fill { height: 100%; border-radius: 9999px; transition: width .4s; }
     select.input { appearance: auto; }
-
-    /* ── Slideshow two-layer crossfade ── */
-    .slideshow-layer {
-      position: absolute; inset: 0;
-      width: 100%; height: 100%;
-      object-fit: cover;
-      will-change: opacity;
-      transition: opacity 0.9s ease-in-out;
-    }
-
-    /* ── Card hover lift (disabled in touchscreen mode) ── */
-    body:not(.touchscreen-mode) .card:hover {
-      transform: translateY(-4px);
-      box-shadow: 0 12px 24px rgba(0,0,0,.4), 0 0 0 1px rgba(255,255,255,.05);
-    }
-    .card { transition: transform .2s ease, box-shadow .2s ease; }
-
-    /* ── Staggered card entrance ── */
-    @keyframes cardIn { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
-    .card-enter { animation: cardIn .4s ease both; }
-    .card-enter:nth-child(1) { animation-delay: 0ms; }
-    .card-enter:nth-child(2) { animation-delay: 50ms; }
-    .card-enter:nth-child(3) { animation-delay: 100ms; }
-    .card-enter:nth-child(4) { animation-delay: 150ms; }
-    .card-enter:nth-child(5) { animation-delay: 200ms; }
-
-    /* ── Chore confetti particle ── */
-    @keyframes confetti-fall { 0% { opacity:1; transform:translateY(0) rotate(0deg); } 100% { opacity:0; transform:translateY(60px) rotate(360deg); } }
-    .confetti-dot { position:fixed; width:8px; height:8px; border-radius:50%; pointer-events:none; z-index:9999; animation: confetti-fall .8s ease-out forwards; }
-
-    /* ── Skeleton shimmer ── */
-    @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
-    .skeleton {
-      background: linear-gradient(90deg, #1E2738 25%, #253048 50%, #1E2738 75%);
-      background-size: 200% 100%;
-      animation: shimmer 1.5s infinite;
-      border-radius: .5rem;
-    }
-    .skeleton-text { height: 1em; margin-bottom: .5rem; }
-    .skeleton-block { height: 80px; }
-
-    /* ── Weather icon pulse ── */
-    @keyframes icon-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
-    .weather-icon-animated { display:inline-block; animation: icon-pulse 3s ease-in-out infinite; }
-
-    /* ── Lock screen glass ── */
-    .glass-panel {
-      background: rgba(15, 20, 40, 0.72);
-      backdrop-filter: blur(20px) saturate(180%);
-      border: 1px solid rgba(255,255,255,.08);
-    }
-
-    /* ── Touchscreen mode ── */
-    .touchscreen-mode .btn { padding: .75rem 1.25rem; font-size: 1.1rem; }
-    .touchscreen-mode .card { padding: 1.75rem; }
-    .touchscreen-mode .card:hover { transform: none; box-shadow: none; }
-    body.reduce-motion * { animation: none !important; transition-duration: .01ms !important; }
-
-    /* ── Bento grid dashboard ── */
-    .bento-grid {
-      display: grid;
-      gap: 1.25rem;
-      grid-template-columns: 1fr;
-    }
-    @media (min-width: 640px) {
-      .bento-grid { grid-template-columns: repeat(2, 1fr); }
-      .bento-span-2 { grid-column: span 2; }
-    }
-    @media (min-width: 1024px) {
-      .bento-grid { grid-template-columns: repeat(3, 1fr); }
-      .bento-span-2 { grid-column: span 2; }
-      .bento-span-3 { grid-column: span 3; }
-      .bento-tall   { grid-row: span 2; }
-    }
-
-    /* ── Tomorrow weather in standby ── */
-    .standby-alert-strip {
-      background: rgba(239,68,68,.85);
-      border-radius: .5rem;
-      padding: .4rem .75rem;
-      font-size: .78rem;
-      font-weight: 600;
-      overflow: hidden;
-      white-space: nowrap;
-    }
-    @keyframes marquee { from{transform:translateX(0)} to{transform:translateX(-50%)} }
-    .marquee-text { display:inline-block; animation: marquee 12s linear infinite; }
-
+    
+    /* Standby photo transitions */
+    #standbyCurrentPhoto { transition: opacity 0.5s ease-in-out; }
+    
     /* Responsive utilities */
     @media (max-width: 640px) {
       .card { padding: 1rem; margin-bottom: 1rem; }
       .standby-clock { font-size: 4rem !important; }
     }
-
-    /* ── Smooth scrolling ── */
-    html { scroll-behavior: smooth; }
-
-    /* ── Accordion for settings ── */
-    .accordion-body { max-height: 0; overflow: hidden; transition: max-height .35s ease; }
-    .accordion-body.open { max-height: 2000px; }
-    .accordion-toggle { cursor: pointer; user-select: none; }
-    .accordion-toggle::after { content: ' ▼'; font-size:.7em; transition:transform .2s; display:inline-block; }
-    .accordion-toggle.open::after { transform: rotate(180deg); }
-
-    /* ── Performance: GPU-hint scroll containers ── */
-    .page { contain: layout style; }
-    .card { contain: layout; }
-    img   { content-visibility: auto; }
-
-    /* ── Touchscreen mode — larger hit areas ── */
-    .touchscreen-mode .btn { min-height: 52px; min-width: 52px; font-size: 1.05rem; }
-    .touchscreen-mode .card { margin-bottom: 1.25rem; }
-    body:not(.touchscreen-mode) .card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,.35); }
-
-    /* ── Three-finger-tap hint ── */
-    #adminQuickFab {
-      position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9000;
-      width: 52px; height: 52px; border-radius: 50%;
-      background: rgba(239,68,68,.85); border: 1px solid rgba(255,255,255,.2);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 1.4rem; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.5);
-      transition: transform .2s, opacity .2s;
-    }
-    #adminQuickFab:active { transform: scale(0.9); }
-
-    /* ── Grocery list ── */
-    #groceryList .card { transition: opacity .2s; }
-
-    /* ── On-screen keyboard key active ── */
-    #oskOverlay button:active { filter: brightness(1.4); transform: scale(0.95); }
-
-    /* ── Admin panel grid tiles ── */
-    #adminPanelContent .card { transition: background .15s, transform .1s; }
-    #adminPanelContent .card:active { transform: scale(0.96); }
-    /* ── Player visualizer ── */
-    @keyframes vizBar {
-      from { height: 3px; opacity: .5; }
-      to   { height: 16px; opacity: 1; }
-    }
-    /* ── Marquee for long track titles ── */
-    @keyframes marquee {
-      0%   { transform: translateX(0); }
-      100% { transform: translateX(-50%); }
-    }
-    /* ── Chore SVG check transition ── */
-    .chore-check-svg { transition: transform .2s cubic-bezier(0.34,1.56,0.64,1); }
-    .chore-card { transition: opacity .3s, background .3s; }
   </style>
+  <!-- One-time SW + cache purge (cleans up old service workers from previous deploys) -->
+  <script>
+    (function() {
+      if (typeof localStorage !== 'undefined' && !localStorage.getItem('sw_purged_v2')) {
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.getRegistrations().then(function(regs) {
+            regs.forEach(function(r) { r.unregister(); });
+          });
+        }
+        if ('caches' in window) {
+          caches.keys().then(function(keys) {
+            keys.forEach(function(k) { caches.delete(k); });
+          });
+        }
+        localStorage.setItem('sw_purged_v2', '1');
+        // Reload once so we get fresh resources (only if we unregistered something)
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.getRegistrations().then(function(regs) {
+            if (regs.length > 0) { window.location.reload(); }
+          });
+        }
+      }
+    })();
+  </script>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%233b82f6'%3E%3Cpath d='M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25'/%3E%3C/svg%3E">
 </head>
 <body>
   <div id="app">
@@ -272,7 +160,7 @@
     <!-- Login Screen -->
     <div id="loginScreen" class="page min-h-screen flex items-center justify-center">
       <div class="card max-w-md w-full text-center mx-4">
-        <h1 class="text-5xl font-bold mb-4">🏠 Home Hub</h1>
+        <h1 class="text-5xl font-bold mb-4" style="display:flex;align-items:center;gap:.6rem;justify-content:center;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:48px;height:48px;color:#3b82f6" aria-hidden="true"><path d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25"/></svg>Home Hub</h1>
         <p class="text-gray-400 mb-8">Your family command center</p>
         <button id="btnGoogleLogin" class="btn btn-primary w-full text-lg py-3">Sign in with Google</button>
         <p class="text-xs text-gray-500 mt-4">
@@ -280,7 +168,7 @@
           <a href="/tos.html" target="_blank" class="text-blue-400 hover:text-blue-300 underline">Terms of Service</a> and 
           <a href="/privacy.html" target="_blank" class="text-blue-400 hover:text-blue-300 underline">Privacy Policy</a>
         </p>
-        <button id="btnCheckSupabase" class="btn btn-secondary w-full text-sm py-2 mt-4">🔍 Check Supabase</button>
+        <button id="btnCheckSupabase" class="btn btn-secondary w-full text-sm py-2 mt-4"> Check Supabase</button>
         <pre id="debugOutput" style="display:none; text-align:left; font-size:0.7rem; line-height:1.4; background:#0f172a; color:#94a3b8; padding:1rem; border-radius:0.5rem; margin-top:1rem; max-height:400px; overflow:auto; white-space:pre-wrap; word-break:break-all;"></pre>
       </div>
     </div>
@@ -288,7 +176,7 @@
     <!-- Access Denied Screen -->
     <div id="accessDeniedScreen" class="page min-h-screen flex items-center justify-center">
       <div class="card max-w-md w-full text-center mx-4">
-        <div class="text-7xl mb-6">🚫</div>
+        <div class="mb-6" style="color:#ef4444"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:64px;height:64px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg></div>
         <h1 class="text-4xl font-bold mb-4">Access Denied</h1>
         <p class="text-gray-400 mb-4">Your account is not authorized.</p>
         <p class="text-gray-500 text-sm mb-8" id="deniedEmail"></p>
@@ -297,12 +185,15 @@
     </div>
 
     <!-- Alert Banner (fixed top) -->
-    <div id="alertBanner" class="alert-banner hidden"></div>
+    <div id="alertBanner" class="alert-banner hidden">
+      <span id="alertBannerText"></span>
+      <button class="alert-banner-close" onclick="Hub.ui.hideBanner()" title="Dismiss">&times;</button>
+    </div>
 
     <!-- Alert Popup Modal -->
     <div id="alertPopup" class="modal-overlay hidden">
       <div class="card max-w-2xl w-full text-center">
-        <div class="text-7xl mb-4">⚠️</div>
+        <div class="mb-4" style="color:#ef4444"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:64px;height:64px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg></div>
         <h2 class="text-3xl font-bold mb-4">Weather Alert</h2>
         <p id="alertPopupText" class="text-xl mb-6"></p>
         <button id="btnDismissAlert" class="btn btn-primary px-8 py-3">Acknowledged</button>
@@ -315,125 +206,104 @@
         <!-- Header -->
         <header class="mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div>
-            <h1 class="text-4xl md:text-5xl font-bold">🏠 Home Hub</h1>
+            <h1 class="text-4xl md:text-5xl font-bold" id="homeHubTitle" style="display:flex;align-items:center;gap:.5rem;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:40px;height:40px;color:#3b82f6" aria-hidden="true"><path d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25"/></svg>Home Hub</h1>
             <p class="text-gray-400 mt-2 text-base" id="dashboardDate"></p>
             <p class="text-blue-400 text-base mt-1" id="dashboardGreeting"></p>
           </div>
           <div class="flex flex-wrap gap-2">
-            <button onclick="Hub.router.go('standby')" class="btn btn-secondary text-sm py-2 px-4">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-              Standby
-            </button>
-            <button onclick="Hub.router.go('status')" class="btn btn-secondary text-sm py-2 px-4">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-              Status
-            </button>
-            <button onclick="Hub.router.go('settings')" class="btn btn-secondary text-sm py-2 px-4">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-              Settings
-            </button>
-            <button onclick="Hub.router.go('music')" class="btn btn-secondary text-sm py-2 px-4">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-              Music
-            </button>
-            <button onclick="Hub.router.go('radio')" class="btn btn-secondary text-sm py-2 px-4">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 17l9-9 9 9"/><rect x="5" y="17" width="14" height="4" rx="1"/></svg>
-              Radio
-            </button>
-            <button onclick="Hub.router.go('grocery')" class="btn btn-secondary text-sm py-2 px-4">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
-              Grocery
-            </button>
-            <button id="btnSignOut" class="btn btn-secondary text-sm py-2 px-4">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-              Sign Out
-            </button>
+            <button onclick="Hub.router.go('standby')" class="btn btn-secondary text-sm py-2 px-4"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:18px;height:18px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg> Standby</button>
+            <button onclick="Hub.router.go('status')" class="btn btn-secondary text-sm py-2 px-4"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:18px;height:18px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/></svg> Status</button>
+            <button onclick="Hub.router.go('settings')" class="btn btn-secondary text-sm py-2 px-4"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:18px;height:18px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg> Settings</button>
+            <button onclick="Hub.router.go('music')" class="btn btn-secondary text-sm py-2 px-4"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:18px;height:18px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z"/></svg> Music</button>
+            <button onclick="Hub.router.go('radio')" class="btn btn-secondary text-sm py-2 px-4"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:18px;height:18px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"/></svg> Radio</button>
+            <button id="btnSignOut" class="btn btn-secondary text-sm py-2 px-4">Sign Out</button>
           </div>
         </header>
 
-        <!-- Bento Grid Dashboard -->
-        <div class="bento-grid">
-
-          <!-- Calendar Widget — spans 2 cols on tablet+ -->
-          <div class="card card-enter bento-span-2">
-            <div id="calendarWidget">
-              <div class="skeleton skeleton-block mb-2"></div>
-              <div class="skeleton skeleton-text" style="width:70%"></div>
-            </div>
-          </div>
-
-          <!-- Weather Card -->
-          <div class="card card-enter">
-            <div class="flex items-center justify-between mb-4">
-              <h2 class="text-xl font-bold">☀️ Weather</h2>
-              <button onclick="Hub.router.go('weather')" class="text-blue-400 hover:text-blue-300 text-sm">
-                Full Forecast →
-              </button>
-            </div>
-            <div id="dashboardWeather">
-              <div class="skeleton skeleton-text" style="width:80%"></div>
-              <div class="skeleton skeleton-text" style="width:60%"></div>
-            </div>
-          </div>
-
-          <!-- Dog Treat Status Widget -->
-          <div class="card card-enter">
-            <div class="flex items-center justify-between mb-4">
-              <h3 class="font-bold text-xl">🐕 Barker</h3>
-              <button onclick="Hub.treats.showQuickAdd()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg font-semibold transition-colors">
-                + Treat
-              </button>
-            </div>
-            <div id="dogStatusWidget">
-              <div class="skeleton skeleton-block"></div>
-            </div>
-          </div>
-
-          <!-- Chores Preview -->
-          <div class="card card-enter">
-            <div class="flex items-center justify-between mb-4">
-              <h2 class="text-xl font-bold">Today's Chores</h2>
-              <button onclick="Hub.router.go('chores')" class="text-blue-400 hover:text-blue-300 text-sm">
-                View All →
-              </button>
-            </div>
-            <div id="dashboardChores" class="space-y-2">
-              <div class="skeleton skeleton-text"></div>
-              <div class="skeleton skeleton-text" style="width:85%"></div>
-              <div class="skeleton skeleton-text" style="width:70%"></div>
-            </div>
-          </div>
-
-          <!-- Now Playing Widget -->
-          <div class="card card-enter">
-            <h2 class="text-xl font-bold mb-4">🎵 Now Playing</h2>
-            <div id="nowPlayingWidget"></div>
-          </div>
-
-          <!-- Photos Widget — full width -->
-          <div class="card card-enter bento-span-3">
-            <div class="flex items-center justify-between mb-4">
-              <h3 class="font-bold text-xl">📸 Family Photos</h3>
-            </div>
-            <div id="immichDashboardWidget" class="min-h-[200px]">
-              <div class="grid grid-cols-3 gap-2">
-                <div class="skeleton" style="aspect-ratio:16/9;border-radius:.5rem;"></div>
-                <div class="skeleton" style="aspect-ratio:16/9;border-radius:.5rem;"></div>
-                <div class="skeleton" style="aspect-ratio:16/9;border-radius:.5rem;"></div>
+        <!-- Main Grid - 2 Column Layout -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          
+          <!-- Left Column -->
+          <div class="space-y-6">
+            
+            <!-- Calendar Widget -->
+            <div class="card">
+              <div id="calendarWidget">
+                <p class="text-gray-400 text-sm">Loading calendar...</p>
               </div>
             </div>
+
+            <!-- Weather Card -->
+            <div class="card">
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:20px;height:20px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z"/></svg> Weather</h2>
+                <button onclick="Hub.router.go('weather')" class="text-blue-400 hover:text-blue-300 text-sm">
+                  Full Forecast →
+                </button>
+              </div>
+              <div id="dashboardWeather">
+                <p class="text-gray-400 text-sm">Loading weather…</p>
+              </div>
+            </div>
+
+          </div>
+          
+          <!-- Right Column -->
+          <div class="space-y-6">
+            
+            <!-- Dog Treat Status Widget -->
+            <div class="card">
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="font-bold text-xl"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:20px;height:20px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z"/></svg> Barker</h3>
+                <button onclick="Hub.treats.showQuickAdd()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg font-semibold transition-colors">
+                  + Treat
+                </button>
+              </div>
+              <div id="dogStatusWidget">
+                <p class="text-gray-400 text-sm">Loading...</p>
+              </div>
+            </div>
+
+            <!-- Chores Preview -->
+            <div class="card">
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold">Today's Chores</h2>
+                <button onclick="Hub.router.go('chores')" class="text-blue-400 hover:text-blue-300 text-sm">
+                  View All →
+                </button>
+              </div>
+              <div id="dashboardChores" class="space-y-2">
+                <p class="text-gray-400 text-sm">Loading chores...</p>
+              </div>
+            </div>
+
+            <!-- Now Playing Widget -->
+            <div class="card">
+              <h2 class="text-xl font-bold mb-4"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:20px;height:20px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z"/></svg> Now Playing</h2>
+              <div id="nowPlayingWidget"></div>
+            </div>
+
           </div>
 
-        </div><!-- end bento-grid -->
+          <!-- Photos Widget - Full Width -->
+          <div class="card lg:col-span-2">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-bold text-xl"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:20px;height:20px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"/></svg> Family Photos</h3>
+            </div>
+            <div id="immichDashboardWidget" class="min-h-[200px]">
+              <p class="text-gray-400 text-sm text-center py-8">Loading photos...</p>
+            </div>
+          </div>
+
+        </div>
       </div>
     </div>
 
     <!-- ========== STANDBY ========== -->
     <div id="standbyPage" class="page min-h-screen bg-black text-white relative overflow-hidden cursor-pointer">
-      <!-- Full screen photo background - two-layer RAF crossfade -->
-      <div id="standbyPhotoBackground" class="absolute inset-0">
-        <img id="slideshowLayerA" class="slideshow-layer" alt="" style="opacity:0;z-index:2;" />
-        <img id="slideshowLayerB" class="slideshow-layer" alt="" style="opacity:0;z-index:1;" />
+      <!-- Full screen photo background - rotating -->
+      <div id="standbyPhotoBackground" class="absolute inset-0 transition-opacity duration-1000">
+        <img id="standbyCurrentPhoto" class="w-full h-full object-cover" alt="" />
       </div>
       
       <!-- Dark overlay for readability -->
@@ -450,43 +320,41 @@
           <div id="standbyDate" class="text-base sm:text-lg md:text-xl text-gray-300 font-light"></div>
         </div>
 
-        <!-- Info Cards — single horizontal row -->
-        <div class="w-full max-w-6xl mb-4" style="display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem;">
-
-          <!-- 1 · Calendar -->
-          <div class="glass-panel rounded-xl p-3 min-w-0">
-            <h3 class="text-xs font-semibold mb-1 text-blue-400 uppercase tracking-wide">📅 Upcoming</h3>
-            <div id="standbyCalendar" class="space-y-1 text-xs max-h-28 overflow-hidden">
+        <!-- Info Cards - compact and responsive -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 max-w-6xl w-full mb-4">
+          
+          <!-- Calendar Events - compact -->
+          <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10">
+            <h3 class="text-sm font-semibold mb-2 text-blue-400"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:16px;height:16px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5"/></svg> Upcoming Events</h3>
+            <div id="standbyCalendar" class="space-y-2 text-xs sm:text-sm max-h-32 overflow-hidden">
               <p class="text-gray-400">Loading...</p>
             </div>
           </div>
 
-          <!-- 2 · Chores -->
-          <div class="glass-panel rounded-xl p-3 min-w-0">
-            <h3 class="text-xs font-semibold mb-1 text-green-400 uppercase tracking-wide">✅ Chores</h3>
-            <div id="standbyChores" class="space-y-1 text-xs max-h-28 overflow-hidden">
+          <!-- Due Chores - compact -->
+          <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10">
+            <h3 class="text-sm font-semibold mb-2 text-green-400"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:16px;height:16px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Chores Due</h3>
+            <div id="standbyChores" class="space-y-2 text-xs sm:text-sm max-h-32 overflow-hidden">
               <p class="text-gray-400">Loading...</p>
             </div>
           </div>
 
-          <!-- 3 · Weather -->
-          <div class="glass-panel rounded-xl p-3 min-w-0">
-            <h3 class="text-xs font-semibold mb-1 text-yellow-400 uppercase tracking-wide">🌤️ Weather</h3>
-            <div id="standbyWeather" class="text-xs">
+          <!-- Weather - compact -->
+          <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10 sm:col-span-2 lg:col-span-1">
+            <h3 class="text-sm font-semibold mb-2 text-yellow-400"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:16px;height:16px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z"/></svg> Weather</h3>
+            <div id="standbyWeather" class="text-xs sm:text-sm">
               <p class="text-gray-400">Loading...</p>
             </div>
-            <div id="standbyTomorrow" class="text-xs text-gray-400 mt-1 hidden"></div>
-            <div id="standbyAlertStrip" class="standby-alert-strip mt-1 hidden"></div>
           </div>
 
-          <!-- 4 · Now Playing -->
-          <div class="glass-panel rounded-xl p-3 min-w-0 flex flex-col justify-center">
-            <h3 class="text-xs font-semibold mb-1 text-purple-400 uppercase tracking-wide">🎵 Now Playing</h3>
-            <div id="standbyNowPlaying" class="text-xs">
+          <!-- Now Playing - compact -->
+          <div class="bg-black/70 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10">
+            <h3 class="text-sm font-semibold mb-2 text-purple-400"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:20px;height:20px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z"/></svg> Now Playing</h3>
+            <div id="standbyNowPlaying" class="text-xs sm:text-sm">
               <p class="text-gray-400">Nothing playing</p>
             </div>
           </div>
-
+          
         </div>
 
         <!-- Tap to wake hint - always at very bottom -->
@@ -501,12 +369,12 @@
     <div id="weatherPage" class="page">
       <div class="max-w-7xl mx-auto p-4 md:p-6">
         <header class="flex items-center justify-between mb-6">
-          <h1 class="text-3xl font-bold">🌤️ Weather Center</h1>
+          <h1 class="text-3xl font-bold"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:24px;height:24px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z"/></svg> Weather Center</h1>
           <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
         </header>
         <div id="weatherContent"><p class="text-gray-400">Loading detailed weather…</p></div>
         <div class="card mt-6">
-          <h2 class="text-xl font-bold mb-4">🌧 Rain Radar</h2>
+          <h2 class="text-xl font-bold mb-4"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:22px;height:22px;vertical-align:-4px;flex-shrink:0;" aria-hidden="true"><path d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"/></svg> Rain Radar</h2>
           <div id="rainRadar" class="bg-gray-800 rounded-lg p-4 text-center">
             <p class="text-gray-400 text-sm">Loading radar…</p>
           </div>
@@ -518,10 +386,9 @@
     <div id="choresPage" class="page">
       <div class="max-w-7xl mx-auto p-4 md:p-6">
         <header class="flex items-center justify-between mb-6">
-          <h1 class="text-3xl font-bold">✅ Chores</h1>
-          <div class="flex gap-3 flex-wrap">
+          <h1 class="text-3xl font-bold"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:24px;height:24px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Chores</h1>
+          <div class="flex gap-3">
             <button id="btnAddChore" class="btn btn-primary">+ Add Chore</button>
-            <button id="btnManualResetChores" class="btn btn-secondary text-sm" title="Force-reset all daily/weekly chores to pending">🔄 Reset Today</button>
             <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
           </div>
         </header>
@@ -533,7 +400,7 @@
     <div id="treatsPage" class="page">
       <div class="max-w-7xl mx-auto p-4 md:p-6">
         <header class="flex items-center justify-between mb-6">
-          <h1 class="text-3xl font-bold">🐕 Dog Treats</h1>
+          <h1 class="text-3xl font-bold"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:24px;height:24px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z"/></svg> Dog Treats</h1>
           <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
         </header>
         <div id="dogSelector" class="mb-6"></div>
@@ -556,7 +423,7 @@
     <div id="statusPage" class="page">
       <div class="max-w-4xl mx-auto p-4 md:p-6">
         <header class="flex items-center justify-between mb-6">
-          <h1 class="text-3xl font-bold">📊 System Status</h1>
+          <h1 class="text-3xl font-bold"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:24px;height:24px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/></svg> System Status</h1>
           <div class="flex gap-3">
             <button id="btnRefreshStatus" class="btn btn-primary">Refresh</button>
             <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
@@ -573,12 +440,12 @@
     <div id="controlPage" class="page">
       <div class="max-w-4xl mx-auto p-4 md:p-6">
         <header class="flex items-center justify-between mb-6">
-          <h1 class="text-3xl font-bold">🛰️ Site Control Center</h1>
+          <h1 class="text-3xl font-bold"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:24px;height:24px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z M18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z"/></svg> Site Control Center</h1>
           <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
         </header>
 
         <div id="controlAdminGate" class="card mb-6 hidden">
-          <h2 class="text-xl font-bold mb-2">🔒 Admin only</h2>
+          <h2 class="text-xl font-bold mb-2"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:20px;height:20px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/></svg> Admin only</h2>
           <p class="text-gray-400 text-sm">This page is restricted to household admins.</p>
         </div>
 
@@ -638,7 +505,7 @@
 
               <div class="flex flex-wrap gap-3">
                 <button id="btnControlLoad" class="btn btn-secondary">Reload</button>
-                <button id="btnControlSave" class="btn btn-primary">💾 Save</button>
+                <button id="btnControlSave" class="btn btn-primary"> Save</button>
               </div>
               <p id="controlStatus" class="text-xs text-gray-500"></p>
             </div>
@@ -664,79 +531,34 @@
     <div id="settingsPage" class="page">
       <div class="max-w-4xl mx-auto p-4 md:p-6">
         <header class="flex items-center justify-between mb-6">
-          <h1 class="text-3xl font-bold">⚙️ Settings</h1>
+          <h1 class="text-3xl font-bold"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:18px;height:18px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg> Settings</h1>
           <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
         </header>
         <div class="space-y-6">
           <!-- Location -->
           <div class="card">
-            <h2 class="text-xl font-bold mb-4">📍 Location</h2>
+            <h2 class="text-xl font-bold mb-4"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:20px;height:20px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z"/></svg> Location</h2>
             <div class="space-y-4">
               <div><label class="block text-sm font-medium mb-2">Location Name</label><input id="settingLocationName" type="text" class="input" placeholder="Home"></div>
               <div class="grid grid-cols-2 gap-4">
                 <div><label class="block text-sm font-medium mb-2">Latitude</label><input id="settingLat" type="number" step="0.000001" class="input"></div>
                 <div><label class="block text-sm font-medium mb-2">Longitude</label><input id="settingLon" type="number" step="0.000001" class="input"></div>
               </div>
-              <button id="btnUseLocation" class="btn btn-secondary text-sm">📍 Use Current Location</button>
+              <button id="btnUseLocation" class="btn btn-secondary text-sm"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:16px;height:16px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z"/></svg> Use Current Location</button>
             </div>
           </div>
-          <!-- Standby Photos -->
+          <!-- Immich -->
           <div class="card">
-            <h2 class="text-xl font-bold mb-4">
-              <svg style="display:inline;vertical-align:-.1em;margin-right:.4em" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-              Standby Photos
-            </h2>
+            <h2 class="text-xl font-bold mb-4"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:20px;height:20px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"/></svg> Immich Photos</h2>
             <div class="space-y-4">
-              <div>
-                <label class="block text-sm font-medium mb-2">Photo Source</label>
-                <select id="settingPhotoProvider" class="input">
-                  <option value="imgur">Imgur Album</option>
-                  <option value="google">Google Photos Album</option>
-                  <option value="immich">Immich (local NAS)</option>
-                  <option value="off">Off (placeholders)</option>
-                </select>
-              </div>
-
-              <!-- Google Photos settings -->
-              <div id="photoSettingsGoogle" style="display:none;" class="space-y-3 border-l-2 border-blue-600 pl-4">
-                <p class="text-xs text-blue-400">Uses your Google account — no extra sign-in needed</p>
-                <div>
-                  <label class="block text-sm font-medium mb-2">Album</label>
-                  <div class="flex gap-2 mb-2">
-                    <button id="btnLoadGoogleAlbums" class="btn btn-secondary text-sm">Load My Albums</button>
-                    <button id="btnTestSlideshow" class="btn btn-secondary text-sm">Test Slideshow</button>
-                  </div>
-                  <select id="settingGooglePhotosAlbumSelect" class="input mb-2">
-                    <option value="">— click Load My Albums first —</option>
-                  </select>
-                  <input id="settingGooglePhotosAlbumId" type="hidden">
-                  <input id="settingGooglePhotosAlbumTitle" type="text" class="input text-xs text-gray-400" placeholder="Album title (auto-filled)" readonly>
-                </div>
-                <p class="text-xs text-gray-500">If photos stop working, sign out and back in to re-grant Photos permission.</p>
-              </div>
-
-              <!-- Imgur settings -->
-              <div id="photoSettingsImgur" class="space-y-3 border-l-2 border-orange-500 pl-4">
-                <p class="text-xs text-orange-400">Public Imgur album — no account needed</p>
-                <div>
-                  <label class="block text-sm font-medium mb-2">Imgur Album ID</label>
-                  <input id="settingImgurAlbum" type="text" class="input" placeholder="kAG2MS3">
-                </div>
-                <button id="btnTestSlideshow2" class="btn btn-secondary text-sm" onclick="Hub.app._testSlideshow()">Test Slideshow</button>
-              </div>
-
-              <!-- Immich settings -->
-              <div id="photoSettingsImmich" style="display:none;" class="space-y-3 border-l-2 border-purple-500 pl-4">
-                <p class="text-xs text-purple-400">Local Immich server — must be on same network</p>
-                <div><label class="block text-sm font-medium mb-2">Immich Base URL</label><input id="settingImmichUrl" type="url" class="input" placeholder="http://192.168.1.100:2283"></div>
-                <div><label class="block text-sm font-medium mb-2">API Key / Shared Token</label><input id="settingImmichKey" type="password" class="input" placeholder="Your Immich API key"></div>
-                <div><label class="block text-sm font-medium mb-2">Album ID (optional)</label><input id="settingImmichAlbum" type="text" class="input" placeholder="Shared album ID or leave blank for library"></div>
-              </div>
+              <div><label class="block text-sm font-medium mb-2">Immich Base URL</label><input id="settingImmichUrl" type="url" class="input" placeholder="http://192.168.1.100:2283"></div>
+              <div><label class="block text-sm font-medium mb-2">API Key / Shared Token</label><input id="settingImmichKey" type="password" class="input" placeholder="Your Immich API key or shared link key"></div>
+              <div><label class="block text-sm font-medium mb-2">Album ID</label><input id="settingImmichAlbum" type="text" class="input" placeholder="Shared album ID"></div>
             </div>
           </div>
           <!-- Standby -->
           <div class="card">
-            <h2 class="text-xl font-bold mb-4">💤 Standby Mode</h2>
+            <h2 class="text-xl font-bold mb-4"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:20px;height:20px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg> Standby Mode</h2>
             <div class="space-y-4">
               <div><label class="block text-sm font-medium mb-2">Auto-enter after (minutes)</label><input id="settingIdleTimeout" type="number" class="input" value="10" min="1" max="60"></div>
               <div class="grid grid-cols-2 gap-4">
@@ -747,7 +569,7 @@
           </div>
           <!-- Calendar Selection -->
           <div class="card">
-            <h2 class="text-xl font-bold mb-4">📅 Calendar Selection</h2>
+            <h2 class="text-xl font-bold mb-4"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:20px;height:20px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5"/></svg> Calendar Selection</h2>
             <div id="calendarSelectionContainer">
               <p class="text-gray-400 text-sm mb-3">Choose which Google Calendars to display on your dashboard</p>
               <button id="btnLoadCalendars" class="btn btn-secondary text-sm mb-3">Load My Calendars</button>
@@ -757,7 +579,7 @@
           
           <!-- Changelog -->
           <div class="card">
-            <h2 class="text-xl font-bold mb-4">📋 What's New</h2>
+            <h2 class="text-xl font-bold mb-4"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:20px;height:20px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z"/></svg> What's New</h2>
             <div class="space-y-3 text-sm">
               <div class="border-l-4 border-blue-500 pl-4 py-2">
                 <p class="font-semibold text-blue-400">v2.0.0 - February 9, 2026</p>
@@ -792,7 +614,7 @@
 
           <!-- Legal & Privacy -->
           <div class="card bg-gray-800">
-            <h2 class="text-xl font-bold mb-4">⚖️ Legal & Privacy</h2>
+            <h2 class="text-xl font-bold mb-4"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:20px;height:20px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M12 7.5h1.5m-1.5 3h1.5m-7.5 3h7.5m-7.5 3h7.5m3-9h3.375c.621 0 1.125.504 1.125 1.125V18a2.25 2.25 0 01-2.25 2.25M16.5 7.5V18a2.25 2.25 0 002.25 2.25M16.5 7.5V4.875c0-.621-.504-1.125-1.125-1.125H4.125C3.504 3.75 3 4.254 3 4.875V18a2.25 2.25 0 002.25 2.25h13.5M6 7.5h3v3H6v-3z"/></svg> Legal & Privacy</h2>
             <div class="space-y-3 text-sm">
               <p class="text-gray-400">Your settings and data are stored securely and persist indefinitely while your account is active.</p>
               <div class="flex flex-wrap gap-4">
@@ -813,57 +635,7 @@
             </div>
           </div>
 
-          <!-- Touchscreen Mode -->
-          <div class="card">
-            <h2 class="text-xl font-bold mb-4 accordion-toggle" onclick="Hub.ui.toggleAccordion(this)">📱 Touchscreen Mode</h2>
-            <div class="accordion-body">
-              <div class="space-y-4">
-                <label class="flex items-center justify-between cursor-pointer">
-                  <span class="text-sm font-medium">Larger UI density</span>
-                  <input type="checkbox" id="tsLargerUI" class="w-5 h-5 rounded" onchange="Hub.ui.applyTouchscreenMode()">
-                </label>
-                <label class="flex items-center justify-between cursor-pointer">
-                  <span class="text-sm font-medium">Disable hover states</span>
-                  <input type="checkbox" id="tsDisableHover" class="w-5 h-5 rounded" onchange="Hub.ui.applyTouchscreenMode()">
-                </label>
-                <label class="flex items-center justify-between cursor-pointer">
-                  <span class="text-sm font-medium">Increase button hit areas</span>
-                  <input type="checkbox" id="tsLargeHits" class="w-5 h-5 rounded" onchange="Hub.ui.applyTouchscreenMode()">
-                </label>
-                <label class="flex items-center justify-between cursor-pointer">
-                  <span class="text-sm font-medium">Reduce motion (performance)</span>
-                  <input type="checkbox" id="tsReduceMotion" class="w-5 h-5 rounded" onchange="Hub.ui.applyTouchscreenMode()">
-                </label>
-                <p class="text-xs text-gray-500">Touchscreen mode optimises the UI for kiosk/Pi use.</p>
-              </div>
-            </div>
-          </div>
-
-          <!-- Fullscreen Controls -->
-          <div class="card">
-            <h2 class="text-xl font-bold mb-4">🖥 Fullscreen</h2>
-            <div class="flex gap-3">
-              <button onclick="Hub.ui.enterFullscreen()" class="btn btn-primary flex-1">⛶ Enter Fullscreen</button>
-              <button onclick="Hub.ui.exitFullscreen()" class="btn btn-secondary flex-1">✕ Exit Fullscreen</button>
-            </div>
-            <p id="fullscreenStatus" class="text-xs text-gray-500 mt-2 text-center"></p>
-          </div>
-
-          <!-- Admin Panel — button shown/hidden based on role by _loadSettingsForm() -->
-          <div id="settingsAdminCard" class="card" style="border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.05);">
-            <div class="flex items-center justify-between">
-              <div>
-                <h2 class="text-xl font-bold">🛠 Admin Panel</h2>
-                <p class="text-gray-400 text-sm mt-1">Live control console — system, media, display, debug, simulation</p>
-              </div>
-              <div id="settingsAdminBtn">
-                <!-- Populated by _loadSettingsForm based on role -->
-                <span class="text-gray-500 text-sm">Checking access…</span>
-              </div>
-            </div>
-          </div>
-
-          <button id="btnSaveSettings" class="btn btn-primary w-full py-3">💾 Save All Settings</button>
+          <button id="btnSaveSettings" class="btn btn-primary w-full py-3"> Save All Settings</button>
           <p class="text-center text-sm text-gray-500 mt-2">Settings are automatically saved to your account and persist forever</p>
         </div>
       </div>
@@ -871,21 +643,6 @@
   </div>
 
   <!-- ========== MODALS ========== -->
-  <!-- Grocery: Confirm Clear All modal -->
-  <div id="groceryClearModal" class="modal-overlay hidden">
-    <div class="card max-w-sm w-full text-center">
-      <p class="text-3xl mb-3">🗑️</p>
-      <h2 class="text-xl font-bold mb-2">Clear All Groceries?</h2>
-      <p class="text-gray-400 text-sm mb-6">This will delete every item from the household list. This cannot be undone.</p>
-      <div class="flex gap-3">
-        <button onclick="Hub.ui.closeModal('groceryClearModal')"
-          class="btn btn-secondary flex-1">Cancel</button>
-        <button onclick="Hub.grocery.confirmClearAllConfirmed()"
-          class="btn btn-primary flex-1" style="background:#dc2626;">Yes, Clear All</button>
-      </div>
-    </div>
-  </div>
-
   <div id="addDogModal" class="modal-overlay hidden">
     <div class="card max-w-lg w-full">
       <h2 class="text-2xl font-bold mb-4">Add Dog</h2>
@@ -948,7 +705,7 @@
     <div id="musicPage" class="page">
       <div class="max-w-4xl mx-auto p-4 md:p-6">
         <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary mb-4">← Back to Dashboard</button>
-        <h1 class="text-3xl md:text-4xl font-bold mb-6">🎵 Music</h1>
+        <h1 class="text-3xl md:text-4xl font-bold mb-6"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:18px;height:18px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z"/></svg> Music</h1>
         <div id="musicPlayerContainer"></div>
         <div id="bluetoothHelp" class="mt-6"></div>
       </div>
@@ -957,46 +714,11 @@
     <!-- ========== RADIO PAGE ========== -->
     <div id="radioPage" class="page">
       <div class="max-w-4xl mx-auto p-4 md:p-6">
-        <header class="flex items-center justify-between mb-6">
-          <h1 class="text-3xl md:text-4xl font-bold">📻 Radio</h1>
-          <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
-        </header>
-        <!-- Radio player rendered by Hub.radio._renderPage() into this container -->
-        <div id="radioPlayerArea">
-          <p class="text-gray-400 text-center py-12">Loading radio…</p>
-        </div>
+        <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary mb-4">← Back to Dashboard</button>
+        <h1 class="text-3xl md:text-4xl font-bold mb-6"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="hh-icon" style="width:18px;height:18px;vertical-align:-3px;flex-shrink:0;" aria-hidden="true"><path d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"/></svg> Radio</h1>
+        <div id="radioStationList"></div>
       </div>
     </div>
-
-    <!-- ========== GROCERY LIST ========== -->
-    <div id="groceryPage" class="page">
-      <div class="max-w-5xl mx-auto p-4 md:p-6">
-        <header class="flex items-center justify-between mb-6">
-          <h1 class="text-3xl font-bold">🛒 Grocery List</h1>
-          <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
-        </header>
-        <div id="groceryList">
-          <p class="text-gray-400 text-center py-8">Loading…</p>
-        </div>
-      </div>
-    </div>
-
-    <!-- ========== ADMIN PANEL ========== -->
-    <div id="adminPage" class="page">
-      <div class="max-w-4xl mx-auto p-4 md:p-6">
-        <header class="flex items-center justify-between mb-6">
-          <div>
-            <h1 class="text-3xl font-bold">🛠 Admin Panel</h1>
-            <p class="text-gray-400 text-sm">Live control console · Tap = immediate effect</p>
-          </div>
-          <button onclick="Hub.router.go('settings')" class="btn btn-secondary">← Settings</button>
-        </header>
-        <div id="adminPanelContent">
-          <p class="text-gray-400 text-center py-8">Loading admin panel…</p>
-        </div>
-      </div>
-    </div>
-
 
   <!-- Scripts (order matters) -->
   <script src="assets/utils.js"></script>
@@ -1009,59 +731,12 @@
   <script src="assets/treats.js"></script>
   <script src="assets/chores.js"></script>
   <script src="assets/control.js"></script>
-  <script src="assets/siteControl.js"></script>
-  <script src="assets/grocery.js"></script>
   <script src="assets/standby.js"></script>
   <script src="assets/immich.js"></script>
-  <script src="assets/googlePhotos.js"></script>
-  <script src="assets/photos.js"></script>
   <script src="assets/player.js"></script>
   <script src="assets/radio.js"></script>
   <script src="assets/music.js"></script>
+  <script src="assets/icons.js"></script>
   <script src="assets/app.js"></script>
-
-  <!-- Twemoji: replaces emoji with SVGs for Chromium/Pi kiosk. 
-       Primary CDN: unpkg (correct MIME). Fallback: local stub (no-op, native emoji). -->
-  <script>
-    (function() {
-      function loadTwemoji(cb) {
-        var s = document.createElement('script');
-        s.src = 'https://unpkg.com/twemoji@14.0.2/dist/twemoji.min.js';
-        s.crossOrigin = 'anonymous';
-        s.onload = cb;
-        s.onerror = function() {
-          // CDN failed — load local stub so twemoji is always defined
-          var s2 = document.createElement('script');
-          s2.src = '/vendor/twemoji-stub.js';
-          s2.onload = cb;
-          document.head.appendChild(s2);
-        };
-        document.head.appendChild(s);
-      }
-
-      loadTwemoji(function() {
-        var OPTS = { folder: 'svg', ext: '.svg', base: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/' };
-        function parseTargets() {
-          if (!window.twemoji || !window.twemoji.parse) return; // guard
-          document.querySelectorAll('.glass-panel h3, #dashboardPage h1, .page header h1, .card h2').forEach(function(el) {
-            try { twemoji.parse(el, OPTS); } catch(e) {}
-          });
-        }
-        setTimeout(parseTargets, 500);
-        window.addEventListener('hashchange', function() { setTimeout(parseTargets, 300); });
-      });
-    })();
-  </script>
-
-  <!-- Service Worker registration (PWA — no UI here, install UI lives in Admin Panel only) -->
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').then(reg => {
-          console.log('[SW] Registered, scope:', reg.scope);
-        }).catch(err => console.warn('[SW] Registration failed:', err));
-      });
-    }
-  </script>
 </body>
 </html>
