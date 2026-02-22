@@ -14,12 +14,6 @@
       ]
     }
   ],
-  "functions": {
-    "api/ytm/status.py": { "runtime": "python3.12" },
-    "api/ytm/search.py": { "runtime": "python3.12" },
-    "api/ytm/playlist/create.py": { "runtime": "python3.12" },
-    "api/ytm/playlist/add.py":    { "runtime": "python3.12" }
-  },
   "crons": [
     { "path": "/api/cron-chores-reset", "schedule": "0 5 * * *" }
   ]
