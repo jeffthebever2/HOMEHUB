@@ -132,15 +132,36 @@ const SUPABASE_CONFIG = {
     },
 
     async signOut() {
-      console.log('[Auth] signOut()');
-      Hub.app._loggedIn      = false;
+      console.log('[Auth] signOut() — full logout');
+      // 1) Reset app state immediately so watchdog doesn't re-login
+      Hub.app._loggedIn        = false;
       Hub.app._loginInProgress = false;
-      Hub.app._authHandled   = false;
-      Hub.state.user         = null;
-      Hub.state.household_id = null;
-      Hub.state.userRole     = null;
-      await sb.auth.signOut();
-      Hub.router.showScreen('login');
+      Hub.app._authHandled     = false;
+      Hub.state.user           = null;
+      Hub.state.household_id   = null;
+      Hub.state.userRole       = null;
+
+      // 2) Sign out globally so provider session is revoked
+      try {
+        await sb.auth.signOut({ scope: 'global' });
+      } catch (e) {
+        // Fallback if global scope not supported by this version
+        try { await sb.auth.signOut(); } catch (_) {}
+      }
+
+      // 3) Clear all Supabase-related storage so refresh does not auto-login
+      try {
+        const keysToRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && (k.startsWith('sb-') || k.startsWith('supabase'))) keysToRemove.push(k);
+        }
+        keysToRemove.forEach(k => localStorage.removeItem(k));
+        sessionStorage.clear();
+      } catch (_) {}
+
+      // 4) Reload to clean state — prevents any in-memory session re-use
+      window.location.href = window.location.origin + '/';
     },
 
     async getSession() {
@@ -399,14 +420,14 @@ const SUPABASE_CONFIG = {
       return data || [];
     },
 
-    async addGroceryItem(householdId, text) {
+    async addGroceryItem(householdId, text, requestedBy) {
       const { data, error } = await timed(
         sb.from('grocery_items').insert({
           household_id:  householdId,
           text:          text.trim(),
           done:          false,
           added_by:      Hub.state?.user?.id || null,
-          added_by_name: Hub.utils?.getUserFirstName?.() || null,
+          added_by_name: requestedBy || null,
           position:      0
         }).select().single()
       );

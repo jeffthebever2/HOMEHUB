@@ -29,6 +29,25 @@ Hub.grocery = {
     '🧈','🫙','🥫','🧻','🧽','🧴','🧹','🪣','🛒','🍷','🍺',
   ],
 
+  // Get household members from config
+  _getMembers() {
+    const m = window.HOME_HUB_CONFIG?.householdMembers;
+    if (Array.isArray(m) && m.length > 0) return m;
+    return ['Me'];
+  },
+
+  // Get/set last used requester (persisted in localStorage)
+  _getRequester() {
+    const saved = localStorage.getItem('hub_grocery_requester');
+    const members = this._getMembers();
+    if (saved && members.includes(saved)) return saved;
+    return members[0];
+  },
+
+  _setRequester(name) {
+    localStorage.setItem('hub_grocery_requester', name);
+  },
+
   init() { /* nothing — load deferred to onEnter */ },
 
   // ── Page lifecycle ────────────────────────────────────────
@@ -117,8 +136,18 @@ Hub.grocery = {
 
     var html = '';
 
-    // Input row
-    html += '<div class="flex gap-2 mb-5">' +
+    // Input row with requester dropdown
+    const members   = this._getMembers();
+    const requester = this._getRequester();
+    const memberOptions = members.map(m =>
+      `<option value="${Hub.utils.esc(m)}" ${m === requester ? 'selected' : ''}>${Hub.utils.esc(m)}</option>`
+    ).join('');
+
+    html += '<div class="flex gap-2 mb-3">' +
+      '<select id="groceryRequester" class="input" style="flex-shrink:0;width:auto;min-width:90px;font-size:.9rem;padding:.55rem .65rem;" ' +
+        'onchange="Hub.grocery._setRequester(this.value)">' +
+        memberOptions +
+      '</select>' +
       '<div class="relative flex-1">' +
         '<input id="groceryInput" type="text" placeholder="Tap to type…"' +
         ' class="input w-full pr-10" readonly onclick="Hub.grocery.openKeyboard()"' +
@@ -172,6 +201,7 @@ Hub.grocery = {
     var check   = done
       ? '<span style="color:#22c55e;font-size:1.2rem;">✓</span>'
       : '<div style="width:22px;height:22px;border:2px solid #4b5563;border-radius:4px;flex-shrink:0;"></div>';
+    // Use added_by_name for requester display — these are household member names, never Google accounts
     var who = item.added_by_name
       ? '<span class="text-xs text-gray-600 ml-1">' + Hub.utils.esc(item.added_by_name) + '</span>' : '';
     return '<div class="card flex items-center gap-3 select-none active:opacity-70"' +
@@ -193,10 +223,15 @@ Hub.grocery = {
     if (input) input.value = '';
     this._destroyKeyboard();
 
+    // Get selected requester from dropdown
+    var requesterEl = document.getElementById('groceryRequester');
+    var requester   = (requesterEl && requesterEl.value) || this._getRequester();
+    this._setRequester(requester);
+
     var householdId = Hub.state && Hub.state.household_id;
     if (this._useSupabase) {
       try {
-        var item = await Hub.db.addGroceryItem(householdId, text);
+        var item = await Hub.db.addGroceryItem(householdId, text, requester);
         this._items.unshift(item);
         this.render();
       } catch (e) {
@@ -204,7 +239,7 @@ Hub.grocery = {
         if (input) input.value = text;
       }
     } else {
-      this._items.unshift({ id: Date.now().toString(), text: text, done: false });
+      this._items.unshift({ id: Date.now().toString(), text: text, done: false, added_by_name: requester });
       this._saveLocal();
       this.render();
     }

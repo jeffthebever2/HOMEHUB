@@ -170,22 +170,18 @@ Hub.ui = {
     if (el) el.textContent = Hub.utils.formatDate(new Date());
   },
 
-  /** Update dashboard greeting with user's name */
+  /** Update dashboard greeting — shows household display name from config */
   updateDashboardGreeting() {
     const el = Hub.utils.$('dashboardGreeting');
     if (!el) return;
-    
-    const firstName = Hub.utils.getUserFirstName();
-    if (firstName) {
-      const hour = new Date().getHours();
-      let greeting = 'Good morning';
-      if (hour >= 12 && hour < 17) greeting = 'Good afternoon';
-      else if (hour >= 17) greeting = 'Good evening';
-      
-      el.textContent = `${greeting}, ${firstName}! 👋`;
-    } else {
-      el.textContent = '';
-    }
+
+    const householdName = window.HOME_HUB_CONFIG?.householdDisplayName || 'Scott family';
+    const hour = new Date().getHours();
+    let greeting = 'Good morning';
+    if (hour >= 12 && hour < 17) greeting = 'Good afternoon';
+    else if (hour >= 17) greeting = 'Good evening';
+
+    el.textContent = `${greeting}, ${householdName}!`;
   },
 
   // ── Touchscreen Mode ─────────────────────────────────────

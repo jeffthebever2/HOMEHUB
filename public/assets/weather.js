@@ -70,36 +70,60 @@ Hub.weather = {
   /** Normalize weather data */
   normalize(agg) {
     if (!agg) return null;
-    const result = { current: {}, today: {}, tomorrow: {}, forecast: [] };
+    const result = { current: {}, today: {}, tomorrow: {}, forecast: [], hourly: [] };
 
     // Open-Meteo current
     if (agg.openMeteo?.current) {
-      result.current.temp_f = Math.round(agg.openMeteo.current.temperature_2m);
-      result.current.feels_like_f = Math.round(agg.openMeteo.current.apparent_temperature || agg.openMeteo.current.temperature_2m);
-      result.current.wind_mph = Math.round(agg.openMeteo.current.windspeed_10m);
-      result.current.humidity = agg.openMeteo.current.relative_humidity_2m;
-      result.current.condition = this._getConditionFromCode(agg.openMeteo.current.weathercode);
-      result.current.icon = this._getWeatherIcon(agg.openMeteo.current.weathercode);
+      const c = agg.openMeteo.current;
+      result.current.temp_f        = Math.round(c.temperature_2m);
+      result.current.feels_like_f  = Math.round(c.apparent_temperature || c.temperature_2m);
+      result.current.wind_mph      = Math.round(c.windspeed_10m);
+      result.current.wind_gusts    = c.windgusts_10m != null ? Math.round(c.windgusts_10m) : null;
+      result.current.humidity      = c.relative_humidity_2m;
+      result.current.dew_point_f   = c.dewpoint_2m    != null ? Math.round(c.dewpoint_2m)    : null;
+      result.current.pressure_hpa  = c.surface_pressure != null ? Math.round(c.surface_pressure) : null;
+      result.current.visibility_mi = c.visibility     != null ? Math.round(c.visibility / 1609) : null;
+      result.current.condition     = this._getConditionFromCode(c.weathercode);
+      result.current.icon          = this._getWeatherIcon(c.weathercode);
     }
 
     // Open-Meteo daily
     if (agg.openMeteo?.daily) {
       const d = agg.openMeteo.daily;
-      if (d.temperature_2m_max?.[0] != null) result.today.high_f = Math.round(d.temperature_2m_max[0]);
-      if (d.temperature_2m_min?.[0] != null) result.today.low_f = Math.round(d.temperature_2m_min[0]);
+      if (d.temperature_2m_max?.[0] != null)        result.today.high_f       = Math.round(d.temperature_2m_max[0]);
+      if (d.temperature_2m_min?.[0] != null)        result.today.low_f        = Math.round(d.temperature_2m_min[0]);
       if (d.precipitation_probability_max?.[0] != null) result.today.precip_chance = d.precipitation_probability_max[0];
-      if (d.temperature_2m_max?.[1] != null) result.tomorrow.high_f = Math.round(d.temperature_2m_max[1]);
-      if (d.temperature_2m_min?.[1] != null) result.tomorrow.low_f = Math.round(d.temperature_2m_min[1]);
+      result.today.sunrise = d.sunrise?.[0] || null;
+      result.today.sunset  = d.sunset?.[0]  || null;
+
+      if (d.temperature_2m_max?.[1] != null) result.tomorrow.high_f       = Math.round(d.temperature_2m_max[1]);
+      if (d.temperature_2m_min?.[1] != null) result.tomorrow.low_f        = Math.round(d.temperature_2m_min[1]);
       if (d.precipitation_probability_max?.[1] != null) result.tomorrow.precip_chance = d.precipitation_probability_max[1];
-      
+
       // 7-day forecast
       for (let i = 0; i < 7 && i < d.time.length; i++) {
         result.forecast.push({
-          date: d.time[i],
+          date:   d.time[i],
           high_f: Math.round(d.temperature_2m_max[i]),
-          low_f: Math.round(d.temperature_2m_min[i]),
+          low_f:  Math.round(d.temperature_2m_min[i]),
           precip: d.precipitation_probability_max?.[i] || 0,
-          icon: this._getWeatherIcon(d.weathercode?.[i] || 0)
+          icon:   this._getWeatherIcon(d.weathercode?.[i] || 0)
+        });
+      }
+    }
+
+    // Open-Meteo hourly — next 6 hours from now
+    if (agg.openMeteo?.hourly) {
+      const h = agg.openMeteo.hourly;
+      const nowIso = new Date().toISOString().slice(0, 13); // "2025-12-31T14"
+      const nowIdx = (h.time || []).findIndex(t => t >= nowIso);
+      const start  = nowIdx >= 0 ? nowIdx : 0;
+      for (let i = start; i < start + 6 && i < h.time.length; i++) {
+        result.hourly.push({
+          time:   h.time[i],
+          temp_f: h.temperature_2m?.[i]             != null ? Math.round(h.temperature_2m[i]) : null,
+          precip: h.precipitation_probability?.[i]  != null ? h.precipitation_probability[i]  : 0,
+          icon:   this._getWeatherIcon(h.weathercode?.[i] || 0)
         });
       }
     }
@@ -144,48 +168,93 @@ Hub.weather = {
     return '🌤️';
   },
 
-  /** Render dashboard weather widget */
+  /** Render dashboard weather widget — fills card with glanceable data */
   async renderDashboard() {
     const el = Hub.utils.$('dashboardWeather');
     if (!el) return;
     el.innerHTML = '<p class="text-gray-400 text-sm">Loading...</p>';
 
-    const aggregate = await this.fetchAggregate();
+    const aggregate  = await this.fetchAggregate();
     const normalized = this.normalize(aggregate);
 
-    if (normalized?.current) {
-      el.innerHTML = `
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-4">
-            <div class="text-6xl">${normalized.current.icon}</div>
-            <div>
-              <p class="text-4xl font-bold">${normalized.current.temp_f}°F</p>
-              <p class="text-gray-400">${Hub.utils.esc(normalized.current.condition)}</p>
-            </div>
-          </div>
-          <div class="text-right text-sm text-gray-400">
-            <p>Feels like ${normalized.current.feels_like_f}°F</p>
-            <p>💨 ${normalized.current.wind_mph} mph</p>
-            <p>💧 ${normalized.current.humidity}%</p>
-          </div>
-        </div>
-        <div class="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-gray-700">
-          <div>
-            <p class="text-gray-400 text-sm">Today</p>
-            <p class="text-xl font-bold">${normalized.today?.high_f ?? '--'}° / ${normalized.today?.low_f ?? '--'}°</p>
-            <p class="text-sm text-gray-400">💧 ${normalized.today?.precip_chance ?? 0}% rain</p>
-          </div>
-          <div>
-            <p class="text-gray-400 text-sm">Tomorrow</p>
-            <p class="text-xl font-bold">${normalized.tomorrow?.high_f ?? '--'}° / ${normalized.tomorrow?.low_f ?? '--'}°</p>
-            <p class="text-sm text-gray-400">💧 ${normalized.tomorrow?.precip_chance ?? 0}% rain</p>
-          </div>
-        </div>
-      `;
+    if (!normalized?.current) {
+      el.innerHTML = '<p class="text-yellow-400">Unable to load weather. Check settings or API keys.</p>';
       return;
     }
 
-    el.innerHTML = '<p class="text-yellow-400">Unable to load weather. Check settings or API keys.</p>';
+    const c = normalized.current;
+    const t = normalized.today;
+
+    // Format sunrise/sunset
+    const fmtTime = iso => {
+      if (!iso) return '--';
+      try { return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }); }
+      catch { return '--'; }
+    };
+
+    // Next 6 hours strip
+    const hourlyHtml = normalized.hourly.length > 0 ? `
+      <div style="display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-top:4px;">
+        ${normalized.hourly.map(h => {
+          const hr = new Date(h.time).toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+          return `<div style="text-align:center;flex-shrink:0;min-width:44px;">
+            <div style="font-size:.65rem;color:#9ca3af;">${hr}</div>
+            <div style="font-size:1rem;">${h.icon}</div>
+            <div style="font-size:.7rem;font-weight:600;">${h.temp_f != null ? h.temp_f + '°' : '--'}</div>
+            <div style="font-size:.6rem;color:#60a5fa;">${h.precip || 0}%</div>
+          </div>`;
+        }).join('')}
+      </div>` : '';
+
+    const lastUpdated = aggregate?.fetchedAt
+      ? new Date(aggregate.fetchedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+      : null;
+
+    el.innerHTML = `
+      <!-- Row 1: temp + conditions -->
+      <div class="flex items-start justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <div style="font-size:3.5rem;line-height:1;">${c.icon}</div>
+          <div>
+            <p style="font-size:2.2rem;font-weight:700;line-height:1;">${c.temp_f}°F</p>
+            <p style="color:#9ca3af;font-size:.85rem;">${Hub.utils.esc(c.condition)}</p>
+            ${c.description ? `<p style="color:#6b7280;font-size:.75rem;">${Hub.utils.esc(c.description)}</p>` : ''}
+          </div>
+        </div>
+        <div style="text-align:right;font-size:.78rem;color:#9ca3af;flex-shrink:0;">
+          <p>Feels ${c.feels_like_f}°F</p>
+          <p>💧 ${c.humidity}%${c.dew_point_f != null ? ' · Dew ' + c.dew_point_f + '°' : ''}</p>
+          <p>💨 ${c.wind_mph} mph${c.wind_gusts != null ? ' · gusts ' + c.wind_gusts : ''}</p>
+          ${c.pressure_hpa   != null ? `<p>⬇ ${c.pressure_hpa} hPa</p>` : ''}
+          ${c.visibility_mi  != null ? `<p>👁 ${c.visibility_mi} mi vis</p>` : ''}
+        </div>
+      </div>
+
+      <!-- Row 2: today / tomorrow -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-top:.85rem;padding-top:.75rem;border-top:1px solid rgba(255,255,255,.07);">
+        <div>
+          <p style="color:#9ca3af;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;">Today</p>
+          <p style="font-size:1.1rem;font-weight:700;">${t.high_f ?? '--'}° / ${t.low_f ?? '--'}°</p>
+          <p style="font-size:.75rem;color:#60a5fa;">💧 ${t.precip_chance ?? 0}%</p>
+          ${t.sunrise ? `<p style="font-size:.72rem;color:#f59e0b;">🌅 ${fmtTime(t.sunrise)}</p>` : ''}
+          ${t.sunset  ? `<p style="font-size:.72rem;color:#f97316;">🌇 ${fmtTime(t.sunset)}</p>`  : ''}
+        </div>
+        <div>
+          <p style="color:#9ca3af;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;">Tomorrow</p>
+          <p style="font-size:1.1rem;font-weight:700;">${normalized.tomorrow?.high_f ?? '--'}° / ${normalized.tomorrow?.low_f ?? '--'}°</p>
+          <p style="font-size:.75rem;color:#60a5fa;">💧 ${normalized.tomorrow?.precip_chance ?? 0}%</p>
+        </div>
+      </div>
+
+      <!-- Row 3: next 6 hours -->
+      ${hourlyHtml ? `
+      <div style="margin-top:.75rem;padding-top:.6rem;border-top:1px solid rgba(255,255,255,.07);">
+        <p style="font-size:.68rem;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">Next 6 Hours</p>
+        ${hourlyHtml}
+      </div>` : ''}
+
+      ${lastUpdated ? `<p style="font-size:.65rem;color:#4b5563;margin-top:.5rem;text-align:right;">Updated ${lastUpdated}</p>` : ''}
+    `;
   },
 
   /** Render full weather page */

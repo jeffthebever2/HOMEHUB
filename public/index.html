@@ -82,9 +82,6 @@
     .alert-banner.warning, .alert-banner.extreme, .alert-banner.severe { background: #ef4444; color: #fff; }
     .alert-banner.watch,   .alert-banner.moderate { background: #f59e0b; color: #000; }
     .alert-banner.advisory,.alert-banner.minor    { background: #eab308; color: #000; }
-    /* Twemoji <img class="emoji"> sizing — must match current font size */
-    img.emoji { width: 1em; height: 1em; max-width: 1em; max-height: 1em;
-                vertical-align: -0.15em; display: inline-block; line-height: 1; }
     /* Ticker track — clips content and scrolls */
     .alert-banner__track { flex: 1; overflow: hidden; white-space: nowrap; }
     @keyframes alertTicker { from { transform: translateX(0); } to { transform: translateX(-50%); } }
@@ -331,10 +328,6 @@
             <button onclick="Hub.router.go('settings')" class="btn btn-secondary text-sm py-2 px-4">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
               Settings
-            </button>
-            <button onclick="Hub.router.go('music')" class="btn btn-secondary text-sm py-2 px-4">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-              Music
             </button>
             <button onclick="Hub.router.go('radio')" class="btn btn-secondary text-sm py-2 px-4">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 17l9-9 9 9"/><rect x="5" y="17" width="14" height="4" rx="1"/></svg>
@@ -1020,38 +1013,7 @@
   <script src="assets/music.js"></script>
   <script src="assets/app.js"></script>
 
-  <!-- Twemoji: replaces emoji with SVGs for Chromium/Pi kiosk. 
-       Primary CDN: unpkg (correct MIME). Fallback: local stub (no-op, native emoji). -->
-  <script>
-    (function() {
-      function loadTwemoji(cb) {
-        var s = document.createElement('script');
-        s.src = 'https://unpkg.com/twemoji@14.0.2/dist/twemoji.min.js';
-        s.crossOrigin = 'anonymous';
-        s.onload = cb;
-        s.onerror = function() {
-          // CDN failed — load local stub so twemoji is always defined
-          var s2 = document.createElement('script');
-          s2.src = '/vendor/twemoji-stub.js';
-          s2.onload = cb;
-          document.head.appendChild(s2);
-        };
-        document.head.appendChild(s);
-      }
-
-      loadTwemoji(function() {
-        var OPTS = { folder: 'svg', ext: '.svg', base: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/' };
-        function parseTargets() {
-          if (!window.twemoji || !window.twemoji.parse) return; // guard
-          document.querySelectorAll('.glass-panel h3, #dashboardPage h1, .page header h1, .card h2').forEach(function(el) {
-            try { twemoji.parse(el, OPTS); } catch(e) {}
-          });
-        }
-        setTimeout(parseTargets, 500);
-        window.addEventListener('hashchange', function() { setTimeout(parseTargets, 300); });
-      });
-    })();
-  </script>
+  <!-- Native emoji rendering — twemoji removed (Pi Chromium handles native emoji fine) -->
 
   <!-- Service Worker registration (PWA — no UI here, install UI lives in Admin Panel only) -->
   <script>

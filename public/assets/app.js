@@ -1,17 +1,15 @@
 // ============================================================
-// assets/app.js — Main application init & orchestration (v5)
+// assets/app.js — Main application init & orchestration (v6)
 //
-// v5 changes:
-//  - Immediate session check at boot (no waiting 3s for existing sessions)
-//  - OAuth code= in URL → never show login from fallback timers
-//  - _callChoreResetEndpoint → calls secure /api/chores-reset-my-household
-//  - Admin FAB NOT shown globally; only Settings page has admin button
-//  - Photo provider settings saved/loaded
+// v6 fixes:
+//  - SIGNED_IN now handled (was silently ignored — auth race root cause)
+//  - signOut does full logout: global scope + storage clear + reload
+//  - Dashboard greeting shows householdDisplayName from config
+//  - URL ?code= cleaned up after OAuth
 // ============================================================
 window.Hub = window.Hub || {};
 
 // PWA install event — captured globally, UI lives ONLY in Admin Panel
-window.Hub = window.Hub || {};
 Hub.pwa = { bipEvent: null, installed: false };
 
 window.addEventListener('beforeinstallprompt', (e) => {
@@ -19,7 +17,6 @@ window.addEventListener('beforeinstallprompt', (e) => {
   Hub.pwa.bipEvent = e;
   console.log('[PWA] beforeinstallprompt captured');
   window.dispatchEvent(new Event('homehub:pwa-available'));
-  // If admin panel is currently open, re-render the install card
   if (Hub.router?.current === 'admin') {
     Hub.control?.load?.();
   }
@@ -34,7 +31,7 @@ window.addEventListener('appinstalled', () => {
 });
 
 const APP_CONFIG = {
-  VERSION: '2.0.5',
+  VERSION: '2.0.6',
   SECRET_CLICK_COUNT: 7,
   SECRET_KEY_TIMEOUT_MS: 1500,
   IDLE_DEBOUNCE_MS: 100
@@ -49,7 +46,7 @@ Hub.state = {
 
 Hub.app = {
   _idleTimer: null,
-  _idleListenersBound: false,   // prevents stacking listeners on re-login
+  _idleListenersBound: false,
   _loggedIn: false,
   _authHandled: false,
   _loginInProgress: false,
@@ -92,7 +89,6 @@ Hub.app = {
     }
 
     // ── STEP 1: If OAuth code= is in URL, show "Finishing sign-in…"
-    //    and wait longer — do NOT flash login from fallback timers.
     const oauthInProgress = window.location.search.includes('code=')
                          || window.location.hash.includes('access_token');
     if (oauthInProgress) {
@@ -101,25 +97,27 @@ Hub.app = {
       console.log('[Auth] OAuth exchange in progress — suppressing fast fallbacks');
     }
 
-    // ── STEP 2: Immediately try existing session BEFORE any timers.
-    //    This is the primary path for page refreshes + kiosk use.
+    // ── STEP 2: Immediately try existing session (fast path for page refresh / kiosk)
     if (!oauthInProgress) {
       try {
         const existingSession = await Hub.auth.getSession();
         if (existingSession?.user) {
           console.log('[Auth] ✓ Immediate session found:', existingSession.user.email);
           await this._onLogin(existingSession.user);
-          return; // done — skip all listener + timer setup
+          return;
         }
       } catch (e) {
         console.warn('[Auth] Immediate session check error:', e.message);
       }
     }
 
-    // ── STEP 3: Auth state change listener (primary for OAuth return)
+    // ── STEP 3: Auth state change listener
+    // CRITICAL FIX: SIGNED_IN must be handled — it fires after OAuth redirect.
+    // Previous code was ignoring it, causing the login screen to stick.
     Hub.auth.onAuthChange(async (event, session) => {
       console.log('[Auth] Event:', event, session?.user?.email || 'none', 'loggedIn:', this._loggedIn);
 
+      // If already logged in and NOT signing out, just ensure login screen is hidden
       if (this._loggedIn && event !== 'SIGNED_OUT') {
         const loginScreen = document.getElementById('loginScreen');
         if (loginScreen?.classList.contains('active')) {
@@ -142,18 +140,14 @@ Hub.app = {
         return;
       }
 
-      if (event === 'SIGNED_IN') {
-        console.log('[Auth] Ignoring SIGNED_IN (waiting for INITIAL_SESSION)');
-        return;
-      }
-
       if (event === 'TOKEN_REFRESH_FAILED') {
         console.warn('[Auth] TOKEN_REFRESH_FAILED — keeping session, will retry');
         try { Hub.ui.toast('Session refresh failed (network?). Keeping you signed in…', 'error'); } catch {}
         return;
       }
 
-      if ((event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') && session?.user) {
+      // Handle SIGNED_IN (OAuth redirect), INITIAL_SESSION, and TOKEN_REFRESHED identically
+      if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') && session?.user) {
         if (this._loggedIn) return;
         this._authHandled = true;
         await this._onLogin(session.user);
@@ -194,7 +188,7 @@ Hub.app = {
         }
       }, 10000);
     } else {
-      // OAuth in progress: 30s safety net only (enough for slow connections)
+      // OAuth in progress: 30s safety net only
       setTimeout(() => {
         if (this._loggedIn) return;
         const el = document.getElementById('loadingScreen');
@@ -259,6 +253,7 @@ Hub.app = {
       p.style.display = 'none';
     });
 
+    // Clean OAuth code from URL — must happen before routing
     if (window.location.search.includes('code=')) {
       const cleanUrl = window.location.origin + window.location.pathname + window.location.hash;
       window.history.replaceState({}, document.title, cleanUrl);
@@ -284,7 +279,6 @@ Hub.app = {
     setTimeout(() => this._callChoreResetEndpoint().catch(() => {}), 2000);
   },
 
-  /** Called by router BEFORE switching away from a page */
   onPageLeave(page) {
     switch (page) {
       case 'admin':   Hub.control?.onLeave?.();        break;
@@ -302,7 +296,6 @@ Hub.app = {
     this._resetIdleTimer();
     if (page !== 'weather' && Hub.weather) Hub.weather.stopRadarAnimation?.();
 
-    // ── Admin gate ─────────────────────────────────────────
     if (page === 'admin' && Hub.state.userRole !== 'admin') {
       Hub.ui?.toast?.('Admin access only', 'error');
       Hub.router.go('settings');
@@ -343,17 +336,13 @@ Hub.app = {
   async _loadDashboardWeather() {
     try {
       await Hub.weather.renderDashboard();
-      // fetchAlerts() already filters out expired alerts client-side
       const alerts = await Hub.weather.fetchAlerts();
       if (alerts.length > 0) {
-        // Build threat list from real NWS event names
         const threats = alerts.map(a => a.event || a.headline).filter(Boolean);
-        // Worst severity wins banner colour
         const sevOrder = { extreme: 0, severe: 1, moderate: 2, minor: 3 };
         const sorted   = [...alerts].sort((a, b) =>
           (sevOrder[(a.severity||'').toLowerCase()] ?? 4) - (sevOrder[(b.severity||'').toLowerCase()] ?? 4));
         Hub.ui.showBanner(threats, sorted[0].severity);
-        // Show popup for highest-severity unacknowledged alert
         Hub.ui.showAlertPopup(alerts).catch(() => {});
       } else {
         Hub.ui.hideBanner();
@@ -403,7 +392,6 @@ Hub.app = {
     Hub.utils.$('settingQuietStart').value    = s.quiet_hours_start || '22:00';
     Hub.utils.$('settingQuietEnd').value      = s.quiet_hours_end   || '07:00';
 
-    // Photo provider settings
     const photoProviderEl = document.getElementById('settingPhotoProvider');
     if (photoProviderEl) {
       const provider = s.photo_provider || localStorage.getItem('photo_provider') || 'imgur';
@@ -425,7 +413,6 @@ Hub.app = {
 
     this._loadCalendarSelection();
 
-    // Gate admin button by role
     const adminBtnEl = document.getElementById('settingsAdminBtn');
     if (adminBtnEl) {
       if (Hub.state.userRole === 'admin') {
@@ -468,7 +455,6 @@ Hub.app = {
       albumSel.innerHTML = '<option value="">— Select album —</option>'
         + albums.map(a => `<option value="${Hub.utils.esc(a.id)}" data-title="${Hub.utils.esc(a.title)}">${Hub.utils.esc(a.title)} (${a.mediaItemsCount || '?'} items)</option>`).join('');
 
-      // Restore saved selection
       const saved = albumId?.value;
       if (saved) albumSel.value = saved;
 
@@ -532,7 +518,6 @@ Hub.app = {
     const selectedCalendars = [];
     document.querySelectorAll('.calendar-checkbox:checked').forEach(cb => selectedCalendars.push(cb.dataset.calendarId));
 
-    // Photo provider
     const photoProvider     = document.getElementById('settingPhotoProvider')?.value || 'imgur';
     const imgurAlbumId      = document.getElementById('settingImgurAlbum')?.value.trim()    || '';
     const gpAlbumId         = document.getElementById('settingGooglePhotosAlbumId')?.value.trim()    || '';
@@ -555,7 +540,6 @@ Hub.app = {
       imgur_album_id:             imgurAlbumId
     };
 
-    // Always save photo settings to localStorage too (works without DB columns)
     localStorage.setItem('photo_provider',               photoProvider);
     localStorage.setItem('google_photos_album_id',       gpAlbumId);
     localStorage.setItem('google_photos_album_title',    gpAlbumTitle);
@@ -668,7 +652,6 @@ Hub.app = {
   },
 
   _startIdleTimer() {
-    // Only bind activity listeners once — prevents stacking on re-login
     if (!this._idleListenersBound) {
       this._idleListenersBound = true;
       const debouncedReset = this._debounce(() => this._resetIdleTimer(), APP_CONFIG.IDLE_DEBOUNCE_MS);
@@ -681,7 +664,6 @@ Hub.app = {
 
   _resetIdleTimer() {
     if (this._idleTimer) clearTimeout(this._idleTimer);
-    // Don't schedule a new fire if we're already in standby — nothing to do
     if (Hub.router?.current === 'standby') return;
     if (!Hub.state?.user) return;
     const timeout = ((Hub.state.settings?.standby_timeout_min) || 10) * 60 * 1000;
@@ -690,7 +672,6 @@ Hub.app = {
     }, timeout);
   },
 
-  /** Secure per-household chore reset (called on login, not public cron) */
   async _callChoreResetEndpoint() {
     if (!Hub.state.household_id) return;
 
@@ -713,15 +694,12 @@ Hub.app = {
         let errBody = '';
         try { errBody = JSON.stringify(await resp.json()); } catch (_) { errBody = await resp.text().catch(() => ''); }
         console.error('[App] Chore reset HTTP error:', resp.status, errBody);
-        // Non-blocking toast so user knows something went wrong without interrupting flow
-        Hub.ui?.toast?.(`Chore reset error (${resp.status}) — chores may not have reset`, 'error');
         return;
       }
 
       const result = await resp.json();
       if (result.error) {
         console.error('[App] Chore reset returned error:', result.error, result.detail || '');
-        Hub.ui?.toast?.('Chore reset failed: ' + result.error, 'error');
         return;
       }
 
@@ -735,10 +713,6 @@ Hub.app = {
     }
   },
 
-  /**
-   * Manual chore reset — bypasses "already reset today" guard.
-   * Called by "🔄 Reset Today" button on the Chores page.
-   */
   async _forceResetChores() {
     const btn = Hub.utils.$('btnManualResetChores');
     if (btn) { btn.disabled = true; btn.textContent = 'Resetting…'; }
@@ -763,7 +737,6 @@ Hub.app = {
         return;
       }
 
-      console.log('[App] Force reset result:', result);
       Hub.ui?.toast?.(result.didReset ? '✅ Chores reset!' : (result.reason === 'already_reset_today' ? 'Already reset today — use force' : '✅ Done'), 'success');
       Hub.chores?.load?.();
     } catch (e) {
@@ -775,9 +748,6 @@ Hub.app = {
   },
 
   _initAdminGesture() {
-    // FAB is display:none by default — do NOT show it globally.
-    // Settings page has the admin button. Three-finger tap stays but
-    // only routes to settings (where admin button is visible).
     let tapCount = 0, tapTimer = null;
     document.addEventListener('touchstart', (e) => {
       if (e.touches.length === 3) {
@@ -786,7 +756,6 @@ Hub.app = {
         tapTimer = setTimeout(() => { tapCount = 0; }, 600);
         if (tapCount >= 1) {
           tapCount = 0;
-          // Route to settings where admin button lives
           Hub.router.go('settings');
           Hub.ui?.toast?.('Settings opened — tap Admin Panel to enter', 'info');
         }

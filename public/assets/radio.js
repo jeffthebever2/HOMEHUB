@@ -24,18 +24,36 @@ Hub.radio = {
     console.log('[Radio] Init');
   },
 
-  // ── Stations in localStorage ──────────────────────────────
+  // ── Stations ──────────────────────────────────────────────
 
-  _getStations() {
-    try {
-      const raw = localStorage.getItem('hub_radio_stations');
-      if (raw) return JSON.parse(raw);
-    } catch (_) {}
-    return this._DEFAULT_STATIONS.map(s => ({ ...s }));
+  _getConfigStations() {
+    const cfgStations = window.HOME_HUB_CONFIG?.radio?.stations;
+    if (Array.isArray(cfgStations) && cfgStations.length > 0) {
+      // Map config format { name, streamUrl, logo } → internal { name, url, logo }
+      return cfgStations.map(s => ({ name: s.name, url: s.streamUrl || s.url, logo: s.logo || '📻' }));
+    }
+    return null;
   },
 
-  _saveStations(stations) {
-    localStorage.setItem('hub_radio_stations', JSON.stringify(stations));
+  _getStations() {
+    // Always prefer config.js stations — localStorage overrides only if user customised
+    const saved = (() => {
+      try {
+        const raw = localStorage.getItem('hub_radio_stations');
+        if (raw) return JSON.parse(raw);
+      } catch (_) {}
+      return null;
+    })();
+
+    // If saved stations exist AND there are more than just the defaults we wrote, use them
+    // Otherwise fall back to config so config is authoritative
+    const cfgStations = this._getConfigStations();
+    if (!saved) return cfgStations || this._DEFAULT_STATIONS.map(s => ({ ...s }));
+
+    // If the saved list is the same length as config, it may just be a stale copy —
+    // return config to pick up any additions/removals.
+    if (cfgStations) return cfgStations;
+    return saved;
   },
 
   // ── Page enter / leave ────────────────────────────────────
@@ -164,27 +182,58 @@ Hub.radio = {
     this._audio   = new Audio(station.url);
     this._audio.volume = parseFloat(document.getElementById('radioVolume')?.value || 0.8);
     this._audio.preload = 'none';
+    this._stallRetries = 0;
 
-    this._audio.addEventListener('playing', () => {
+    const audio = this._audio;
+
+    audio.addEventListener('playing', () => {
+      this._stallRetries = 0;
       this._setStatus('Playing', 'text-green-400');
       const stopBtn = document.getElementById('radioStopBtn');
       if (stopBtn) stopBtn.style.display = '';
       this._setVizActive(true);
     });
-    this._audio.addEventListener('waiting',  () => this._setStatus('Buffering…', 'text-yellow-400'));
-    this._audio.addEventListener('stalled',  () => this._setStatus('Stalled…',   'text-yellow-400'));
-    this._audio.addEventListener('error',    () => {
-      this._setStatus('Error — check stream URL', 'text-red-400');
+
+    audio.addEventListener('waiting',  () => this._setStatus('Buffering…', 'text-yellow-400'));
+
+    const handleStall = () => {
+      if (this._audio !== audio) return; // stale reference
+      if (this._stallRetries < 3) {
+        this._stallRetries++;
+        this._setStatus(`Reconnecting… (${this._stallRetries}/3)`, 'text-yellow-400');
+        setTimeout(() => {
+          if (this._audio !== audio) return;
+          audio.load();
+          audio.play().catch(() => {});
+        }, 2000 * this._stallRetries);
+      } else {
+        this._setStatus('Stream unavailable — try another station', 'text-red-400');
+        this._setVizActive(false);
+        Hub.ui?.toast?.(`Stream unavailable: ${station.name}`, 'error');
+      }
+    };
+
+    audio.addEventListener('stalled', handleStall);
+    audio.addEventListener('error',   () => {
+      if (this._audio !== audio) return;
+      this._setStatus('Error — stream unavailable', 'text-red-400');
       this._setVizActive(false);
       Hub.ui?.toast?.(`Cannot play: ${station.name}`, 'error');
     });
-    this._audio.addEventListener('ended', () => {
+    audio.addEventListener('ended', () => {
       this._setStatus('Ended', 'text-gray-400');
       this._setVizActive(false);
     });
 
-    this._audio.play().catch(e => {
-      this._setStatus(`Playback blocked: ${e.message}`, 'text-red-400');
+    audio.play().catch(e => {
+      if (e.name === 'NotAllowedError') {
+        // Autoplay blocked — show tap-to-play prompt
+        this._setStatus('Tap Play to start (autoplay blocked)', 'text-yellow-400');
+        const stopBtn = document.getElementById('radioStopBtn');
+        if (stopBtn) { stopBtn.style.display = ''; stopBtn.textContent = '▶ Play'; stopBtn.onclick = () => { audio.play().catch(() => {}); stopBtn.textContent = '⏹ Stop'; stopBtn.onclick = () => Hub.radio._stop(); }; }
+      } else {
+        this._setStatus(`Error: ${e.message}`, 'text-red-400');
+      }
     });
 
     this._setStatus('Connecting…', 'text-yellow-400');
