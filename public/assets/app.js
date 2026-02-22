@@ -51,6 +51,8 @@ Hub.app = {
   _authHandled: false,
   _loginInProgress: false,
   _lastPage: null,
+  _authState: 'loading',
+  _oauthSafetyTimer: null,
 
   async init() {
     console.log('[App] init() v' + APP_CONFIG.VERSION);
@@ -64,6 +66,7 @@ Hub.app = {
     Hub.grocery?.init?.();
     Hub.ui?.loadTouchscreenMode?.();
     this._initAdminGesture();
+    this._setAuthState('loading', 'boot');
 
     // ── DEV BYPASS ─────────────────────────────────────────
     if (window.location.hash === '#letmein') {
@@ -97,106 +100,71 @@ Hub.app = {
       console.log('[Auth] OAuth exchange in progress — suppressing fast fallbacks');
     }
 
-    // ── STEP 2: Immediately try existing session (fast path for page refresh / kiosk)
-    if (!oauthInProgress) {
-      try {
-        const existingSession = await Hub.auth.getSession();
-        if (existingSession?.user) {
-          console.log('[Auth] ✓ Immediate session found:', existingSession.user.email);
-          await this._onLogin(existingSession.user);
-          return;
-        }
-      } catch (e) {
-        console.warn('[Auth] Immediate session check error:', e.message);
-      }
-    }
-
-    // ── STEP 3: Auth state change listener
-    // CRITICAL FIX: SIGNED_IN must be handled — it fires after OAuth redirect.
-    // Previous code was ignoring it, causing the login screen to stick.
+    // ── STEP 2: Always register auth listener first to avoid missed events
     Hub.auth.onAuthChange(async (event, session) => {
-      console.log('[Auth] Event:', event, session?.user?.email || 'none', 'loggedIn:', this._loggedIn);
-
-      // If already logged in and NOT signing out, just ensure login screen is hidden
-      if (this._loggedIn && event !== 'SIGNED_OUT') {
-        const loginScreen = document.getElementById('loginScreen');
-        if (loginScreen?.classList.contains('active')) {
-          loginScreen.classList.remove('active');
-        }
-        return;
-      }
+      Hub.utils?.debug?.('auth', 'onAuthChange', { event: event, hasSession: !!session, userEmail: session?.user?.email || null, state: this._authState });
 
       if (event === 'SIGNED_OUT') {
         if (this._loginInProgress) return;
         try {
           const s = await Hub.auth.getSession();
-          if (s?.user) return; // still have session — ignore
+          if (s?.user) return;
         } catch (e) {}
-        this._loggedIn        = false;
-        this._authHandled     = true;
+
+        this._loggedIn = false;
+        this._authHandled = true;
         this._loginInProgress = false;
-        Hub.state.user        = null;
-        Hub.router.showScreen('login');
+        Hub.state.user = null;
+        this._setAuthState('unauthed', 'SIGNED_OUT');
         return;
       }
 
       if (event === 'TOKEN_REFRESH_FAILED') {
         console.warn('[Auth] TOKEN_REFRESH_FAILED — keeping session, will retry');
-        try { Hub.ui.toast('Session refresh failed (network?). Keeping you signed in…', 'error'); } catch {}
         return;
       }
 
-      // Handle SIGNED_IN (OAuth redirect), INITIAL_SESSION, and TOKEN_REFRESHED identically
       if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') && session?.user) {
-        if (this._loggedIn) return;
         this._authHandled = true;
+        this._setAuthState('loading', event);
         await this._onLogin(session.user);
         return;
       }
 
       if (event === 'INITIAL_SESSION' && !session) {
         this._authHandled = true;
-        Hub.router.showScreen('login');
+        this._loggedIn = false;
+        this._setAuthState('unauthed', 'INITIAL_SESSION_NONE');
       }
     });
 
-    // ── STEP 4: Fallback timers — ONLY if not in OAuth flow
-    if (!oauthInProgress) {
-      // 4s fallback: try getSession one more time
-      setTimeout(async () => {
-        if (this._loggedIn || this._authHandled || this._loginInProgress) return;
-        console.log('[Auth] 4s fallback — getSession()');
-        try {
-          const session = await Hub.auth.getSession();
-          if (session?.user && !this._loggedIn) {
-            await this._onLogin(session.user);
-          } else if (!this._loggedIn) {
-            Hub.router.showScreen('login');
-          }
-        } catch (e) {
-          if (!this._loggedIn) Hub.router.showScreen('login');
-        }
-      }, 4000);
+    // ── STEP 3: Immediately check for existing session (refresh/kiosk fast path)
+    try {
+      const existingSession = await Hub.auth.getSession();
+      Hub.utils?.debug?.('auth', 'initial getSession', { hasSession: !!existingSession, email: existingSession?.user?.email || null });
+      if (existingSession?.user) {
+        this._authHandled = true;
+        this._setAuthState('loading', 'existing-session');
+        await this._onLogin(existingSession.user);
+      } else if (!oauthInProgress) {
+        this._setAuthState('unauthed', 'no-existing-session');
+      }
+    } catch (e) {
+      console.warn('[Auth] Immediate session check error:', e.message);
+      if (!oauthInProgress) this._setAuthState('unauthed', 'session-check-error');
+    }
 
-      // 10s absolute safety net
-      setTimeout(() => {
-        if (this._loggedIn || this._authHandled || this._loginInProgress) return;
-        const el = document.getElementById('loadingScreen');
-        if (el && el.style.display !== 'none') {
-          console.warn('[Auth] 10s HARD fallback → login');
-          Hub.router.showScreen('login');
-        }
-      }, 10000);
-    } else {
-      // OAuth in progress: 30s safety net only
-      setTimeout(() => {
-        if (this._loggedIn) return;
-        const el = document.getElementById('loadingScreen');
-        if (el && el.style.display !== 'none') {
-          console.warn('[Auth] 30s OAuth safety net → login');
-          Hub.router.showScreen('login');
-        }
-      }, 30000);
+    // ── STEP 4: OAuth-only safety net
+    if (oauthInProgress) {
+      this._oauthSafetyTimer && clearTimeout(this._oauthSafetyTimer);
+      this._oauthSafetyTimer = setTimeout(async () => {
+        if (this._loggedIn || this._loginInProgress) return;
+        try {
+          const s = await Hub.auth.getSession();
+          if (s?.user) return;
+        } catch (e) {}
+        this._setAuthState('unauthed', 'oauth-timeout');
+      }, 90000);
     }
 
     this._startIdleTimer();
@@ -234,15 +202,48 @@ Hub.app = {
         Hub.state.settings = {};
       }
 
+      this._oauthSafetyTimer && clearTimeout(this._oauthSafetyTimer);
+      this._oauthSafetyTimer = null;
+      this._setAuthState('authed', 'login-success');
       this._showApp();
     } catch (e) {
       console.error('[Auth] _onLogin error:', e);
       this._loggedIn = false;
-      Hub.router.showScreen('login');
+      this._oauthSafetyTimer && clearTimeout(this._oauthSafetyTimer);
+      this._oauthSafetyTimer = null;
+      this._setAuthState('unauthed', 'login-error');
     } finally {
       this._loginInProgress = false;
     }
   },
+
+  _setAuthState(nextState, reason = '') {
+    if (this._authState === nextState) return;
+    this._authState = nextState;
+    Hub.utils?.debug?.('auth', 'state change', { state: nextState, reason: reason });
+
+    const loading = document.getElementById('loadingScreen');
+    const login = document.getElementById('loginScreen');
+    const loadingMsg = document.getElementById('loadingMessage');
+
+    if (nextState === 'loading') {
+      if (loadingMsg) loadingMsg.textContent = 'Checking login…';
+      if (loading) loading.style.display = 'flex';
+      if (login) { login.classList.remove('active'); login.style.display = 'none'; }
+      return;
+    }
+
+    if (nextState === 'unauthed') {
+      if (loading) loading.style.display = 'none';
+      Hub.router.showScreen('login');
+      return;
+    }
+
+    // authed
+    if (loading) loading.style.display = 'none';
+    if (login) { login.classList.remove('active'); login.style.display = 'none'; }
+  },
+
 
   _showApp() {
     const loadingScreen = document.getElementById('loadingScreen');

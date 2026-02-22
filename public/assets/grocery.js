@@ -18,6 +18,7 @@ Hub.grocery = {
   _items:        [],
   _subscription: null,
   _loading:      false,
+  _adding:       false,
   _kb:           null,   // single keyboard instance object
 
   _CHIPS: ['Milk','Eggs','Bread','Butter','Cheese','Chicken',
@@ -154,7 +155,8 @@ Hub.grocery = {
         ' style="cursor:pointer;font-size:1rem;padding:.75rem 1rem;">' +
         '<span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" style="font-size:1.1rem;">&#9000;</span>' +
       '</div>' +
-      '<button onclick="Hub.grocery.addFromInput()" class="btn btn-primary px-6 text-base font-bold" style="min-width:80px;">+ Add</button>' +
+      '<button id="groceryAddBtn" onclick="Hub.grocery.addFromInput()" class="btn btn-primary px-6 text-base font-bold" style="min-width:80px;" ' +
+      (this._adding ? 'disabled aria-busy="true"' : '') + '>' + (this._adding ? 'Adding…' : '+ Add') + '</button>' +
     '</div>';
 
     // Empty state
@@ -217,31 +219,50 @@ Hub.grocery = {
   // ── Actions ──────────────────────────────────────────────
 
   async addFromInput() {
+    if (this._adding) return;
+
     var input = document.getElementById('groceryInput');
-    var text  = (input && input.value || '').trim();
+    var rawText = (input && input.value || '');
+    var text  = rawText.trim();
+    var requestId = Hub.utils?.newRequestId?.('grocery') || ('grocery_' + Date.now());
+    Hub.utils?.debug?.('grocery', 'addFromInput fired', { requestId: requestId, rawText: rawText, trimmedText: text, useSupabase: this._useSupabase });
+
     if (!text) { Hub.ui && Hub.ui.toast && Hub.ui.toast('Enter an item first', 'error'); return; }
-    if (input) input.value = '';
-    this._destroyKeyboard();
 
     // Get selected requester from dropdown
     var requesterEl = document.getElementById('groceryRequester');
     var requester   = (requesterEl && requesterEl.value) || this._getRequester();
     this._setRequester(requester);
 
+    this._adding = true;
+    this.render();
+
     var householdId = Hub.state && Hub.state.household_id;
     if (this._useSupabase) {
       try {
-        var item = await Hub.db.addGroceryItem(householdId, text, requester);
-        this._items.unshift(item);
-        this.render();
+        var item = await Hub.db.addGroceryItem(householdId, text, requester, requestId);
+        Hub.utils?.debug?.('grocery', 'addGroceryItem success', { requestId: requestId, itemId: item?.id });
+        // Re-fetch source of truth to avoid stale optimistic state / race with realtime updates
+        this._items = await Hub.db.getGroceryItems(householdId);
+        if (input) input.value = '';
+        this._destroyKeyboard();
+        Hub.ui && Hub.ui.toast && Hub.ui.toast('Added', 'success');
       } catch (e) {
-        Hub.ui && Hub.ui.toast && Hub.ui.toast('Failed to add item', 'error');
-        if (input) input.value = text;
+        Hub.utils?.debug?.('grocery', 'addGroceryItem failed', { requestId: requestId, error: e?.message || String(e) });
+        Hub.ui && Hub.ui.toast && Hub.ui.toast('Failed to add item: ' + (e?.message || 'Unknown error'), 'error');
+        if (input) input.value = rawText;
+      } finally {
+        this._adding = false;
+        this.render();
       }
     } else {
       this._items.unshift({ id: Date.now().toString(), text: text, done: false, added_by_name: requester });
       this._saveLocal();
+      if (input) input.value = '';
+      this._destroyKeyboard();
+      this._adding = false;
       this.render();
+      Hub.ui && Hub.ui.toast && Hub.ui.toast('Added', 'success');
     }
   },
 
