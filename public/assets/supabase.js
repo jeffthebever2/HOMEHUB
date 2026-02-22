@@ -12,9 +12,11 @@
 window.Hub = window.Hub || {};
 
 const SUPABASE_CONFIG = {
-  DB_QUERY_TIMEOUT_MS:             6000,
-  KEEPALIVE_MINUTES:               6,      // watchdog interval
-  REFRESH_IF_EXPIRES_IN_SECONDS:   20 * 60 // refresh if < 20 min left
+  DB_QUERY_TIMEOUT_MS:             15000,   // raised from 6s — avoids noisy timeout failures on slow cold starts
+  KEEPALIVE_MINUTES:               6,       // watchdog interval
+  REFRESH_IF_EXPIRES_IN_SECONDS:   20 * 60, // refresh if < 20 min left
+  CHECK_ACCESS_RETRIES:            2,       // retries after a timeout blip
+  CHECK_ACCESS_BACKOFF_MS:         [400, 1200] // ms before each retry
 };
 
 (function () {
@@ -132,36 +134,17 @@ const SUPABASE_CONFIG = {
     },
 
     async signOut() {
-      console.log('[Auth] signOut() — full logout');
-      // 1) Reset app state immediately so watchdog doesn't re-login
-      Hub.app._loggedIn        = false;
+      console.log('[Auth] signOut()');
+      Hub.app._loggedIn      = false;
       Hub.app._loginInProgress = false;
-      Hub.app._authHandled     = false;
-      Hub.state.user           = null;
-      Hub.state.household_id   = null;
-      Hub.state.userRole       = null;
-
-      // 2) Sign out globally so provider session is revoked
-      try {
-        await sb.auth.signOut({ scope: 'global' });
-      } catch (e) {
-        // Fallback if global scope not supported by this version
-        try { await sb.auth.signOut(); } catch (_) {}
-      }
-
-      // 3) Clear all Supabase-related storage so refresh does not auto-login
-      try {
-        const keysToRemove = [];
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k && (k.startsWith('sb-') || k.startsWith('supabase'))) keysToRemove.push(k);
-        }
-        keysToRemove.forEach(k => localStorage.removeItem(k));
-        sessionStorage.clear();
-      } catch (_) {}
-
-      // 4) Reload to clean state — prevents any in-memory session re-use
-      window.location.href = window.location.origin + '/';
+      Hub.app._authHandled   = false;
+      Hub.state.user         = null;
+      Hub.state.household_id = null;
+      Hub.state.userRole     = null;
+      // Reset Photos scope denial so a fresh sign-in can try again
+      Hub.googlePhotos?.clearCache?.();
+      await sb.auth.signOut();
+      Hub.router.showScreen('login');
     },
 
     async getSession() {
@@ -178,34 +161,91 @@ const SUPABASE_CONFIG = {
       return _refreshIfNeeded(reason);
     },
 
+    _checkAccessInProgress: false,
+
     async checkAccess(user) {
-      try {
-        console.log('[Auth] checkAccess:', user.email);
-        const { data, error } = await timed(
-          sb.from('household_members')
-            .select('household_id, role')
-            .eq('email', user.email)
-            .limit(1)
-            .maybeSingle()
-        );
-        if (error || !data) return false;
-
-        const { data: ae, error: aeErr } = await timed(
-          sb.from('allowed_emails')
-            .select('id')
-            .eq('email', user.email)
-            .limit(1)
-            .maybeSingle()
-        );
-        if (aeErr || !ae) return false;
-
-        Hub.state.household_id = data.household_id;
-        Hub.state.userRole     = data.role;
-        console.log('[Auth] ✓ Granted — household:', data.household_id);
-        return true;
-      } catch (e) {
-        console.error('[Auth] checkAccess error:', e.message);
+      // Guard: never run two concurrent checkAccess calls for the same user
+      if (this._checkAccessInProgress) {
+        console.log('[Auth] checkAccess already in progress — skipping duplicate call');
         return false;
+      }
+      this._checkAccessInProgress = true;
+
+      const maxAttempts = 1 + SUPABASE_CONFIG.CHECK_ACCESS_RETRIES;
+      let lastError;
+
+      try {
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          if (attempt > 1) {
+            const delay = SUPABASE_CONFIG.CHECK_ACCESS_BACKOFF_MS[attempt - 2] || 1200;
+            console.log(`[Auth] checkAccess retry ${attempt}/${maxAttempts} in ${delay}ms…`);
+            await new Promise(r => setTimeout(r, delay));
+          } else {
+            console.log(`[Auth] checkAccess attempt ${attempt}/${maxAttempts}:`, user.email);
+          }
+
+          try {
+            const { data, error } = await timed(
+              sb.from('household_members')
+                .select('household_id, role')
+                .eq('email', user.email)
+                .limit(1)
+                .maybeSingle()
+            );
+
+            if (error) {
+              const isTimeout = error.message?.includes('timeout');
+              console.warn(`[Auth] checkAccess attempt ${attempt} error (${isTimeout ? 'timeout' : 'db'}):`, error.message);
+              lastError = error;
+              if (isTimeout && attempt < maxAttempts) continue; // retry on timeout
+              return false;
+            }
+
+            if (!data) {
+              console.warn('[Auth] checkAccess: no household_members row for', user.email);
+              return false;
+            }
+
+            const { data: ae, error: aeErr } = await timed(
+              sb.from('allowed_emails')
+                .select('id')
+                .eq('email', user.email)
+                .limit(1)
+                .maybeSingle()
+            );
+
+            if (aeErr) {
+              const isTimeout = aeErr.message?.includes('timeout');
+              console.warn(`[Auth] checkAccess attempt ${attempt} allowed_emails error (${isTimeout ? 'timeout' : 'db'}):`, aeErr.message);
+              lastError = aeErr;
+              if (isTimeout && attempt < maxAttempts) continue;
+              return false;
+            }
+
+            if (!ae) {
+              console.warn('[Auth] checkAccess: email not in allowed_emails:', user.email);
+              return false;
+            }
+
+            Hub.state.household_id = data.household_id;
+            Hub.state.userRole     = data.role;
+            console.log(`[Auth] ✓ Granted (attempt ${attempt}/${maxAttempts}) — household:`, data.household_id);
+            return true;
+
+          } catch (e) {
+            const isTimeout = e.message?.includes('timeout');
+            console.warn(`[Auth] checkAccess attempt ${attempt}/${maxAttempts} exception (${isTimeout ? 'timeout' : 'unknown'}):`, e.message);
+            lastError = e;
+            if (isTimeout && attempt < maxAttempts) continue; // retry
+            throw e;
+          }
+        }
+
+        console.error('[Auth] checkAccess: all attempts exhausted. Last error:', lastError?.message);
+        return false;
+
+      } finally {
+        this._checkAccessInProgress = false;
       }
     },
 
@@ -420,14 +460,14 @@ const SUPABASE_CONFIG = {
       return data || [];
     },
 
-    async addGroceryItem(householdId, text, requestedBy) {
+    async addGroceryItem(householdId, text) {
       const { data, error } = await timed(
         sb.from('grocery_items').insert({
           household_id:  householdId,
           text:          text.trim(),
           done:          false,
           added_by:      Hub.state?.user?.id || null,
-          added_by_name: requestedBy || null,
+          added_by_name: Hub.utils?.getUserFirstName?.() || null,
           position:      0
         }).select().single()
       );

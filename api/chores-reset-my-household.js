@@ -5,10 +5,20 @@ export default async function handler(req, res) {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-    const SB_URL = process.env.SUPABASE_URL;
-    const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!SB_URL || !SB_KEY) {
-      return res.status(500).json({ error: 'Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY' });
+    // Support multiple env var names so the deployment is harder to break
+    const SB_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+
+    const missing = [];
+    if (!SB_URL) missing.push('SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL)');
+    if (!SB_KEY) missing.push('SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SERVICE_KEY)');
+    if (missing.length) {
+      console.error('[ResetMyHousehold] Missing env vars:', missing);
+      return res.status(500).json({
+        error:   'Server misconfiguration: required environment variables are not set',
+        missing, // lists names, never values
+        hint:    'In Vercel: Project → Settings → Environment Variables'
+      });
     }
 
     const auth = req.headers.authorization || '';
