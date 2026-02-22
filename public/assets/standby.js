@@ -15,6 +15,9 @@ Hub.standby = {
     // (prevents stacked intervals if start() is ever called twice)
     this.stop();
 
+    // Apply sleep brightness (25%) while standby is displayed
+    this._setSleepBrightness(true);
+
     // Clock — update immediately then every second
     this._updateClock();
     this._clockInterval = setInterval(() => this._updateClock(), 1000);
@@ -57,10 +60,21 @@ Hub.standby = {
 
     // Stop slideshow (RAF + visibilitychange handler)
     Hub.photos.stopStandbySlideshow();
+
+    // Restore normal brightness when exiting standby
+    this._setSleepBrightness(false);
   },
 
   /** Called by router when leaving the standby page */
   onLeave() { this.stop(); },
+
+
+  _setSleepBrightness(enabled) {
+    const page = Hub.utils.$('standbyPage');
+    if (!page) return;
+    page.style.transition = 'filter .2s ease';
+    page.style.filter = enabled ? 'brightness(25%)' : '';
+  },
 
   /** Update clock display */
   _updateClock() {

@@ -8,6 +8,7 @@ window.Hub = window.Hub || {};
 Hub.googlePhotos = {
   _albumCache: null,
   _mediaCache: {},
+  _grantedScopes: null,
 
   // Session-scoped flag: set true on 403 so we stop hammering the API.
   // Cleared by clearCache() (called on sign-out) so a reconnect resets it.
@@ -19,13 +20,45 @@ Hub.googlePhotos = {
     try {
       const { data: { session } } = await Hub.sb.auth.getSession();
       if (session?.provider_token) return session.provider_token;
+      if (session?.access_token) {
+        console.warn('[GPhotos] provider_token missing; using Supabase access_token fallback');
+        return session.access_token;
+      }
       if (Hub.auth?.ensureFreshSession) await Hub.auth.ensureFreshSession('gphotos-token');
       const { data: { session: s2 } } = await Hub.sb.auth.getSession();
-      return s2?.provider_token || null;
+      return s2?.provider_token || s2?.access_token || null;
     } catch (e) {
       console.warn('[GPhotos] Provider token lookup failed:', e.message);
       return null;
     }
+  },
+
+  async _getGrantedScopes() {
+    if (this._grantedScopes) return this._grantedScopes;
+
+    const token = await this._getProviderToken();
+    if (!token) return [];
+
+    try {
+      let resp = await fetch(`https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${encodeURIComponent(token)}`);
+      if (!resp.ok) resp = await fetch(`https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=${encodeURIComponent(token)}`);
+      if (!resp.ok) return [];
+      const info = await resp.json();
+      const scopes = (info.scope || '')
+        .split(/\s+/)
+        .map(s => s.trim())
+        .filter(Boolean);
+      this._grantedScopes = scopes;
+      return scopes;
+    } catch (e) {
+      console.warn('[GPhotos] tokeninfo failed:', e.message);
+      return [];
+    }
+  },
+
+  _hasPhotosScope(scopes = []) {
+    return scopes.includes('https://www.googleapis.com/auth/photoslibrary.readonly') ||
+           scopes.includes('https://www.googleapis.com/auth/photoslibrary');
   },
 
   async _fetch(url, body, retry = true) {
@@ -34,6 +67,13 @@ Hub.googlePhotos = {
 
     let token = await this._getProviderToken();
     if (!token) return { error: 'Not authenticated — sign out and back in to grant Photos access.' };
+
+    const grantedScopes = await this._getGrantedScopes();
+    if (grantedScopes.length && !this._hasPhotosScope(grantedScopes)) {
+      this._scopeDenied = true;
+      this._showScopeDeniedUI();
+      return { error: 'photos_scope_denied' };
+    }
 
     const opts = {
       method:  body ? 'POST' : 'GET',
@@ -56,11 +96,20 @@ Hub.googlePhotos = {
       const txt = await resp.text().catch(() => '');
 
       if (resp.status === 403) {
-        // Latch: stop all future Photos API calls this session.
-        this._scopeDenied = true;
-        console.warn('[GPhotos] 403 — Photos scope denied. Latching _scopeDenied.');
-        this._showScopeDeniedUI();
-        return { error: 'photos_scope_denied' };
+        let parsed;
+        try { parsed = JSON.parse(txt); } catch (e) {}
+        const reason = parsed?.error?.errors?.[0]?.reason || parsed?.error?.status || '';
+        const msg = parsed?.error?.message || txt || 'Forbidden';
+
+        if (/insufficient|forbidden|scope|permission/i.test(`${reason} ${msg}`)) {
+          // Latch: stop future Photos API calls this session when scopes are missing.
+          this._scopeDenied = true;
+          console.warn('[GPhotos] 403 — likely missing Photos scope. Latching _scopeDenied.');
+          this._showScopeDeniedUI();
+          return { error: 'photos_scope_denied' };
+        }
+
+        return { error: `403 Forbidden from Google Photos API: ${msg}` };
       }
 
       if (resp.status === 401) {
@@ -194,6 +243,7 @@ Hub.googlePhotos = {
   clearCache() {
     this._albumCache = null;
     this._mediaCache = {};
+    this._grantedScopes = null;
     // Reset scope denial so a fresh sign-in can try again
     this._scopeDenied = false;
     this._scopeDeniedBannerShown = false;

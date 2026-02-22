@@ -12,11 +12,13 @@
 window.Hub = window.Hub || {};
 
 const SUPABASE_CONFIG = {
-  DB_QUERY_TIMEOUT_MS:             15000,   // raised from 6s — avoids noisy timeout failures on slow cold starts
+  DB_QUERY_TIMEOUT_MS:             30000,   // tolerate cold starts/network jitter during OAuth+RLS checks
   KEEPALIVE_MINUTES:               6,       // watchdog interval
   REFRESH_IF_EXPIRES_IN_SECONDS:   20 * 60, // refresh if < 20 min left
-  CHECK_ACCESS_RETRIES:            2,       // retries after a timeout blip
-  CHECK_ACCESS_BACKOFF_MS:         [400, 1200] // ms before each retry
+  CHECK_ACCESS_RETRIES:            4,       // retries after timeout blips
+  CHECK_ACCESS_BACKOFF_MS:         [500, 1500, 3000, 5000], // ms before each retry
+  WATCHDOG_LOGOUT_MISS_THRESHOLD:  3,
+  WATCHDOG_FORCE_REFRESH_ON_MISS:  true
 };
 
 (function () {
@@ -61,6 +63,7 @@ const SUPABASE_CONFIG = {
 
   // ── Keep-alive + watchdog ────────────────────────────────────
   let _keepAliveStarted = false;
+  let _watchdogMisses = 0;
 
   function _startKeepAlive() {
     if (_keepAliveStarted) return;
@@ -70,22 +73,36 @@ const SUPABASE_CONFIG = {
 
     // Periodic watchdog: refresh token AND re-login app if needed
     setInterval(async () => {
-      const session = await _refreshIfNeeded('watchdog');
-      if (session?.user && !Hub.app?._loggedIn) {
-        console.warn('[Auth] Watchdog: session exists but app thinks logged out — re-login');
-        try { await Hub.app?._onLogin?.(session.user); } catch (e) {}
+      let session = await _refreshIfNeeded('watchdog');
+
+      if (!session && SUPABASE_CONFIG.WATCHDOG_FORCE_REFRESH_ON_MISS) {
+        try {
+          const { data } = await sb.auth.refreshSession();
+          session = data?.session || null;
+        } catch (e) {}
       }
-      if (!session && Hub.app?._loggedIn) {
-        // Session truly gone (very rare) — show login once cleanly
-        console.warn('[Auth] Watchdog: session lost while logged in');
-        Hub.app._loggedIn = false;
-        Hub.router?.showScreen?.('login');
+
+      if (session?.user) {
+        _watchdogMisses = 0;
+        if (!Hub.app?._loggedIn) {
+          console.warn('[Auth] Watchdog: session exists but app thinks logged out — re-login');
+          try { await Hub.app?._onLogin?.(session.user); } catch (e) {}
+        }
+      } else if (Hub.app?._loggedIn) {
+        _watchdogMisses += 1;
+        console.warn('[Auth] Watchdog: missing session while logged in — miss', _watchdogMisses);
+        if (_watchdogMisses >= SUPABASE_CONFIG.WATCHDOG_LOGOUT_MISS_THRESHOLD) {
+          console.warn('[Auth] Watchdog: session loss confirmed after misses — showing login');
+          Hub.app._loggedIn = false;
+          Hub.router?.showScreen?.('login');
+        }
       }
     }, SUPABASE_CONFIG.KEEPALIVE_MINUTES * 60 * 1000);
 
     // Restore session when tab re-focuses
     const onWake = async () => {
       const session = await _refreshIfNeeded('wake');
+      if (session?.user) _watchdogMisses = 0;
       if (session?.user && !Hub.app?._loggedIn) {
         try { await Hub.app?._onLogin?.(session.user); } catch (e) {}
       }
@@ -163,6 +180,37 @@ const SUPABASE_CONFIG = {
 
     _checkAccessInProgress: false,
 
+    async _checkAccessViaApi() {
+      try {
+        const session = await this.getSession();
+        const token = session?.access_token;
+        if (!token) return null;
+
+        const apiBase = window.HOME_HUB_CONFIG?.apiBase || '';
+        const ctrl = new AbortController();
+        const timeout = setTimeout(() => ctrl.abort('timeout'), 12000);
+        let resp;
+        try {
+          resp = await fetch(`${apiBase}/api/auth-access`, {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${token}` },
+            signal: ctrl.signal
+          });
+        } finally {
+          clearTimeout(timeout);
+        }
+        const body = await resp.json().catch(() => ({}));
+        if (!resp.ok || !body?.ok) {
+          console.warn('[Auth] API access fallback denied:', resp.status, body?.error || 'unknown');
+          return null;
+        }
+        return body;
+      } catch (e) {
+        console.warn('[Auth] API access fallback error:', e.message);
+        return null;
+      }
+    },
+
     async checkAccess(user) {
       // Guard: never run two concurrent checkAccess calls for the same user
       if (this._checkAccessInProgress) {
@@ -188,7 +236,7 @@ const SUPABASE_CONFIG = {
             const { data, error } = await timed(
               sb.from('household_members')
                 .select('household_id, role')
-                .eq('email', user.email)
+                .ilike('email', user.email)
                 .limit(1)
                 .maybeSingle()
             );
@@ -209,7 +257,7 @@ const SUPABASE_CONFIG = {
             const { data: ae, error: aeErr } = await timed(
               sb.from('allowed_emails')
                 .select('id')
-                .eq('email', user.email)
+                .ilike('email', user.email)
                 .limit(1)
                 .maybeSingle()
             );
@@ -239,6 +287,14 @@ const SUPABASE_CONFIG = {
             if (isTimeout && attempt < maxAttempts) continue; // retry
             throw e;
           }
+        }
+
+        const fallback = await this._checkAccessViaApi();
+        if (fallback?.household_id) {
+          Hub.state.household_id = fallback.household_id;
+          Hub.state.userRole = fallback.role || 'member';
+          console.log('[Auth] ✓ Granted via API fallback — household:', fallback.household_id);
+          return true;
         }
 
         console.error('[Auth] checkAccess: all attempts exhausted. Last error:', lastError?.message);
@@ -460,17 +516,21 @@ const SUPABASE_CONFIG = {
       return data || [];
     },
 
-    async addGroceryItem(householdId, text) {
+    async addGroceryItem(householdId, text, requesterName = null, requestId = null) {
+      const reqId = requestId || Hub.utils?.newRequestId?.('grocerydb') || ('grocerydb_' + Date.now());
+      const payload = {
+        household_id:  householdId,
+        text:          (text || '').trim(),
+        done:          false,
+        added_by:      Hub.state?.user?.id || null,
+        added_by_name: requesterName || Hub.utils?.getUserFirstName?.() || null,
+        position:      0
+      };
+      Hub.utils?.debug?.('grocery-db', 'insert start', { requestId: reqId, userId: Hub.state?.user?.id || null, householdId: householdId, payload: payload });
       const { data, error } = await timed(
-        sb.from('grocery_items').insert({
-          household_id:  householdId,
-          text:          text.trim(),
-          done:          false,
-          added_by:      Hub.state?.user?.id || null,
-          added_by_name: Hub.utils?.getUserFirstName?.() || null,
-          position:      0
-        }).select().single()
+        sb.from('grocery_items').insert(payload).select().single()
       );
+      Hub.utils?.debug?.('grocery-db', 'insert result', { requestId: reqId, hasError: !!error, error: error?.message || null, rowId: data?.id || null });
       if (error) throw error;
       return data;
     },

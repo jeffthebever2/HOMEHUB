@@ -131,4 +131,20 @@ Hub.utils = {
     
     return '?';
   }
+
+  ,
+  /** Lightweight debug logger controlled by localStorage.hub_debug === '1' */
+  debugEnabled() {
+    try { return localStorage.getItem('hub_debug') === '1'; } catch (e) { return false; }
+  },
+
+  debug(scope, ...args) {
+    if (!this.debugEnabled()) return;
+    console.log(`[Debug:${scope}]`, ...args);
+  },
+
+  newRequestId(prefix = 'req') {
+    return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
 };
