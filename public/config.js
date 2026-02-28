@@ -1,15 +1,14 @@
 // HOME HUB CONFIGURATION
 // Edit these values with your actual credentials before deploying.
-// Weather API keys and AI keys are NOT stored here — they go in Vercel env vars.
+// Weather API keys and AI keys are NOT stored here — they go in Cloudflare env vars.
 window.HOME_HUB_CONFIG = {
+  // === HOUSEHOLD ===
+  householdDisplayName: 'Scott family',
+  familyMembers: ['Will', 'Lyla', 'Mom', 'Dad', 'Scott'],
+
   // === SUPABASE (Required) ===
   supabaseUrl: 'https://cmaefwhqoykittrwiobw.supabase.co',
   supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNtYWVmd2hxb3lraXR0cndpb2J3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA1NjM1ODQsImV4cCI6MjA4NjEzOTU4NH0.rUub2PIr60w9InuA1zygE7l0OK6li_Un8WjpdcVg3ko',
-
-  // === HOUSEHOLD BRANDING ===
-  householdDisplayName: 'Scott family',
-  // Names shown in grocery "Requested by" dropdown — edit to match your household
-  householdMembers: ['Will', 'Lauren', 'Mom', 'Dad'],
 
   // === FIREBASE (Do not change — existing dog treat tracker) ===
   firebase: {

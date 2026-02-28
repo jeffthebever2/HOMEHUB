@@ -31,9 +31,9 @@ export default async function handler(req, res) {
       // 1. Open-Meteo (free)
       fetchJSON(
         `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-        `&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,windspeed_10m,wind_direction_10m,weathercode,dewpoint_2m,surface_pressure,visibility,windgusts_10m` +
+        `&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,windspeed_10m,wind_direction_10m,windgusts_10m,weathercode,dewpoint_2m,surface_pressure,visibility` +
         `&hourly=temperature_2m,precipitation_probability,precipitation,windspeed_10m,weathercode` +
-        `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,sunrise,sunset,weathercode` +
+        `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,sunrise,sunset` +
         `&temperature_unit=fahrenheit&windspeed_unit=mph&precipitation_unit=inch&timezone=auto&forecast_days=7`
       ),
 

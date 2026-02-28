@@ -5,7 +5,7 @@ window.Hub = window.Hub || {};
 
 Hub.router = {
   current: 'dashboard',
-  VALID_PAGES: ['dashboard','standby','weather','chores','treats','music','radio',
+  VALID_PAGES: ['dashboard','standby','weather','chores','treats','radio',
                 'settings','status','control','grocery','admin'],
 
   go(page) { window.location.hash = '#/' + page; },

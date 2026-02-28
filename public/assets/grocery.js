@@ -29,25 +29,6 @@ Hub.grocery = {
     '🧈','🫙','🥫','🧻','🧽','🧴','🧹','🪣','🛒','🍷','🍺',
   ],
 
-  // Get household members from config
-  _getMembers() {
-    const m = window.HOME_HUB_CONFIG?.householdMembers;
-    if (Array.isArray(m) && m.length > 0) return m;
-    return ['Me'];
-  },
-
-  // Get/set last used requester (persisted in localStorage)
-  _getRequester() {
-    const saved = localStorage.getItem('hub_grocery_requester');
-    const members = this._getMembers();
-    if (saved && members.includes(saved)) return saved;
-    return members[0];
-  },
-
-  _setRequester(name) {
-    localStorage.setItem('hub_grocery_requester', name);
-  },
-
   init() { /* nothing — load deferred to onEnter */ },
 
   // ── Page lifecycle ────────────────────────────────────────
@@ -136,16 +117,16 @@ Hub.grocery = {
 
     var html = '';
 
-    // Input row with requester dropdown
-    const members   = this._getMembers();
-    const requester = this._getRequester();
-    const memberOptions = members.map(m =>
-      `<option value="${Hub.utils.esc(m)}" ${m === requester ? 'selected' : ''}>${Hub.utils.esc(m)}</option>`
-    ).join('');
+    // Family member dropdown
+    var familyMembers = (window.HOME_HUB_CONFIG && window.HOME_HUB_CONFIG.familyMembers) || ['Mom','Dad'];
+    var lastRequester = localStorage.getItem('hub_grocery_last_requester') || familyMembers[0] || '';
+    var memberOptions = familyMembers.map(function(m) {
+      return '<option value="' + Hub.utils.esc(m) + '"' + (m === lastRequester ? ' selected' : '') + '>' + Hub.utils.esc(m) + '</option>';
+    }).join('');
 
-    html += '<div class="flex gap-2 mb-3">' +
-      '<select id="groceryRequester" class="input" style="flex-shrink:0;width:auto;min-width:90px;font-size:.9rem;padding:.55rem .65rem;" ' +
-        'onchange="Hub.grocery._setRequester(this.value)">' +
+    // Input row
+    html += '<div class="flex gap-2 mb-5">' +
+      '<select id="groceryRequester" class="input" style="width:90px;font-size:.85rem;padding:.5rem .4rem;flex-shrink:0;">' +
         memberOptions +
       '</select>' +
       '<div class="relative flex-1">' +
@@ -201,9 +182,9 @@ Hub.grocery = {
     var check   = done
       ? '<span style="color:#22c55e;font-size:1.2rem;">✓</span>'
       : '<div style="width:22px;height:22px;border:2px solid #4b5563;border-radius:4px;flex-shrink:0;"></div>';
-    // Use added_by_name for requester display — these are household member names, never Google accounts
-    var who = item.added_by_name
-      ? '<span class="text-xs text-gray-600 ml-1">' + Hub.utils.esc(item.added_by_name) + '</span>' : '';
+    var requester = item.requested_by || item.added_by_name || '';
+    var who = requester
+      ? '<span class="text-xs text-gray-600 ml-1">' + Hub.utils.esc(requester) + '</span>' : '';
     return '<div class="card flex items-center gap-3 select-none active:opacity-70"' +
       ' style="padding:.85rem 1rem;margin:0;cursor:pointer;" onclick="Hub.grocery.toggle(\'' + item.id + '\')">' +
       '<span style="min-width:26px;display:flex;align-items:center;">' + check + '</span>' +
@@ -221,12 +202,12 @@ Hub.grocery = {
     var text  = (input && input.value || '').trim();
     if (!text) { Hub.ui && Hub.ui.toast && Hub.ui.toast('Enter an item first', 'error'); return; }
     if (input) input.value = '';
-    this._destroyKeyboard();
 
-    // Get selected requester from dropdown
     var requesterEl = document.getElementById('groceryRequester');
-    var requester   = (requesterEl && requesterEl.value) || this._getRequester();
-    this._setRequester(requester);
+    var requester = requesterEl ? requesterEl.value : '';
+    if (requester) localStorage.setItem('hub_grocery_last_requester', requester);
+
+    this._destroyKeyboard();
 
     var householdId = Hub.state && Hub.state.household_id;
     if (this._useSupabase) {
@@ -239,7 +220,7 @@ Hub.grocery = {
         if (input) input.value = text;
       }
     } else {
-      this._items.unshift({ id: Date.now().toString(), text: text, done: false, added_by_name: requester });
+      this._items.unshift({ id: Date.now().toString(), text: text, done: false, requested_by: requester });
       this._saveLocal();
       this.render();
     }

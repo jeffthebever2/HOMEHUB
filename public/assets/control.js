@@ -42,8 +42,6 @@ Hub.control = {
 
   /** Called by router when navigating away — clean up any intervals/listeners */
   onLeave() {
-    // FPS tracker uses rAF and self-cleans; event log hook is one-time.
-    // Clear any admin-specific setIntervals if they were added.
     console.log('[Admin] onLeave — cleanup');
   },
 
@@ -413,7 +411,7 @@ Hub.control = {
 
   // NAV TAB
   _tabNav() {
-    const pages = ['dashboard','weather','chores','treats','music','radio','settings','grocery','standby'];
+    const pages = ['dashboard','weather','chores','treats','radio','settings','grocery','standby'];
     return `
     <div class="grid grid-cols-3 gap-3 mb-4">
       ${pages.map(p => this._tile(this._pageIcon(p), p.charAt(0).toUpperCase()+p.slice(1), '', `Hub.router.go('${p}')`)).join('')}
@@ -425,7 +423,7 @@ Hub.control = {
   `; },
 
   _pageIcon(p) {
-    const m = {dashboard:'🏠',weather:'🌤️',chores:'✅',treats:'🐕',music:'🎵',radio:'📻',settings:'⚙️',grocery:'🛒',standby:'💤'};
+    const m = {dashboard:'🏠',weather:'🌤️',chores:'✅',treats:'🐕',radio:'📻',settings:'⚙️',grocery:'🛒',standby:'💤'};
     return m[p] || '📄';
   },
 
@@ -531,8 +529,8 @@ Hub.control = {
 
   manualChoreReset() {
     if (!confirm('Reset ALL chores to pending?')) return;
-    Hub.app?._callChoreResetEndpoint?.()
-      .then(() => { Hub.ui?.toast?.('All chores reset!', 'success'); this._log('Manual chore reset'); })
+    Hub.app?._forceResetChores?.()
+      .then(() => { this._log('Manual chore reset triggered'); })
       .catch(e => Hub.ui?.toast?.('Reset: ' + (e?.message || 'failed'), 'error'));
   },
 
@@ -900,6 +898,38 @@ Hub.control = {
   },
 
   startAutoResetChecker() {
-    // Stub — auto reset is controlled by toggle in System tab
+    // Clear any existing interval
+    if (this._autoResetInterval) {
+      clearInterval(this._autoResetInterval);
+      this._autoResetInterval = null;
+    }
+
+    const enabled = localStorage.getItem('chore_auto_reset_enabled') === 'true';
+    if (!enabled) {
+      console.log('[Admin] Auto chore reset is disabled');
+      return;
+    }
+
+    console.log('[Admin] Starting auto chore reset checker (every 5 min)');
+
+    // Run immediately on boot (catch-up if Pi was off overnight)
+    setTimeout(() => {
+      if (Hub.state?.user && Hub.state?.household_id) {
+        Hub.app?._callChoreResetEndpoint?.().catch(() => {});
+      }
+    }, 5000);
+
+    // Then check every 5 minutes
+    this._autoResetInterval = setInterval(() => {
+      if (!Hub.state?.user || !Hub.state?.household_id) return;
+      const enabled = localStorage.getItem('chore_auto_reset_enabled') === 'true';
+      if (!enabled) {
+        clearInterval(this._autoResetInterval);
+        this._autoResetInterval = null;
+        return;
+      }
+      console.log('[Admin] Auto reset check running');
+      Hub.app?._callChoreResetEndpoint?.().catch(() => {});
+    }, 5 * 60 * 1000);
   }
 };

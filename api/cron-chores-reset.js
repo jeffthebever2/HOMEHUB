@@ -14,14 +14,11 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const SB_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  const SB_URL = process.env.SUPABASE_URL;
+  const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!SB_URL || !SB_KEY) {
-    const missing = [];
-    if (!SB_URL) missing.push('SUPABASE_URL');
-    if (!SB_KEY) missing.push('SUPABASE_SERVICE_ROLE_KEY');
-    return res.status(500).json({ error: 'Missing env vars', missing });
+    return res.status(500).json({ error: 'Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY' });
   }
 
   // ── Timezone-safe date helpers ─────────────────────────

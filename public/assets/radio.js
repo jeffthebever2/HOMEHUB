@@ -8,52 +8,35 @@ window.Hub = window.Hub || {};
 Hub.radio = {
   _audio:    null,   // single HTMLAudioElement
   _current:  null,   // { name, url }
-
-  // Default preset stations (used if nothing saved in localStorage)
-  _DEFAULT_STATIONS: [
-    { name: 'WNYC 93.9 FM (NPR New York)',     url: 'https://fm939.wnyc.org/wnycfm.aac' },
-    { name: 'KEXP 90.3 FM (Seattle)',           url: 'https://live-aacplus-64.kexp.org/kexp64.aac' },
-    { name: 'BBC Radio 1',                      url: 'https://stream.live.vc.bbcmedia.co.uk/bbc_radio_one' },
-    { name: 'BBC World Service',                url: 'https://stream.live.vc.bbcmedia.co.uk/bbc_world_service' },
-    { name: 'Jazz FM (UK)',                     url: 'https://edge-audio-03-gos2.sharp-stream.com/jazzfm.mp3' },
-    { name: 'SomaFM Groove Salad',              url: 'https://ice1.somafm.com/groovesalad-128-aac' },
-    { name: 'SomaFM Space Station Soma',        url: 'https://ice1.somafm.com/spacestation-128-aac' },
-  ],
+  _retryCount: 0,
+  _stallTimer: null,
 
   init() {
     console.log('[Radio] Init');
   },
 
-  // ── Stations ──────────────────────────────────────────────
-
-  _getConfigStations() {
-    const cfgStations = window.HOME_HUB_CONFIG?.radio?.stations;
-    if (Array.isArray(cfgStations) && cfgStations.length > 0) {
-      // Map config format { name, streamUrl, logo } → internal { name, url, logo }
-      return cfgStations.map(s => ({ name: s.name, url: s.streamUrl || s.url, logo: s.logo || '📻' }));
-    }
-    return null;
-  },
+  // ── Stations from config ────────────────────────────────
 
   _getStations() {
-    // Always prefer config.js stations — localStorage overrides only if user customised
-    const saved = (() => {
-      try {
-        const raw = localStorage.getItem('hub_radio_stations');
-        if (raw) return JSON.parse(raw);
-      } catch (_) {}
-      return null;
-    })();
+    // Config is source of truth; user can add custom stations via localStorage overlay
+    const configStations = (window.HOME_HUB_CONFIG?.radio?.stations || []).map(s => ({
+      name: s.name,
+      url: s.streamUrl,
+      logo: s.logo || '📻',
+      websiteUrl: s.websiteUrl || ''
+    }));
+    try {
+      const custom = JSON.parse(localStorage.getItem('hub_radio_custom_stations') || '[]');
+      if (custom.length) return [...configStations, ...custom];
+    } catch (_) {}
+    return configStations;
+  },
 
-    // If saved stations exist AND there are more than just the defaults we wrote, use them
-    // Otherwise fall back to config so config is authoritative
-    const cfgStations = this._getConfigStations();
-    if (!saved) return cfgStations || this._DEFAULT_STATIONS.map(s => ({ ...s }));
-
-    // If the saved list is the same length as config, it may just be a stale copy —
-    // return config to pick up any additions/removals.
-    if (cfgStations) return cfgStations;
-    return saved;
+  _saveCustomStations(stations) {
+    // Only save user-added stations (not config ones)
+    const configNames = new Set((window.HOME_HUB_CONFIG?.radio?.stations || []).map(s => s.name));
+    const custom = stations.filter(s => !configNames.has(s.name));
+    localStorage.setItem('hub_radio_custom_stations', JSON.stringify(custom));
   },
 
   // ── Page enter / leave ────────────────────────────────────
@@ -156,10 +139,11 @@ Hub.radio = {
 
   _stationRowHTML(station, index, currentUrl) {
     const active = station.url === currentUrl;
+    const logo = station.logo || '📻';
     return `
       <div class="flex items-center gap-2 p-2 rounded-lg transition-colors ${active ? 'bg-blue-900/40 border border-blue-700/50' : 'hover:bg-white/5'}"
            style="cursor:pointer;" onclick="Hub.radio._play(${index})">
-        <span style="font-size:1.1rem;flex-shrink:0;">${active ? '🔊' : '📻'}</span>
+        <span style="font-size:1.1rem;flex-shrink:0;">${active ? '🔊' : logo}</span>
         <span class="flex-1 text-sm font-medium truncate">${Hub.utils.esc(station.name)}</span>
         <button onclick="event.stopPropagation();Hub.radio._editStation(${index})"
           class="text-gray-500 hover:text-blue-400 text-xs px-2 py-1" style="background:none;border:none;cursor:pointer;">Edit</button>
@@ -175,70 +159,66 @@ Hub.radio = {
     const station  = stations[index];
     if (!station) return;
 
+    // Validate https
+    if (station.url && station.url.startsWith('http://')) {
+      station.url = station.url.replace('http://', 'https://');
+    }
+
     // Stop existing
     this._stop(false);
 
     this._current = station;
-    this._audio   = new Audio(station.url);
-    this._audio.volume = parseFloat(document.getElementById('radioVolume')?.value || 0.8);
-    this._audio.preload = 'none';
-    this._stallRetries = 0;
+    this._retryCount = 0;
 
-    const audio = this._audio;
+    // Use Hub.player if available for integrated Now Playing
+    if (Hub.player?.playRadio) {
+      Hub.player.playRadio(station.name, station.url);
+    } else {
+      // Fallback: direct audio
+      this._audio = new Audio(station.url);
+      this._audio.volume = parseFloat(document.getElementById('radioVolume')?.value || 0.8);
+      this._audio.preload = 'none';
 
-    audio.addEventListener('playing', () => {
-      this._stallRetries = 0;
-      this._setStatus('Playing', 'text-green-400');
-      const stopBtn = document.getElementById('radioStopBtn');
-      if (stopBtn) stopBtn.style.display = '';
-      this._setVizActive(true);
-    });
-
-    audio.addEventListener('waiting',  () => this._setStatus('Buffering…', 'text-yellow-400'));
-
-    const handleStall = () => {
-      if (this._audio !== audio) return; // stale reference
-      if (this._stallRetries < 3) {
-        this._stallRetries++;
-        this._setStatus(`Reconnecting… (${this._stallRetries}/3)`, 'text-yellow-400');
-        setTimeout(() => {
-          if (this._audio !== audio) return;
-          audio.load();
-          audio.play().catch(() => {});
-        }, 2000 * this._stallRetries);
-      } else {
-        this._setStatus('Stream unavailable — try another station', 'text-red-400');
-        this._setVizActive(false);
-        Hub.ui?.toast?.(`Stream unavailable: ${station.name}`, 'error');
-      }
-    };
-
-    audio.addEventListener('stalled', handleStall);
-    audio.addEventListener('error',   () => {
-      if (this._audio !== audio) return;
-      this._setStatus('Error — stream unavailable', 'text-red-400');
-      this._setVizActive(false);
-      Hub.ui?.toast?.(`Cannot play: ${station.name}`, 'error');
-    });
-    audio.addEventListener('ended', () => {
-      this._setStatus('Ended', 'text-gray-400');
-      this._setVizActive(false);
-    });
-
-    audio.play().catch(e => {
-      if (e.name === 'NotAllowedError') {
-        // Autoplay blocked — show tap-to-play prompt
-        this._setStatus('Tap Play to start (autoplay blocked)', 'text-yellow-400');
+      this._audio.addEventListener('playing', () => {
+        this._setStatus('Playing', 'text-green-400');
         const stopBtn = document.getElementById('radioStopBtn');
-        if (stopBtn) { stopBtn.style.display = ''; stopBtn.textContent = '▶ Play'; stopBtn.onclick = () => { audio.play().catch(() => {}); stopBtn.textContent = '⏹ Stop'; stopBtn.onclick = () => Hub.radio._stop(); }; }
-      } else {
-        this._setStatus(`Error: ${e.message}`, 'text-red-400');
-      }
-    });
+        if (stopBtn) stopBtn.style.display = '';
+        this._setVizActive(true);
+      });
+      this._audio.addEventListener('waiting',  () => this._setStatus('Buffering…', 'text-yellow-400'));
+      this._audio.addEventListener('stalled',  () => this._setStatus('Stalled…',   'text-yellow-400'));
+      this._audio.addEventListener('error',    () => {
+        if (this._retryCount < 1) {
+          this._retryCount++;
+          this._setStatus('Retrying…', 'text-yellow-400');
+          setTimeout(() => {
+            if (this._audio) {
+              this._audio.load();
+              this._audio.play().catch(() => {});
+            }
+          }, 2000);
+        } else {
+          this._setStatus('Error — check stream URL', 'text-red-400');
+          this._setVizActive(false);
+          Hub.ui?.toast?.(`Cannot play: ${station.name}`, 'error');
+        }
+      });
+      this._audio.addEventListener('ended', () => {
+        this._setStatus('Ended', 'text-gray-400');
+        this._setVizActive(false);
+      });
+
+      this._audio.play().catch(e => {
+        this._setStatus(`Playback blocked: ${e.message}`, 'text-red-400');
+      });
+    }
 
     this._setStatus('Connecting…', 'text-yellow-400');
     const nameEl = document.getElementById('radioStationName');
     if (nameEl) nameEl.textContent = station.name;
+
+    const stopBtn = document.getElementById('radioStopBtn');
+    if (stopBtn) stopBtn.style.display = '';
 
     // Refresh list to highlight current row
     this._renderPage();
@@ -250,6 +230,11 @@ Hub.radio = {
       this._audio.src = '';
       this._audio = null;
     }
+    // Also stop Hub.player if it's playing radio
+    if (Hub.player?.state?.currentSource === 'radio') {
+      Hub.player.stop?.();
+    }
+    this._current = null;
     this._setVizActive(false);
     this._setStatus('Stopped', 'text-gray-400');
     const stopBtn = document.getElementById('radioStopBtn');
@@ -310,11 +295,11 @@ Hub.radio = {
 
     const stations = this._getStations();
     if (index >= 0 && index < stations.length) {
-      stations[index] = { name, url };
+      stations[index] = { ...stations[index], name, url };
     } else {
-      stations.push({ name, url });
+      stations.push({ name, url, logo: '📻' });
     }
-    this._saveStations(stations);
+    this._saveCustomStations(stations);
     this._hideAddForm();
     this._renderPage();
     Hub.ui?.toast?.(`Station saved: ${name}`, 'success');
@@ -328,7 +313,7 @@ Hub.radio = {
     const stations = this._getStations();
     const removed  = stations.splice(index, 1)[0];
     if (this._current?.url === removed?.url) this._stop(false);
-    this._saveStations(stations);
+    this._saveCustomStations(stations);
     this._renderPage();
     Hub.ui?.toast?.(`Removed: ${removed.name}`, 'info');
   },
@@ -341,17 +326,9 @@ Hub.radio = {
     // Temporarily add and play
     const stations  = this._getStations();
     const tempIndex = stations.length;
-    stations.push({ name, url });
-    this._saveStations(stations);
+    stations.push({ name, url, logo: '🧪' });
+    this._saveCustomStations(stations);
     this._play(tempIndex);
-
-    // Remove temp after 10s if still there
-    setTimeout(() => {
-      const s2 = this._getStations();
-      if (s2[tempIndex]?.url === url && s2[tempIndex]?.name === name) {
-        // Only remove if user didn't save it properly
-      }
-    }, 10000);
   },
 
   // ── Bluetooth (unchanged logic) ───────────────────────────

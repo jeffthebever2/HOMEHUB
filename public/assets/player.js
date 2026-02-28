@@ -227,7 +227,7 @@ Hub.player = {
       ? new MediaMetadata({
           title:   this.state.title,
           artist:  this.state.currentSource === 'radio' ? 'Live Radio' : 'Music',
-          artwork: [{ src: '/favicon.png', sizes: '96x96', type: 'image/png' }]
+          artwork: [{ src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' }]
         })
       : null;
   },
@@ -283,7 +283,7 @@ Hub.player = {
         <div class="player-idle flex flex-col items-center justify-center gap-3 py-6 text-gray-500">
           <div style="width:64px;height:64px;border-radius:50%;background:#1e2d3d;display:flex;align-items:center;justify-content:center;font-size:1.8rem;">🎵</div>
           <p class="text-sm">Nothing playing</p>
-          <p class="text-xs text-gray-600">Use the Radio or Music page to start playback</p>
+          <p class="text-xs text-gray-600">Use the Radio page to start playback</p>
         </div>`;
       return;
     }

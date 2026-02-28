@@ -32,10 +32,8 @@ const SHELL_URLS = [
   '/assets/photos.js',
   '/assets/player.js',
   '/assets/radio.js',
-  '/assets/music.js',
-  '/assets/standby.js',
+  '/assets/icons.js',
   '/assets/siteControl.js',
-  '/vendor/twemoji-stub.js',
   '/manifest.webmanifest',
   '/favicon.svg',
 ];
@@ -104,7 +102,7 @@ self.addEventListener('fetch', (evt) => {
     return;
   }
 
-  // CDN assets (Twemoji, Leaflet, etc.) — cache-first, no background update
+  // CDN assets (Leaflet, etc.) — cache-first, no background update
   const isCdn = url.hostname.includes('cdnjs') || url.hostname.includes('cdn.jsdelivr') || url.hostname.includes('unpkg.com');
   if (isCdn) {
     evt.respondWith(

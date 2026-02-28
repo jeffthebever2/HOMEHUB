@@ -24,7 +24,9 @@ Hub.chores = {
     }
   },
 
-  familyMembers: ['Will', 'Lyla', 'Erin', 'Mark'],
+  get familyMembers() {
+    return (window.HOME_HUB_CONFIG && window.HOME_HUB_CONFIG.familyMembers) || ['Will', 'Lyla', 'Mom', 'Dad'];
+  },
 
   // Day mapping: category string → JS getDay() value (0=Sun, 1=Mon … 6=Sat)
   DAY_MAP: {
