@@ -1,7 +1,12 @@
 // ============================================================
-// assets/googlePhotos.js — Google Photos Integration
-// Uses Supabase OAuth provider_token (same pattern as calendar.js)
-// No API key needed — token comes from Google OAuth via Supabase
+// assets/googlePhotos.js — Google Photos client (server-proxied)
+//
+// All actual Google Photos API calls happen server-side via
+// /api/google-photos.js using a refresh token. This client just
+// fetches from that endpoint. No tokens/secrets in browser.
+//
+// Also supports legacy provider_token path as fallback for
+// album browsing in Settings (if server env vars not configured).
 // ============================================================
 window.Hub = window.Hub || {};
 
@@ -9,7 +14,35 @@ Hub.googlePhotos = {
   _albumCache: null,
   _mediaCache: {},
 
-  // ── Token helpers (mirrors calendar.js) ──────────────────
+  // ── Server-side: fetch images via /api/google-photos ───────
+  async getServerImages(albumId, pageSize) {
+    const base = Hub.utils?.apiBase?.() || '';
+    let url = `${base}/api/google-photos?action=images&pageSize=${pageSize || 50}`;
+    if (albumId) url += `&albumId=${encodeURIComponent(albumId)}`;
+
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return await resp.json();
+    } catch (e) {
+      console.warn('[GPhotos] Server fetch failed:', e.message);
+      return { provider: 'google_photos', images: [], degraded: true, error: e.message };
+    }
+  },
+
+  async getServerAlbums() {
+    const base = Hub.utils?.apiBase?.() || '';
+    try {
+      const resp = await fetch(`${base}/api/google-photos?action=albums`);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return await resp.json();
+    } catch (e) {
+      console.warn('[GPhotos] Server albums fetch failed:', e.message);
+      return { albums: [], degraded: true, error: e.message };
+    }
+  },
+
+  // ── Legacy provider_token path (for Settings album picker) ─
   async _getProviderToken() {
     try {
       const { data: { session } } = await Hub.sb.auth.getSession();
@@ -23,20 +56,19 @@ Hub.googlePhotos = {
     }
   },
 
-  async _fetch(url, body, retry = true) {
+  async _fetchWithToken(url, body, retry) {
     let token = await this._getProviderToken();
     if (!token) return { error: 'Not authenticated — sign out and back in to grant Photos access.' };
 
     const opts = {
       method:  body ? 'POST' : 'GET',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' }
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
     };
     if (body) opts.body = JSON.stringify(body);
 
     let resp = await fetch(url, opts);
 
-    if (resp.status === 401 && retry) {
-      console.warn('[GPhotos] 401 — refreshing token');
+    if (resp.status === 401 && retry !== false) {
       try { await Hub.auth?.ensureFreshSession?.('gphotos-401'); } catch (e) {}
       token = await this._getProviderToken();
       if (!token) return { error: '401 and could not refresh token' };
@@ -46,31 +78,30 @@ Hub.googlePhotos = {
 
     if (!resp.ok) {
       const txt = await resp.text().catch(() => '');
-      // Surface specific guidance for auth/scope errors
-      if (resp.status === 403) {
-        return { error: `403 Forbidden — Google Photos access was denied. Sign out and sign back in to re-grant the Photos permission scope. Detail: ${txt.slice(0, 150)}` };
-      }
-      if (resp.status === 401) {
-        return { error: `401 Unauthorized — session expired. Sign out and back in. Detail: ${txt.slice(0, 150)}` };
-      }
       return { error: `HTTP ${resp.status}: ${txt.slice(0, 200)}` };
     }
     return resp.json();
   },
 
-  // ── Albums ────────────────────────────────────────────────
-  /** Returns [{id, title, mediaItemsCount, coverPhotoBaseUrl}] */
+  // ── Albums (used by Settings UI) ───────────────────────────
   async listAlbums() {
+    // Try server-side first (uses refresh token — more reliable)
+    const serverData = await this.getServerAlbums();
+    if (serverData.albums?.length) {
+      this._albumCache = serverData.albums;
+      return serverData.albums;
+    }
+
+    // Fall back to provider_token for album browsing
     if (this._albumCache) return this._albumCache;
 
     const results = [];
     let pageToken = null;
-
     for (let page = 0; page < 10; page++) {
       const url = 'https://photoslibrary.googleapis.com/v1/albums?pageSize=50'
                 + (pageToken ? `&pageToken=${pageToken}` : '');
-      const data = await this._fetch(url);
-      if (data.error) return { error: data.error };
+      const data = await this._fetchWithToken(url);
+      if (data.error) return data;
       if (data.albums) results.push(...data.albums);
       pageToken = data.nextPageToken;
       if (!pageToken) break;
@@ -85,31 +116,46 @@ Hub.googlePhotos = {
     return this._albumCache;
   },
 
-  // ── Media items ───────────────────────────────────────────
-  /** Returns array of image URLs for the album (=d parameter for hi-res) */
-  async getAlbumImageUrls(albumId, maxItems = 200) {
+  // ── Media items ────────────────────────────────────────────
+  // Primary path: server endpoint. Fallback: provider_token.
+  async getAlbumImageUrls(albumId, maxItems) {
     if (this._mediaCache[albumId]) return this._mediaCache[albumId];
 
+    // Try server endpoint first
+    const serverData = await this.getServerImages(albumId, maxItems || 200);
+    if (serverData.images?.length) {
+      const urls = serverData.images.map(img => img.url);
+      this._mediaCache[albumId] = urls;
+      console.log('[GPhotos] Server returned', urls.length, 'images');
+      return urls;
+    }
+
+    // If server is degraded, log the reason
+    if (serverData.degraded) {
+      console.warn('[GPhotos] Server degraded:', serverData.error);
+    }
+
+    // Fallback: try provider_token (legacy path)
     const urls = [];
     let pageToken = null;
+    const max = maxItems || 200;
 
-    for (let page = 0; page < 10 && urls.length < maxItems; page++) {
-      const body = { albumId, pageSize: Math.min(100, maxItems - urls.length) };
+    for (let page = 0; page < 10 && urls.length < max; page++) {
+      const body = { albumId, pageSize: Math.min(100, max - urls.length) };
       if (pageToken) body.pageToken = pageToken;
 
-      const data = await this._fetch(
+      const data = await this._fetchWithToken(
         'https://photoslibrary.googleapis.com/v1/mediaItems:search', body
       );
 
       if (data.error) {
-        console.warn('[GPhotos] mediaItems error:', data.error);
-        break;
+        console.warn('[GPhotos] Provider token fallback error:', data.error);
+        return serverData.degraded ? serverData : { error: data.error };
       }
 
       if (data.mediaItems) {
         for (const item of data.mediaItems) {
           if (item.mimeType?.startsWith('image/') && item.baseUrl) {
-            // =d gives full download; =w1920-h1080 gives scaled version
             urls.push(item.baseUrl + '=w1920-h1080');
           }
         }

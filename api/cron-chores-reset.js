@@ -1,12 +1,10 @@
 // ============================================================
-// /api/cron-chores-reset.js  (v2)
+// /api/cron-chores-reset.js  (v3 — column-resilient)
+//
 // Called hourly by Vercel Cron. Idempotent per-household reset.
-// Refactored:
-//   - No esm.sh import — pure fetch REST
-//   - America/New_York timezone-robust via Intl.DateTimeFormat
-//   - Resets done + skipped → pending
-//   - Clears completed_by_name / completer_email
-//   - Supports weekly chores by category NAME when day_of_week is null
+// NEVER stops on one household error — processes all, reports summary.
+// Works even if optional columns (last_chore_reset_date,
+// completed_by_name, category, day_of_week) are missing.
 // ============================================================
 
 export default async function handler(req, res) {
@@ -21,26 +19,21 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY' });
   }
 
-  // ── Timezone-safe date helpers ─────────────────────────
-  const TZ  = 'America/New_York';
+  const TZ  = process.env.HOMEHUB_TZ || 'America/New_York';
   const now = new Date();
-
-  // "2025-12-31" in Eastern time
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(now);
-
-  // Day-of-week 0=Sun..6=Sat in Eastern time
   const wkShort  = new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'short' }).format(now);
   const wkMap    = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
   const dow      = wkMap[wkShort] ?? now.getDay();
   const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-  const dayName  = dayNames[dow]; // e.g. "Monday"
+  const dayName  = dayNames[dow];
 
   console.log(`[Cron] date=${today} dow=${dow} (${dayName}) tz=${TZ}`);
 
-  // ── Helper: Supabase REST fetch ────────────────────────
-  async function sbFetch(path, method = 'GET', body) {
+  // ── Helper: Supabase REST fetch ────────────────────────────
+  async function sbFetch(path, method, body) {
     const opts = {
-      method,
+      method: method || 'GET',
       headers: {
         apikey:         SB_KEY,
         Authorization:  `Bearer ${SB_KEY}`,
@@ -52,25 +45,40 @@ export default async function handler(req, res) {
     const r = await fetch(`${SB_URL}/rest/v1/${path}`, opts);
     if (!r.ok) {
       const t = await r.text().catch(() => '');
-      throw new Error(`${method} /rest/v1/${path} → HTTP ${r.status}: ${t.slice(0,200)}`);
+      throw new Error(`${method || 'GET'} /rest/v1/${path} → HTTP ${r.status}: ${t.slice(0,200)}`);
     }
     const ct = r.headers.get('content-type') || '';
     return ct.includes('json') ? r.json() : null;
   }
 
-  // ── 1) Fetch households that haven't reset today ──────
-  const hhPath = `households?select=id,name,last_chore_reset_date`
-    + `&or=(last_chore_reset_date.is.null,last_chore_reset_date.neq.${today})`;
+  // ── 1) Fetch all households ────────────────────────────────
+  // Try with last_chore_reset_date filter; fall back to all households
   let households;
+  let hasResetColumn = true;
+
   try {
+    const hhPath = `households?select=id,name,last_chore_reset_date`
+      + `&or=(last_chore_reset_date.is.null,last_chore_reset_date.neq.${today})`;
     households = await sbFetch(hhPath);
   } catch (e) {
-    console.error('[Cron] Households fetch failed:', e.message);
-    return res.status(500).json({ error: 'DB error', details: e.message });
+    console.warn('[Cron] Filtered household query failed:', e.message, '— trying all households');
+    hasResetColumn = false;
+    try {
+      households = await sbFetch('households?select=id,name');
+    } catch (e2) {
+      console.error('[Cron] Households fetch failed completely:', e2.message);
+      return res.status(500).json({ error: 'Cannot fetch households', detail: e2.message });
+    }
   }
 
   if (!households?.length) {
-    return res.status(200).json({ message: 'No households need reset', date: today, processed: 0 });
+    return res.status(200).json({
+      message: 'No households need reset',
+      date: today,
+      householdsProcessed: 0,
+      householdsReset: 0,
+      errors: []
+    });
   }
 
   console.log(`[Cron] ${households.length} household(s) to process`);
@@ -78,56 +86,78 @@ export default async function handler(req, res) {
   const results = [];
 
   for (const hh of households) {
+    const hhLog = [];
     try {
-      // ── 2) Reset chores for this household ────────────
-      //  Match if:
-      //    a) category = 'Daily'   (always)
-      //    b) day_of_week = dow    (numeric match)
-      //    c) category starts with day name (e.g. "Monday (Kitchen)")
-      //  AND status is done or skipped
-      //  PATCH: set status=pending, clear completer fields
-      const choreFilter = `household_id=eq.${hh.id}`
-        + `&status=in.(done,skipped)`
-        + `&or=(category.eq.Daily,day_of_week.eq.${dow},category.ilike.${encodeURIComponent(dayName + '%')})`;
+      // ── 2) Reset chores — smart filter first, then blanket fallback ──
+      let resetOk = false;
+      const resetBody = { status: 'pending', completed_by_name: null };
 
-      await sbFetch(`chores?${choreFilter}`, 'PATCH', {
-        status:             'pending',
-        completed_by_name:  null,
-        completer_email:    null
-      });
-
-      // ── 3) Mark household reset date ─────────────────
-      await sbFetch(`households?id=eq.${hh.id}`, 'PATCH', {
-        last_chore_reset_date: today
-      });
-
-      // ── 4) Log it ─────────────────────────────────────
+      // 2a) Smart reset: category/day_of_week aware
       try {
-        await sbFetch('system_logs', 'POST', {
-          source:  'cron',
-          service: 'chore-reset',
-          status:  'ok',
-          message: `Auto-reset ${hh.name} on ${today} (${dayName})`
-        });
-      } catch (logErr) {
-        console.warn('[Cron] Log insert failed (non-critical):', logErr.message);
+        const or = encodeURIComponent(`(category.eq.Daily,day_of_week.eq.${dow},category.ilike.${dayName}%)`);
+        const choreFilter = `chores?household_id=eq.${hh.id}&status=in.(done,skipped)&or=${or}`;
+        await sbFetch(choreFilter, 'PATCH', resetBody);
+        resetOk = true;
+        hhLog.push('smart reset');
+      } catch (smartErr) {
+        hhLog.push('smart reset failed: ' + smartErr.message);
       }
 
-      console.log(`[Cron] ✓ Reset chores for ${hh.name}`);
-      results.push({ household: hh.name, success: true, date: today });
+      // 2b) Fallback: blanket reset
+      if (!resetOk) {
+        try {
+          await sbFetch(
+            `chores?household_id=eq.${hh.id}&status=in.(done,skipped)`,
+            'PATCH',
+            { status: 'pending' }
+          );
+          resetOk = true;
+          hhLog.push('blanket reset');
+        } catch (blankErr) {
+          hhLog.push('blanket reset failed: ' + blankErr.message);
+        }
+      }
+
+      if (!resetOk) {
+        throw new Error('All reset strategies failed');
+      }
+
+      // ── 3) Mark household reset date (best-effort) ──────────
+      if (hasResetColumn) {
+        try {
+          await sbFetch(`households?id=eq.${hh.id}`, 'PATCH', { last_chore_reset_date: today });
+        } catch (e) {
+          hhLog.push('date update skipped: ' + e.message);
+        }
+      }
+
+      // ── 4) Log it (best-effort) ────────────────────────────
+      try {
+        await sbFetch('system_logs', 'POST', {
+          source: 'cron', service: 'chore-reset', status: 'ok',
+          message: `Reset ${hh.name} on ${today} (${dayName}) [${hhLog.join(', ')}]`
+        });
+      } catch (logErr) {
+        // Non-critical
+      }
+
+      console.log(`[Cron] ✓ ${hh.name}: ${hhLog.join(', ')}`);
+      results.push({ household: hh.name, success: true, strategy: hhLog });
 
     } catch (err) {
       console.error(`[Cron] ✗ ${hh.name}:`, err.message);
-      results.push({ household: hh.name, success: false, error: err.message });
+      results.push({ household: hh.name, success: false, error: err.message, log: hhLog });
     }
   }
 
   return res.status(200).json({
-    message:    `Processed ${households.length} household(s)`,
-    date:       today,
-    dayOfWeek:  dow,
+    message:            `Processed ${households.length} household(s)`,
+    date:               today,
+    dayOfWeek:          dow,
     dayName,
-    processed:  results.filter(r => r.success).length,
+    householdsProcessed: households.length,
+    householdsReset:     results.filter(r => r.success).length,
+    errors:              results.filter(r => !r.success),
     results
   });
 }
