@@ -1,0 +1,30 @@
+:root {
+  --hh-bg: #08111b;
+  --hh-surface: #0f1a27;
+  --hh-surface-2: #132131;
+  --hh-surface-3: #17283a;
+  --hh-border: #223348;
+  --hh-border-strong: #35506b;
+  --hh-text: #f7fbff;
+  --hh-text-muted: #9db0c3;
+  --hh-text-dim: #6f8499;
+  --hh-info: #4fb3ff;
+  --hh-success: #2ac27b;
+  --hh-warning: #f4b740;
+  --hh-urgent: #f97316;
+  --hh-danger: #ef4444;
+  --hh-offline: #64748b;
+  --hh-shadow-card: 0 20px 40px rgba(3, 10, 18, 0.38);
+  --hh-shadow-hero: 0 30px 60px rgba(3, 10, 18, 0.5);
+  --hh-radius-sm: 10px;
+  --hh-radius-md: 16px;
+  --hh-radius-lg: 24px;
+  --hh-space-1: 4px;
+  --hh-space-2: 8px;
+  --hh-space-3: 12px;
+  --hh-space-4: 16px;
+  --hh-space-5: 24px;
+  --hh-space-6: 32px;
+  --hh-space-7: 40px;
+  --hh-max-width: 1440px;
+}

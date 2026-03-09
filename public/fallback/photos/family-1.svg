@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">HomeHub fallback photo one</title>
+  <desc id="desc">A stylized warm household illustration used when live photos are unavailable.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b1724"/>
+      <stop offset="50%" stop-color="#16304a"/>
+      <stop offset="100%" stop-color="#274f63"/>
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <circle cx="1320" cy="180" r="110" fill="#f4b740" fill-opacity=".9"/>
+  <circle cx="1320" cy="180" r="160" fill="#f4b740" fill-opacity=".12"/>
+  <rect x="0" y="640" width="1600" height="260" fill="#102236"/>
+  <path d="M140 670c120-200 220-260 360-260s270 80 420 120 270-30 420-170l260 310H140z" fill="#1b3954"/>
+  <path d="M0 710c110-80 200-120 320-120s200 32 310 96 236 88 356 40 230-48 320-16 180 84 294 160H0V710z" fill="#2a5a6e"/>
+  <rect x="210" y="300" width="320" height="220" rx="28" fill="#f7fbff" fill-opacity=".08" stroke="#f7fbff" stroke-opacity=".14"/>
+  <rect x="242" y="332" width="96" height="96" rx="18" fill="#4fb3ff" fill-opacity=".3"/>
+  <rect x="356" y="332" width="142" height="24" rx="12" fill="#f7fbff" fill-opacity=".18"/>
+  <rect x="356" y="372" width="112" height="20" rx="10" fill="#f7fbff" fill-opacity=".12"/>
+  <rect x="242" y="448" width="256" height="18" rx="9" fill="#f7fbff" fill-opacity=".12"/>
+  <text x="210" y="590" fill="#d9ebfb" font-size="44" font-family="Inter, sans-serif" font-weight="700">HomeHub fallback</text>
+</svg>

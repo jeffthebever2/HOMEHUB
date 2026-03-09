@@ -1,0 +1,16 @@
+{
+  "name": "homehub",
+  "private": true,
+  "type": "module",
+  "description": "HomeHub static frontend and Vercel serverless API",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "npx vercel dev",
+    "check:function-count": "node scripts/check-function-count.mjs",
+    "verify:env": "node scripts/verify-env.mjs",
+    "smoke": "node scripts/smoke-contracts.mjs",
+    "verify": "npm run check:function-count && npm run verify:env"
+  }
+}
