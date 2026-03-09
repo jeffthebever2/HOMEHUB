@@ -13,8 +13,8 @@
     // Hard-coded browser config for this deployment.
     // Never place SUPABASE_SERVICE_ROLE_KEY in this file.
     supabaseUrl: 'https://cmaefwhqoykittrwiobw.supabase.co',
-    supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNtYWVmd2hxb3lraXR0cndpb2J3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA1NjM1ODQsImV4cCI6MjA4NjEzOTU4NH0.rUub2PIr60w9InuA1zygE7l0OK6li_Un8WjpdcVg3ko',
-    apiBase: 'sb_publishable_XpO2k1opVlUS3BiqO7jM9g_Bpjfvu_Y',
+    supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNtYWVmd2hxb3lraXR0cndpb2J3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MDU2MzU4NCwiZXhwIjoyMDg2MTM5NTg0fQ.2c8VbnmTpZwoBY0hfqJOFkUhxgq3ji0MIl4yk2UtTCM',
+    apiBase: '',
 
     defaultLocation: {
       name: 'Gahanna, Ohio',
