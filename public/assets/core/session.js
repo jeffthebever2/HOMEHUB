@@ -7,6 +7,22 @@ let authListenerBound = false;
 const AUTH_PREFIX = '[HomeHub auth]';
 const warnedMessages = new Set();
 
+function describeAuthError(error, fallback = 'Unexpected auth error.') {
+  if (typeof error === 'string' && error.trim()) return error.trim();
+  if (typeof error?.message === 'string' && error.message.trim()) return error.message.trim();
+  if (typeof error?.error_description === 'string' && error.error_description.trim()) return error.error_description.trim();
+  if (typeof error?.details === 'string' && error.details.trim()) return error.details.trim();
+  if (typeof error?.reason === 'string' && error.reason.trim()) return error.reason.trim();
+  if (typeof error?.error?.message === 'string' && error.error.message.trim()) return error.error.message.trim();
+  try {
+    const serialized = JSON.stringify(error);
+    if (serialized && serialized !== '{}' && serialized !== 'null') return serialized;
+  } catch {
+    // Ignore JSON serialization failures and use the fallback below.
+  }
+  return fallback;
+}
+
 function updateSessionAvailability(nextState) {
   sessionAvailability = {
     available: Boolean(nextState?.available),
@@ -51,7 +67,7 @@ function getClient() {
     updateSessionAvailability({
       available: false,
       status: 'unavailable',
-      reason: `Invalid Supabase client creation: ${error.message || 'client initialization failed.'}`,
+      reason: `Invalid Supabase client creation: ${describeAuthError(error, 'client initialization failed.')}`,
     });
     warnAuthIssue(sessionAvailability.reason);
     supabaseClient = null;
@@ -78,7 +94,7 @@ export async function initSession() {
       setMembership(null);
     }
   } catch (error) {
-    const reason = `Failed auth/session boot: ${error.message || 'Session lookup failed.'}`;
+    const reason = `Failed auth/session boot: ${describeAuthError(error, 'Session lookup failed.')}`;
     updateSessionAvailability({
       ...getAuthSupportState(),
       available: true,
@@ -92,16 +108,27 @@ export async function initSession() {
   }
 
   if (!authListenerBound) {
-    authListenerBound = true;
-    client.auth.onAuthStateChange(async (_event, session) => {
-      setSession(session);
-      if (session?.user) {
-        await loadMembership();
-      } else {
-        setMembership(null);
-      }
-      window.dispatchEvent(new Event('homehub:session-changed'));
-    });
+    try {
+      client.auth.onAuthStateChange(async (_event, session) => {
+        setSession(session);
+        if (session?.user) {
+          await loadMembership();
+        } else {
+          setMembership(null);
+        }
+        window.dispatchEvent(new Event('homehub:session-changed'));
+      });
+      authListenerBound = true;
+    } catch (error) {
+      const reason = `Failed auth/session boot: ${describeAuthError(error, 'Could not bind the auth state listener.')}`;
+      updateSessionAvailability({
+        ...getAuthSupportState(),
+        available: true,
+        status: 'degraded',
+        reason,
+      });
+      warnAuthIssue(reason);
+    }
   }
 
   return store.session;
@@ -126,7 +153,7 @@ export async function loadMembership() {
     setMembership(data || null);
     return data || null;
   } catch (error) {
-    warnAuthIssue(`Household membership lookup failed: ${error.message || 'unknown error.'}`);
+    warnAuthIssue(`Household membership lookup failed: ${describeAuthError(error, 'unknown error.')}`);
     setMembership(null);
     return null;
   }

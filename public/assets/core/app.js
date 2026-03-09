@@ -37,6 +37,26 @@ let activityWatchersBound = false;
 let sessionListenersBound = false;
 let serviceWorkerBound = false;
 
+function describeRuntimeError(error, fallback = 'Unexpected startup error.') {
+  if (typeof error === 'string' && error.trim()) return error.trim();
+  if (typeof error?.message === 'string' && error.message.trim()) return error.message.trim();
+  if (typeof error?.reason === 'string' && error.reason.trim()) return error.reason.trim();
+  if (typeof error?.details === 'string' && error.details.trim()) return error.details.trim();
+  if (typeof error?.error_description === 'string' && error.error_description.trim()) return error.error_description.trim();
+  if (typeof error?.error?.message === 'string' && error.error.message.trim()) return error.error.message.trim();
+  try {
+    const serialized = JSON.stringify(error);
+    if (serialized && serialized !== '{}' && serialized !== 'null') return serialized;
+  } catch {
+    // Ignore JSON serialization failures and fall back to the default message.
+  }
+  return fallback;
+}
+
+function logRuntimeError(label, error) {
+  console.error(`[HomeHub] ${label}`, error);
+}
+
 function getSessionValue(key) {
   try {
     return sessionStorage.getItem(key);
@@ -119,6 +139,7 @@ function bindActivityWatchers() {
 }
 
 function renderRouteFailure(error) {
+  logRuntimeError('route render failed', error);
   const { pageContent } = ensureShellStructure();
   if (!pageContent) return;
   pageContent.innerHTML = `
@@ -127,15 +148,16 @@ function renderRouteFailure(error) {
       title: 'Page unavailable',
       subtitle: 'The shell is still running, but this view could not render.',
     })}
-    ${errorState('Render failed', error.message || 'Unexpected render error')}
+    ${errorState('Render failed', describeRuntimeError(error, 'Unexpected render error'))}
   `;
 }
 
 function renderBootFailure(error) {
+  logRuntimeError('bootstrap failed', error);
   const root = getRoot();
   root.innerHTML = `
     <div class="hh-login">
-      ${errorState('HomeHub failed to start', error.message || 'Unexpected bootstrap error')}
+      ${errorState('HomeHub failed to start', describeRuntimeError(error, 'Unexpected bootstrap error'))}
     </div>
   `;
 }
@@ -250,14 +272,43 @@ async function bootstrap() {
     login.innerHTML = loadingState('Checking session…');
   }
 
-  initRouter(() => {
-    renderApp().catch(renderRouteFailure);
-  });
+  try {
+    initRouter(() => {
+      renderApp().catch(renderRouteFailure);
+    });
+  } catch (error) {
+    logRuntimeError('router initialization failed', error);
+  }
 
-  await initSession();
-  await loadRuntimeConfig();
-  await renderApp();
-  bindActivityWatchers();
+  try {
+    await initSession();
+  } catch (error) {
+    logRuntimeError('session initialization failed', error);
+  }
+
+  try {
+    await loadRuntimeConfig();
+  } catch (error) {
+    logRuntimeError('runtime config load failed', error);
+  }
+
+  try {
+    await renderApp();
+  } catch (error) {
+    logRuntimeError('initial app render failed', error);
+    try {
+      renderLogin();
+      return;
+    } catch {
+      throw error;
+    }
+  }
+
+  try {
+    bindActivityWatchers();
+  } catch (error) {
+    logRuntimeError('activity watcher binding failed', error);
+  }
 
   if (!sessionListenersBound) {
     sessionListenersBound = true;
