@@ -1,11 +1,26 @@
-window.HOME_HUB_CONFIG = {
-  householdDisplayName: 'Scott family',
-  supabaseUrl: 'https://cmaefwhqoykittrwiobw.supabase.co',
-  supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNtYWVmd2hxb3lraXR0cndpb2J3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA1NjM1ODQsImV4cCI6MjA4NjEzOTU4NH0.rUub2PIr60w9InuA1zygE7l0OK6li_Un8WjpdcVg3ko',
-  apiBase: '',
-  defaultLocation: {
-    name: 'Gahanna, Ohio',
-    lat: 40.029059,
-    lon: -82.863462,
-  },
-};
+(function initHomeHubConfig(globalObject) {
+  const current = globalObject.HOME_HUB_CONFIG && typeof globalObject.HOME_HUB_CONFIG === 'object'
+    ? globalObject.HOME_HUB_CONFIG
+    : {};
+  const currentLocation = current.defaultLocation && typeof current.defaultLocation === 'object'
+    ? current.defaultLocation
+    : {};
+
+  globalObject.HOME_HUB_CONFIG = {
+    householdDisplayName: typeof current.householdDisplayName === 'string' ? current.householdDisplayName : 'HomeHub',
+
+    // Browser-safe Supabase values only.
+    // Paste your project URL and anon/public key here for local dev and Vercel deploys.
+    // Never place SUPABASE_SERVICE_ROLE_KEY in this file.
+    supabaseUrl: typeof current.supabaseUrl === 'string' ? current.supabaseUrl : '',
+    supabaseAnonKey: typeof current.supabaseAnonKey === 'string' ? current.supabaseAnonKey : '',
+    apiBase: typeof current.apiBase === 'string' ? current.apiBase : '',
+
+    defaultLocation: {
+      name: typeof currentLocation.name === 'string' ? currentLocation.name : 'Configured location',
+      lat: 40.029059,
+      lon: -82.863462,
+      ...(currentLocation || {}),
+    },
+  };
+}(window));

@@ -61,13 +61,93 @@ public/               shell HTML, static assets, fallback photos
 scripts/              repo guardrails and verification helpers
 ```
 
+## Supabase setup
+
+HomeHub uses two different Supabase credential surfaces:
+
+- `public/config.js` is browser-visible and must only contain browser-safe values.
+- `.env` locally and Vercel Project Settings -> Environment Variables hold server-only secrets.
+
+### `public/config.js`
+
+Paste these browser-safe values into [`public/config.js`](./public/config.js):
+
+- `supabaseUrl`
+- `supabaseAnonKey`
+- `apiBase`
+
+For same-origin local dev and Vercel deployments, keep `apiBase` as an empty string.
+
+Safe for browser use:
+
+- `supabaseUrl`
+- `supabaseAnonKey`
+
+Never put this in `public/config.js`:
+
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+### Local `.env`
+
+Copy [`.env.example`](./.env.example) to `.env` and set:
+
+Required:
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+Optional but supported:
+
+- `SUPABASE_ANON_KEY`
+- `ADMIN_TOKEN`
+- provider-specific integration variables from `.env.example`
+
+`SUPABASE_URL` in `.env` should match `supabaseUrl` in `public/config.js`.
+
+### Vercel environment variables
+
+Set these in Vercel Project Settings -> Environment Variables:
+
+Required:
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+Optional:
+
+- `SUPABASE_ANON_KEY`
+- `ADMIN_TOKEN`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_REFRESH_TOKEN`
+- `FIREBASE_DATABASE_URL`
+- any provider or household overrides from `.env.example`
+
+### Startup steps
+
+1. Copy `.env.example` to `.env`.
+2. Paste your Supabase project URL into `.env` as `SUPABASE_URL`.
+3. Paste your Supabase service role key into `.env` as `SUPABASE_SERVICE_ROLE_KEY`.
+4. Open [`public/config.js`](./public/config.js) and paste the same project URL into `supabaseUrl`.
+5. Paste your Supabase anon/public key into `public/config.js` as `supabaseAnonKey`.
+6. Run `npm run verify`.
+7. Run `npm run dev`.
+
+### Deploy steps
+
+1. Deploy the repo root to Vercel with Framework Preset set to `Other`.
+2. Keep `public/config.js` checked in or updated with the production `supabaseUrl` and `supabaseAnonKey`.
+3. Add `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in Vercel Project Settings -> Environment Variables.
+4. Add any optional integration env vars needed for your deployment.
+5. Deploy.
+6. Run `HOMEHUB_BASE_URL=https://your-deployment-url npm run smoke` after deploy if you want a live contract check.
+
 ## Local Development
 
-1. Confirm the browser-safe Supabase values in `public/config.js`.
-2. Copy `.env.example` to `.env` and fill in the server variables you need for your setup.
-3. Run `npm run verify`.
-4. Run `npm run dev` to start `vercel dev` from the repo root.
-5. Sign in with Google through Supabase.
+1. Complete the steps in [Supabase setup](#supabase-setup).
+2. Run `npm run verify`.
+3. Run `npm run dev` to start `vercel dev` from the repo root.
+4. Sign in with Google through Supabase.
 
 Recommended preflight checks:
 
@@ -103,6 +183,8 @@ This project is a static frontend plus native `api/*.js` Vercel Functions. The f
 - `apiBase`
 
 For same-origin Vercel deployment, keep `apiBase` empty.
+
+`SUPABASE_SERVICE_ROLE_KEY` must never go in `public/config.js`.
 
 ### Server Environment Variables
 

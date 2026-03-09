@@ -1,13 +1,135 @@
 import { apiFetch } from '../../core/api.js';
-import { bindRouteButtons, escapeHtml, formatDateTime } from '../../core/format.js';
+import { asArray, asNumber, asObject, bindRouteButtons, escapeHtml, formatDateTime } from '../../core/format.js';
 import { pageHeader } from '../../ui/pageHeader.js';
-import { errorState, loadingState } from '../../ui/state.js';
+import { loadingState } from '../../ui/state.js';
 import { pushToast } from '../../ui/toast.js';
 
 const TAB_KEY = 'hh_household_tab';
 
+function readStoredTab() {
+  try {
+    return sessionStorage.getItem(TAB_KEY) || 'chores';
+  } catch {
+    return 'chores';
+  }
+}
+
+function writeStoredTab(tab) {
+  try {
+    sessionStorage.setItem(TAB_KEY, tab);
+  } catch {
+    // Ignore sessionStorage failures.
+  }
+}
+
+function getFallbackPayload(errorMessage = '') {
+  return {
+    meta: {
+      fetchedAt: new Date().toISOString(),
+      degraded: Boolean(errorMessage),
+      warnings: errorMessage ? [errorMessage] : [],
+    },
+    summary: {
+      status: 'info',
+      headline: 'Household data unavailable',
+      supportingText: errorMessage || 'HomeHub is showing the best available household state.',
+      chores: {
+        dueToday: 0,
+        completedToday: 0,
+        overdueCount: 0,
+        progressPercent: 0,
+      },
+      treats: {
+        petName: 'Pet',
+        statusLevel: 'unknown',
+        treatsRemaining: 0,
+      },
+    },
+    detail: {
+      chores: {
+        degraded: Boolean(errorMessage),
+        warning: errorMessage || null,
+        nextResetAt: null,
+        overdue: [],
+        dueToday: [],
+        completedToday: [],
+        upcoming: [],
+      },
+      treats: {
+        degraded: Boolean(errorMessage),
+        warning: errorMessage || null,
+        petName: 'Pet',
+        statusLevel: 'unknown',
+        treatsRemaining: 0,
+        treatsGivenToday: 0,
+        dailyLimitTreats: 0,
+        history: [],
+        lastTreat: null,
+        resetsAt: null,
+      },
+    },
+  };
+}
+
+function normalizeHouseholdPayload(payload, errorMessage = '') {
+  const fallback = getFallbackPayload(errorMessage);
+  const meta = asObject(payload?.meta);
+  const summary = asObject(payload?.summary);
+  const detail = asObject(payload?.detail);
+  const chores = asObject(detail.chores);
+  const treats = asObject(detail.treats);
+  return {
+    meta: {
+      ...fallback.meta,
+      ...meta,
+      warnings: asArray(meta.warnings),
+    },
+    summary: {
+      ...fallback.summary,
+      ...summary,
+      chores: {
+        ...fallback.summary.chores,
+        ...asObject(summary.chores),
+      },
+      treats: {
+        ...fallback.summary.treats,
+        ...asObject(summary.treats),
+      },
+    },
+    detail: {
+      chores: {
+        ...fallback.detail.chores,
+        ...chores,
+        overdue: asArray(chores.overdue),
+        dueToday: asArray(chores.dueToday),
+        completedToday: asArray(chores.completedToday),
+        upcoming: asArray(chores.upcoming),
+      },
+      treats: {
+        ...fallback.detail.treats,
+        ...treats,
+        history: asArray(treats.history),
+        lastTreat: treats.lastTreat && typeof treats.lastTreat === 'object' ? treats.lastTreat : null,
+      },
+    },
+  };
+}
+
+function renderWarningBanner(message) {
+  if (!message) return '';
+  return `
+    <div class="hh-banner hh-banner-offline" style="margin-bottom:1rem;">
+      <div class="hh-banner-copy">
+        <p class="hh-banner-title">Section degraded</p>
+        <p class="hh-banner-subtitle">${escapeHtml(message)}</p>
+      </div>
+    </div>
+  `;
+}
+
 function renderChoreRows(items, actionLabel, complete) {
-  if (!items.length) {
+  const safeItems = asArray(items);
+  if (!safeItems.length) {
     return `
       <div class="hh-state">
         <p class="hh-state-title">Nothing here</p>
@@ -17,11 +139,11 @@ function renderChoreRows(items, actionLabel, complete) {
   }
   return `
     <div class="hh-list">
-      ${items.map((item) => `
+      ${safeItems.map((item) => `
         <div class="hh-list-row">
           <div class="hh-row-meta">
-            <div class="hh-row-title">${escapeHtml(item.title)}</div>
-            <div class="hh-row-copy">${escapeHtml(item.badge)}${item.assignee ? ` · ${escapeHtml(item.assignee)}` : ''}</div>
+            <div class="hh-row-title">${escapeHtml(item.title || 'Untitled chore')}</div>
+            <div class="hh-row-copy">${escapeHtml(item.badge || '')}${item.assignee ? ` · ${escapeHtml(item.assignee)}` : ''}</div>
           </div>
           <div class="hh-inline-actions">
             <button class="hh-btn hh-btn-secondary" data-action="toggle-chore" data-id="${escapeHtml(item.id)}" data-complete="${complete ? '1' : '0'}">${escapeHtml(actionLabel)}</button>
@@ -33,17 +155,18 @@ function renderChoreRows(items, actionLabel, complete) {
 }
 
 function renderTreatHistory(items) {
-  if (!items.length) {
+  const safeItems = asArray(items);
+  if (!safeItems.length) {
     return `
       <div class="hh-state">
         <p class="hh-state-title">No treats logged today</p>
-        <p class="hh-state-copy">Use the quick-add form when ${'your pet'} gets a treat.</p>
+        <p class="hh-state-copy">Use the quick-add form when your pet gets a treat.</p>
       </div>
     `;
   }
   return `
     <div class="hh-list">
-      ${items.map((item) => `
+      ${safeItems.map((item) => `
         <div class="hh-list-row">
           <div class="hh-row-meta">
             <div class="hh-row-title">${escapeHtml(item.note || 'Treat')}</div>
@@ -68,14 +191,15 @@ function renderTabs(activeTab) {
 function renderChoresTab(payload) {
   const chores = payload.detail.chores;
   return `
+    ${renderWarningBanner(chores.warning || (chores.degraded ? 'Chore data is temporarily unavailable.' : ''))}
     <div class="hh-grid">
       <section class="hh-card hh-card-hero hh-col-12">
         <div class="hh-stack">
           <div class="hh-pill-row">
-            <span class="hh-badge hh-badge-${payload.summary.status === 'warning' ? 'warning' : payload.summary.status === 'info' ? 'info' : 'success'}">${escapeHtml(payload.summary.headline)}</span>
-            <span class="hh-badge hh-badge-neutral">${escapeHtml(String(payload.summary.chores.progressPercent))}% complete</span>
+            <span class="hh-badge hh-badge-${payload.summary.status === 'warning' ? 'warning' : payload.summary.status === 'info' ? 'info' : 'success'}">${escapeHtml(payload.summary.headline || 'Chores')}</span>
+            <span class="hh-badge hh-badge-neutral">${escapeHtml(String(payload.summary.chores.progressPercent || 0))}% complete</span>
           </div>
-          <p class="hh-page-subtitle" style="margin:0;">${escapeHtml(payload.summary.supportingText)}</p>
+          <p class="hh-page-subtitle" style="margin:0;">${escapeHtml(payload.summary.supportingText || '')}</p>
         </div>
       </section>
       <section class="hh-card hh-col-8">
@@ -89,9 +213,9 @@ function renderChoresTab(payload) {
         <div class="hh-stack">
           <div class="hh-page-kicker">Household progress</div>
           <div class="hh-kv">
-            <div class="hh-kv-row"><span>Due today</span><strong>${escapeHtml(String(payload.summary.chores.dueToday))}</strong></div>
-            <div class="hh-kv-row"><span>Completed</span><strong>${escapeHtml(String(payload.summary.chores.completedToday))}</strong></div>
-            <div class="hh-kv-row"><span>Overdue</span><strong>${escapeHtml(String(payload.summary.chores.overdueCount))}</strong></div>
+            <div class="hh-kv-row"><span>Due today</span><strong>${escapeHtml(String(payload.summary.chores.dueToday || 0))}</strong></div>
+            <div class="hh-kv-row"><span>Completed</span><strong>${escapeHtml(String(payload.summary.chores.completedToday || 0))}</strong></div>
+            <div class="hh-kv-row"><span>Overdue</span><strong>${escapeHtml(String(payload.summary.chores.overdueCount || 0))}</strong></div>
             <div class="hh-kv-row"><span>Resets</span><strong>${escapeHtml(formatDateTime(chores.nextResetAt, { hour: 'numeric', minute: '2-digit' }))}</strong></div>
           </div>
           <form id="hh-create-chore" class="hh-stack">
@@ -131,25 +255,26 @@ function renderTreatsTab(payload) {
   const treats = payload.detail.treats;
   const statusClass = treats.statusLevel === 'at' ? 'warning' : treats.statusLevel === 'near' ? 'info' : 'success';
   return `
+    ${renderWarningBanner(treats.warning || (treats.degraded ? 'Treat tracker data is temporarily unavailable.' : ''))}
     <div class="hh-grid">
       <section class="hh-card hh-card-hero hh-col-12">
         <div class="hh-stack">
           <div class="hh-pill-row">
-            <span class="hh-badge hh-badge-${statusClass}">${escapeHtml(treats.petName)}</span>
-            <span class="hh-badge hh-badge-neutral">${escapeHtml(String(treats.treatsRemaining))} left today</span>
+            <span class="hh-badge hh-badge-${statusClass}">${escapeHtml(treats.petName || 'Pet')}</span>
+            <span class="hh-badge hh-badge-neutral">${escapeHtml(String(treats.treatsRemaining || 0))} left today</span>
           </div>
           <div class="hh-metric-grid">
             <div class="hh-metric">
               <p class="hh-metric-label">Given today</p>
-              <p class="hh-metric-value">${escapeHtml(String(treats.treatsGivenToday))}</p>
+              <p class="hh-metric-value">${escapeHtml(String(treats.treatsGivenToday || 0))}</p>
             </div>
             <div class="hh-metric">
               <p class="hh-metric-label">Remaining</p>
-              <p class="hh-metric-value">${escapeHtml(String(treats.treatsRemaining))}</p>
+              <p class="hh-metric-value">${escapeHtml(String(treats.treatsRemaining || 0))}</p>
             </div>
             <div class="hh-metric">
               <p class="hh-metric-label">Limit</p>
-              <p class="hh-metric-value">${escapeHtml(String(treats.dailyLimitTreats))}</p>
+              <p class="hh-metric-value">${escapeHtml(String(treats.dailyLimitTreats || 0))}</p>
             </div>
             <div class="hh-metric">
               <p class="hh-metric-label">Resets</p>
@@ -161,14 +286,14 @@ function renderTreatsTab(payload) {
       <section class="hh-card hh-col-8">
         <div class="hh-stack">
           <div class="hh-page-kicker">Today’s treat log</div>
-          ${renderTreatHistory(treats.history || [])}
+          ${renderTreatHistory(treats.history)}
         </div>
       </section>
       <aside class="hh-card hh-col-4">
         <div class="hh-stack">
           <div class="hh-page-kicker">Quick add</div>
           <div class="hh-kv">
-            <div class="hh-kv-row"><span>Status</span><strong>${escapeHtml(treats.statusLevel)}</strong></div>
+            <div class="hh-kv-row"><span>Status</span><strong>${escapeHtml(treats.statusLevel || 'unknown')}</strong></div>
             <div class="hh-kv-row"><span>Last treat</span><strong>${escapeHtml(treats.lastTreat ? formatDateTime(treats.lastTreat.at, { hour: 'numeric', minute: '2-digit' }) : 'None yet')}</strong></div>
           </div>
           <form id="hh-log-treat" class="hh-stack">
@@ -180,7 +305,7 @@ function renderTreatsTab(payload) {
               <label class="hh-field-label" for="hh-treat-calories">Calories</label>
               <input id="hh-treat-calories" class="hh-input" name="calories" type="number" min="0" step="1" value="0">
             </div>
-            <button class="hh-btn hh-btn-primary" type="submit">${treats.treatsRemaining <= 0 ? 'Log override treat' : 'Log treat'}</button>
+            <button class="hh-btn hh-btn-primary" type="submit">${asNumber(treats.treatsRemaining, 0) <= 0 ? 'Log override treat' : 'Log treat'}</button>
           </form>
         </div>
       </aside>
@@ -188,100 +313,117 @@ function renderTreatsTab(payload) {
   `;
 }
 
-export async function renderHouseholdPage(container) {
-  let pollId = null;
-  let activeTab = sessionStorage.getItem(TAB_KEY) || 'chores';
+async function runMutation(requestFactory, successMessage, reload) {
+  try {
+    await requestFactory();
+    pushToast(successMessage);
+    await reload({ showLoading: false });
+  } catch (error) {
+    pushToast(error.message || 'Action failed.');
+  }
+}
 
-  async function load() {
-    container.innerHTML = loadingState('Loading household…');
-    try {
-      const payload = await apiFetch('/api/household');
-      container.innerHTML = `
-        ${pageHeader({
-          kicker: 'Household',
-          title: activeTab === 'treats' ? 'Treat Tracker' : 'Chores',
-          subtitle: `Updated ${formatDateTime(payload.meta.fetchedAt)}`,
-          actions: '<button id="hh-household-refresh" class="hh-btn hh-btn-secondary">Refresh</button>',
-        })}
-        ${renderTabs(activeTab)}
-        ${activeTab === 'treats' ? renderTreatsTab(payload) : renderChoresTab(payload)}
-      `;
-      bindRouteButtons(container);
-      container.querySelectorAll('[data-tab]').forEach((button) => {
-        button.addEventListener('click', () => {
-          activeTab = button.dataset.tab;
-          sessionStorage.setItem(TAB_KEY, activeTab);
-          load();
-        });
-      });
-      container.querySelector('#hh-household-refresh')?.addEventListener('click', async () => {
-        pushToast('Refreshing household…');
-        await load();
-      });
-      container.querySelectorAll('[data-action="toggle-chore"]').forEach((button) => {
-        button.addEventListener('click', async () => {
-          await apiFetch('/api/household', {
-            method: 'POST',
-            body: {
-              action: 'toggle_chore',
-              id: button.dataset.id,
-              complete: button.dataset.complete === '1',
-            },
-          });
-          pushToast('Chore updated.');
-          await load();
-        });
-      });
-      container.querySelectorAll('[data-action="delete-chore"]').forEach((button) => {
-        button.addEventListener('click', async () => {
-          await apiFetch('/api/household', {
-            method: 'POST',
-            body: {
-              action: 'delete_chore',
-              id: button.dataset.id,
-            },
-          });
-          pushToast('Chore removed.');
-          await load();
-        });
-      });
-      container.querySelector('#hh-create-chore')?.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        const formData = new FormData(event.currentTarget);
-        await apiFetch('/api/household', {
-          method: 'POST',
-          body: {
-            action: 'create_chore',
-            title: formData.get('title'),
-            category: formData.get('category'),
-          },
-        });
-        pushToast('Chore added.');
-        await load();
-      });
-      container.querySelector('#hh-log-treat')?.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        const formData = new FormData(event.currentTarget);
-        await apiFetch('/api/household', {
-          method: 'POST',
-          body: {
-            action: 'log_treat',
-            name: formData.get('name'),
-            calories: Number(formData.get('calories') || 0),
-          },
-        });
-        pushToast('Treat logged.');
-        await load();
-      });
-    } catch (error) {
-      container.innerHTML = `
-        ${pageHeader({ kicker: 'Household', title: 'Household', subtitle: 'This section is temporarily unavailable.' })}
-        ${errorState('Household unavailable', error.message)}
-      `;
+export async function renderHouseholdPage(container) {
+  let disposed = false;
+  let pollId = null;
+  let loadVersion = 0;
+  let activeTab = readStoredTab();
+
+  async function load({ showLoading = true } = {}) {
+    const currentLoad = ++loadVersion;
+    if (showLoading && !disposed) {
+      container.innerHTML = loadingState('Loading household…');
     }
+
+    let payload;
+    try {
+      payload = normalizeHouseholdPayload(await apiFetch('/api/household'));
+    } catch (error) {
+      payload = normalizeHouseholdPayload(null, error.message);
+    }
+
+    if (disposed || currentLoad !== loadVersion) return;
+
+    container.innerHTML = `
+      ${pageHeader({
+        kicker: 'Household',
+        title: activeTab === 'treats' ? 'Treat Tracker' : 'Chores',
+        subtitle: `Updated ${formatDateTime(payload.meta.fetchedAt)}`,
+        actions: '<button id="hh-household-refresh" class="hh-btn hh-btn-secondary">Refresh</button>',
+      })}
+      ${payload.meta.degraded ? renderWarningBanner(payload.meta.warnings?.[0] || 'Some household data is degraded.') : ''}
+      ${renderTabs(activeTab)}
+      ${activeTab === 'treats' ? renderTreatsTab(payload) : renderChoresTab(payload)}
+    `;
+
+    bindRouteButtons(container);
+    container.querySelectorAll('[data-tab]').forEach((button) => {
+      button.addEventListener('click', () => {
+        activeTab = button.dataset.tab || 'chores';
+        writeStoredTab(activeTab);
+        load({ showLoading: false }).catch(() => {});
+      });
+    });
+    container.querySelector('#hh-household-refresh')?.addEventListener('click', async () => {
+      pushToast('Refreshing household…');
+      await load({ showLoading: false });
+    });
+    container.querySelectorAll('[data-action="toggle-chore"]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        await runMutation(() => apiFetch('/api/household', {
+          method: 'POST',
+          body: {
+            action: 'toggle_chore',
+            id: button.dataset.id,
+            complete: button.dataset.complete === '1',
+          },
+        }), 'Chore updated.', load);
+      });
+    });
+    container.querySelectorAll('[data-action="delete-chore"]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        await runMutation(() => apiFetch('/api/household', {
+          method: 'POST',
+          body: {
+            action: 'delete_chore',
+            id: button.dataset.id,
+          },
+        }), 'Chore removed.', load);
+      });
+    });
+    container.querySelector('#hh-create-chore')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const formData = new FormData(event.currentTarget);
+      await runMutation(() => apiFetch('/api/household', {
+        method: 'POST',
+        body: {
+          action: 'create_chore',
+          title: formData.get('title'),
+          category: formData.get('category'),
+        },
+      }), 'Chore added.', load);
+    });
+    container.querySelector('#hh-log-treat')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const formData = new FormData(event.currentTarget);
+      await runMutation(() => apiFetch('/api/household', {
+        method: 'POST',
+        body: {
+          action: 'log_treat',
+          name: formData.get('name'),
+          calories: Number(formData.get('calories') || 0),
+        },
+      }), 'Treat logged.', load);
+    });
   }
 
   await load();
-  pollId = window.setInterval(load, 60000);
-  return () => window.clearInterval(pollId);
+  pollId = window.setInterval(() => {
+    load({ showLoading: false }).catch(() => {});
+  }, 60000);
+  return () => {
+    disposed = true;
+    loadVersion += 1;
+    window.clearInterval(pollId);
+  };
 }

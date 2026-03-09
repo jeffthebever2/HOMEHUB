@@ -1,10 +1,14 @@
 import { escapeHtml } from '../core/format.js';
 import { badgeClass } from './status.js';
 
-export function summaryCard(module, options = {}) {
-  const status = options.status || module.status || 'normal';
-  const badges = (module.badges || []).slice(0, 3).map((badge) => `<span class="hh-badge hh-badge-neutral">${escapeHtml(badge)}</span>`).join('');
-  const cta = options.cta || module.cta || null;
+export function summaryCard(module = {}, options = {}) {
+  const safeModule = module && typeof module === 'object' ? module : {};
+  const status = options.status || safeModule.status || 'normal';
+  const badges = (Array.isArray(safeModule.badges) ? safeModule.badges : [])
+    .slice(0, 3)
+    .map((badge) => `<span class="hh-badge hh-badge-neutral">${escapeHtml(badge)}</span>`)
+    .join('');
+  const cta = options.cta || safeModule.cta || null;
   const footer = options.footer || '';
   return `
     <article class="hh-card ${options.hero ? 'hh-card-hero' : ''} ${options.className || ''}">
@@ -14,8 +18,8 @@ export function summaryCard(module, options = {}) {
             <span class="hh-badge ${badgeClass(status)}">${escapeHtml(status)}</span>
             ${badges}
           </div>
-          <div class="hh-row-title" style="font-size:${options.hero ? '1.6rem' : '1.15rem'};">${escapeHtml(module.headline || 'Untitled module')}</div>
-          <p class="hh-row-copy" style="margin:0;">${escapeHtml(module.supportingText || '')}</p>
+          <div class="hh-row-title" style="font-size:${options.hero ? '1.6rem' : '1.15rem'};">${escapeHtml(safeModule.headline || 'Untitled module')}</div>
+          <p class="hh-row-copy" style="margin:0;">${escapeHtml(safeModule.supportingText || '')}</p>
         </div>
       </div>
       ${cta || footer ? `

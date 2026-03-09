@@ -1,5 +1,22 @@
 import { go } from './router.js';
 
+export function asObject(value, fallback = {}) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : fallback;
+}
+
+export function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+export function asString(value, fallback = '') {
+  return typeof value === 'string' ? value : fallback;
+}
+
+export function asNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
 export function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -46,7 +63,7 @@ export function formatTime(value, options = {}) {
 }
 
 export function bindRouteButtons(root) {
-  root.querySelectorAll('[data-route]').forEach((element) => {
+  root?.querySelectorAll?.('[data-route]').forEach((element) => {
     element.addEventListener('click', () => {
       if (element.dataset.route) go(element.dataset.route);
     });

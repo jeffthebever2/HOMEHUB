@@ -1,24 +1,32 @@
-import { escapeHtml } from '../../core/format.js';
+import { asArray, escapeHtml } from '../../core/format.js';
 
-export function renderRadioTab(detail, nowPlaying) {
+export function renderRadioTab(detail = {}, nowPlaying = {}) {
+  const presets = asArray(detail.radioPresets);
   return `
     <div class="hh-grid">
       <section class="hh-card hh-col-8">
         <div class="hh-stack">
           <div class="hh-page-kicker">Radio presets</div>
-          <div class="hh-list">
-            ${detail.radioPresets.map((station) => `
-              <div class="hh-list-row">
-                <div class="hh-row-meta">
-                  <div class="hh-row-title">${escapeHtml(station.emoji || '📻')} ${escapeHtml(station.name)}</div>
-                  <div class="hh-row-copy">${escapeHtml(station.streamUrl)}</div>
+          ${presets.length ? `
+            <div class="hh-list">
+              ${presets.map((station) => `
+                <div class="hh-list-row">
+                  <div class="hh-row-meta">
+                    <div class="hh-row-title">${escapeHtml(station.emoji || '📻')} ${escapeHtml(station.name || 'Station')}</div>
+                    <div class="hh-row-copy">${escapeHtml(station.streamUrl || 'Stream URL unavailable')}</div>
+                  </div>
+                  <div class="hh-inline-actions">
+                    <button class="hh-btn hh-btn-primary" data-radio-play="${escapeHtml(station.id)}">Play</button>
+                  </div>
                 </div>
-                <div class="hh-inline-actions">
-                  <button class="hh-btn hh-btn-primary" data-radio-play="${escapeHtml(station.id)}">Play</button>
-                </div>
-              </div>
-            `).join('')}
-          </div>
+              `).join('')}
+            </div>
+          ` : `
+            <div class="hh-state">
+              <p class="hh-state-title">No radio presets available</p>
+              <p class="hh-state-copy">The Media page is still available, but HomeHub did not receive any preset stations.</p>
+            </div>
+          `}
         </div>
       </section>
       <aside class="hh-card hh-col-4">

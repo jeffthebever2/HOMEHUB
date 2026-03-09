@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 const required = [
   'SUPABASE_URL',
   'SUPABASE_SERVICE_ROLE_KEY',
@@ -41,6 +45,21 @@ const localOnly = [
   'HOMEHUB_ADMIN_TOKEN',
 ];
 
+function readPublicConfigStatus() {
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  const configPath = path.resolve(currentDir, '../public/config.js');
+  const source = fs.readFileSync(configPath, 'utf8');
+  const urlMatch = source.match(/supabaseUrl:\s*'([^']*)'/);
+  const anonMatch = source.match(/supabaseAnonKey:\s*'([^']*)'/);
+  const hasServiceRoleLeak = /(SUPABASE_SERVICE_ROLE_KEY|supabaseServiceRoleKey|serviceRoleKey)\s*:/.test(source);
+
+  return {
+    supabaseUrl: urlMatch?.[1] || '',
+    supabaseAnonKey: anonMatch?.[1] || '',
+    hasServiceRoleLeak,
+  };
+}
+
 let failed = false;
 
 console.log('Required environment variables:');
@@ -66,6 +85,16 @@ for (const key of optional) {
 console.log('\nLocal smoke-test variables:');
 for (const key of localOnly) {
   console.log(`- ${process.env[key] ? 'ok' : 'info'} ${key}`);
+}
+
+const publicConfig = readPublicConfigStatus();
+console.log('\nBrowser-safe public/config.js values:');
+console.log(`- ${publicConfig.supabaseUrl ? 'ok' : 'warn'} supabaseUrl`);
+console.log(`- ${publicConfig.supabaseAnonKey ? 'ok' : 'warn'} supabaseAnonKey`);
+console.log(`- ${publicConfig.hasServiceRoleLeak ? 'warn' : 'ok'} no service-role key in public/config.js`);
+
+if (publicConfig.hasServiceRoleLeak) {
+  console.warn('\npublic/config.js appears to reference a service-role key name. Remove it before deploying.');
 }
 
 if (failed) {

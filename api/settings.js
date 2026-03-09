@@ -5,9 +5,9 @@ import { getEnvironmentHealth } from '../lib/server/domains/environment/service.
 import { getHouseholdHealth } from '../lib/server/domains/household/service.js';
 import { getMediaHealth } from '../lib/server/domains/media/service.js';
 import { getPhotosHealth } from '../lib/server/domains/photos/service.js';
+import { createMeta, parseJsonBody, sendError } from '../lib/server/http.js';
 import { getAgendaHealth } from '../lib/server/integrations/agenda/service.js';
-import { parseJsonBody, sendError } from '../lib/server/http.js';
-import { restMutate } from '../lib/server/supabase.js';
+import { getServerSupabaseDiagnostics, restMutate } from '../lib/server/supabase.js';
 
 function mapConfigPayloadToRow(payload = {}) {
   return {
@@ -27,6 +27,53 @@ function mapConfigPayloadToRow(payload = {}) {
   };
 }
 
+function healthFallback(providerId, message) {
+  return {
+    providerId,
+    status: 'error',
+    healthStatus: 'error',
+    authState: 'unknown',
+    warnings: [message],
+  };
+}
+
+function mergeIntegrationHealth(integration, healthByProvider) {
+  const health = healthByProvider.get(integration.providerId);
+  return health ? { ...integration, ...health } : integration;
+}
+
+function buildSettingsDiagnostics() {
+  return {
+    serverSupabase: getServerSupabaseDiagnostics(),
+  };
+}
+
+function readOnlySettingsFallback(message = 'Settings payload is unavailable.') {
+  return {
+    meta: createMeta({
+      degraded: true,
+      warnings: [message],
+    }),
+    config: null,
+    integrations: [],
+    systemHealth: [],
+    readOnly: true,
+    diagnostics: buildSettingsDiagnostics(),
+  };
+}
+
+function settingsMutationFallback(message = 'Settings action failed.') {
+  return {
+    meta: createMeta({
+      degraded: true,
+      warnings: [message],
+    }),
+    success: false,
+    message,
+    diagnostics: buildSettingsDiagnostics(),
+  };
+}
+
 export default async function handler(req, res) {
   try {
     const context = await getRequestContext(req, { requireAuth: true });
@@ -41,11 +88,16 @@ export default async function handler(req, res) {
         row.household_id = context.householdId;
         await restMutate('user_settings', 'on_conflict=user_id', 'POST', row, { prefer: 'resolution=merge-duplicates,return=representation' });
         applyCacheProfile(res, 'settings');
-        return res.status(200).json({ success: true });
+        return res.status(200).json({
+          meta: createMeta(),
+          success: true,
+          message: 'Settings saved.',
+        });
       }
       if (body.action === 'test_integration') {
         applyCacheProfile(res, 'settings');
         return res.status(200).json({
+          meta: createMeta(),
           testResult: 'success',
           message: `Tested ${body.providerId || 'integration'} with current configuration.`,
         });
@@ -53,40 +105,60 @@ export default async function handler(req, res) {
       if (body.action === 'disconnect_provider') {
         applyCacheProfile(res, 'settings');
         return res.status(200).json({
+          meta: createMeta(),
           success: true,
           message: 'Disconnect flow is provider-specific and should be completed via OAuth revoke or settings cleanup.',
         });
       }
-      return res.status(400).json({ error: 'Unknown settings action' });
+      const error = new Error('Unknown settings action');
+      error.statusCode = 400;
+      throw error;
     }
 
-    const health = [
-      await getEnvironmentHealth(config),
-      await getHouseholdHealth(config, context),
-      await getMediaHealth(config, req),
-      await getPhotosHealth(config),
-      getAgendaHealth(context),
+    const agendaHealth = getAgendaHealth(context);
+    const [environmentHealth, householdHealth, mediaHealth, photosHealth] = await Promise.allSettled([
+      getEnvironmentHealth(config),
+      getHouseholdHealth(config, context),
+      getMediaHealth(config, req),
+      getPhotosHealth(config),
+    ]);
+
+    const systemHealth = [
+      environmentHealth.status === 'fulfilled' ? environmentHealth.value : healthFallback('environment', environmentHealth.reason?.message || 'Environment health check failed.'),
+      householdHealth.status === 'fulfilled' ? householdHealth.value : healthFallback('household', householdHealth.reason?.message || 'Household health check failed.'),
+      mediaHealth.status === 'fulfilled' ? mediaHealth.value : healthFallback('media', mediaHealth.reason?.message || 'Media health check failed.'),
+      photosHealth.status === 'fulfilled' ? photosHealth.value : healthFallback('google_photos', photosHealth.reason?.message || 'Photos health check failed.'),
+      agendaHealth,
     ];
+
+    const healthByProvider = new Map([
+      ['google_calendar', agendaHealth],
+      ['google_photos', systemHealth[3]],
+    ]);
+
+    const warnings = systemHealth.flatMap((entry) => entry.warnings || []);
+    const degraded = systemHealth.some((entry) => entry.status === 'degraded' || entry.status === 'error' || entry.healthStatus === 'missing');
 
     applyCacheProfile(res, 'settings');
     return res.status(200).json({
-      meta: {
-        schemaVersion: 1,
-        fetchedAt: new Date().toISOString(),
-        stale: false,
-        degraded: false,
-        isMock: false,
-        warnings: [],
-      },
-      config,
-      integrations: integrations.map((integration) => {
-        if (integration.providerId === 'google_calendar') return { ...integration, ...getAgendaHealth(context) };
-        if (integration.providerId === 'google_photos') return { ...integration, ...health[3] };
-        return integration;
+      meta: createMeta({
+        degraded,
+        warnings,
       }),
-      systemHealth: health,
+      config,
+      integrations: integrations.map((integration) => mergeIntegrationHealth(integration, healthByProvider)),
+      systemHealth,
+      readOnly: false,
+      diagnostics: buildSettingsDiagnostics(),
     });
   } catch (error) {
-    return sendError(res, error);
+    return sendError(
+      res,
+      error,
+      500,
+      req.method === 'POST'
+        ? settingsMutationFallback(error.message || 'Settings action failed.')
+        : readOnlySettingsFallback(error.message || 'Settings payload is unavailable.')
+    );
   }
 }

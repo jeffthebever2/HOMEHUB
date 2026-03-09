@@ -1,5 +1,5 @@
 import { go } from './router.js';
-import { signInWithGoogle, signOut } from './session.js';
+import { getSessionAvailability, signInWithGoogle, signOut } from './session.js';
 import { store } from './store.js';
 
 const NAV_ITEMS = [
@@ -13,6 +13,7 @@ const NAV_ITEMS = [
 ];
 
 export function renderShell(root) {
+  if (!root) return;
   root.innerHTML = `
     <div id="hh-login" class="hh-login hh-hidden"></div>
     <div id="hh-shell" class="hh-shell hh-hidden">
@@ -31,33 +32,62 @@ export function renderShell(root) {
     </div>
   `;
 
-  root.querySelector('#hh-signout-btn').addEventListener('click', () => signOut());
-  root.querySelector('#hh-standby-btn').addEventListener('click', () => go('standby'));
+  root.querySelector('#hh-signout-btn')?.addEventListener('click', () => {
+    signOut().catch(() => {});
+  });
+  root.querySelector('#hh-standby-btn')?.addEventListener('click', () => go('standby'));
 }
 
 export function renderLogin() {
-  document.getElementById('hh-login').classList.remove('hh-hidden');
-  document.getElementById('hh-shell').classList.add('hh-hidden');
-  document.getElementById('hh-login').innerHTML = `
+  const login = document.getElementById('hh-login');
+  const shell = document.getElementById('hh-shell');
+  if (!login || !shell) return;
+
+  const auth = getSessionAvailability();
+  const message = auth.reason || (!auth.available ? 'Google sign-in is currently unavailable.' : '');
+
+  login.classList.remove('hh-hidden');
+  shell.classList.add('hh-hidden');
+  login.innerHTML = `
     <div class="hh-card hh-card-hero hh-login-card">
       <p class="hh-page-kicker">House OS</p>
       <h1 class="hh-page-title">Sign in to HomeHub</h1>
       <p class="hh-page-subtitle">One household dashboard for weather, chores, photos, media, and standby mode.</p>
       <div style="margin-top:1.5rem;display:flex;gap:.75rem;flex-wrap:wrap;">
-        <button id="hh-google-login" class="hh-btn hh-btn-primary">Continue with Google</button>
+        <button id="hh-google-login" class="hh-btn hh-btn-primary" ${auth.available ? '' : 'disabled'}>Continue with Google</button>
       </div>
+      <p id="hh-login-message" class="hh-row-copy" style="margin:1rem 0 0;"></p>
     </div>
   `;
-  document.getElementById('hh-google-login').addEventListener('click', () => signInWithGoogle());
+  const messageNode = login.querySelector('#hh-login-message');
+  if (messageNode) {
+    messageNode.textContent = message;
+  }
+  login.querySelector('#hh-google-login')?.addEventListener('click', async () => {
+    try {
+      await signInWithGoogle();
+    } catch (error) {
+      if (messageNode) {
+        messageNode.textContent = error.message || 'Sign-in is currently unavailable.';
+      }
+    }
+  });
 }
 
 export function renderAppShell() {
-  document.getElementById('hh-login').classList.add('hh-hidden');
-  document.getElementById('hh-shell').classList.remove('hh-hidden');
+  const login = document.getElementById('hh-login');
+  const shell = document.getElementById('hh-shell');
   const meta = document.getElementById('hh-topbar-meta');
-  const userName = store.session?.user?.user_metadata?.full_name || store.session?.user?.email || 'Family';
-  meta.textContent = `${new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} · ${userName}`;
   const nav = document.getElementById('hh-nav');
+
+  login?.classList.add('hh-hidden');
+  shell?.classList.remove('hh-hidden');
+
+  const userName = store.session?.user?.user_metadata?.full_name || store.session?.user?.email || 'Family';
+  if (meta) {
+    meta.textContent = `${new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} · ${userName}`;
+  }
+  if (!nav) return;
   nav.innerHTML = NAV_ITEMS.map(([route, label]) => `
     <button class="hh-nav-pill ${store.route === route ? 'is-active' : ''}" data-route="${route}">${label}</button>
   `).join('');
