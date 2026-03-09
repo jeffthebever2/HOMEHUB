@@ -68,6 +68,13 @@ async function parseResponseBody(response) {
 }
 
 function getErrorMessage(data, text, status) {
+  const normalizedText = typeof text === 'string' ? text.trim() : '';
+  const normalizedStringData = typeof data === 'string' ? data.trim() : '';
+  const notFoundBody = normalizedStringData || normalizedText;
+
+  if (status === 404 && /The page could not be found/i.test(notFoundBody) && /NOT_FOUND/i.test(notFoundBody)) {
+    return 'HomeHub API route was not found on this deployment. Check that Vercel is deploying the repo root with both public/ and api/.';
+  }
   if (data && typeof data === 'object') {
     if (typeof data.error === 'string' && data.error) return data.error;
     if (typeof data.error?.message === 'string' && data.error.message) return data.error.message;

@@ -170,7 +170,7 @@ Deploy this repo from the repository root. Do not point Vercel at `public/`.
 - Framework Preset: `Other`
 - Root Directory: repo root
 - Build Command: leave blank
-- Output Directory: leave blank in the dashboard; `vercel.json` pins it to `public`
+- Output Directory: leave blank
 - Install Command: default is fine
 - Node.js: any supported Vercel Node runtime that satisfies `package.json` (`>=20`)
 
