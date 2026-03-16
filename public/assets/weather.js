@@ -841,12 +841,11 @@ Hub.weather = {
       </div>
     `;
 
-    const weatherContent = document.getElementById('weatherContent');
-    if (weatherContent?.parentElement) {
-      weatherContent.parentElement.insertBefore(banner, weatherContent);
-    } else {
-      document.body.insertBefore(banner, document.body.firstChild);
-    }
+    // Always insert directly into document.body.
+    // Inserting relative to weatherContent is wrong because weatherContent
+    // lives inside #weatherPage which has display:none on other pages —
+    // a position:fixed child of a display:none ancestor is never rendered.
+    document.body.insertBefore(banner, document.body.firstChild);
 
     // Auto-navigate to weather page on Extreme alerts
     if (top.severity === 'Extreme' && Hub.router?.navigate) {
