@@ -1,6 +1,7 @@
 // HOME HUB CONFIGURATION
 // Edit these values with your actual credentials before deploying.
-// Weather API keys and AI keys are NOT stored here — they go in Cloudflare env vars.
+// Weather API keys and AI keys are NOT stored here — they go in Vercel environment variables
+// (Vercel Dashboard → Project → Settings → Environment Variables).
 window.HOME_HUB_CONFIG = {
   // === HOUSEHOLD ===
   householdDisplayName: 'Scott family',

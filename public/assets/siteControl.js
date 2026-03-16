@@ -171,7 +171,7 @@ Hub.siteControl = {
   _renderSnippet(siteName) {
     const el = document.getElementById('controlSnippet');
     if (!el) return;
-    const url = Hub.state?.settings?.supabase_url || 'YOUR_SUPABASE_URL';
+    const url = Hub.state?.settings?.supabaseUrl || window.HOME_HUB_CONFIG?.supabaseUrl || 'YOUR_SUPABASE_URL';
     const key = '(your-anon-key)';
     el.textContent =
 `// Paste into your other site to read this config:

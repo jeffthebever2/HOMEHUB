@@ -8,13 +8,17 @@
     {
       "source": "/api/:path*",
       "headers": [
-        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Origin",  "value": "*" },
         { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
         { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization" }
       ]
     }
   ],
   "crons": [
-    { "path": "/api/cron-chores-reset", "schedule": "0 5 * * *" }
+    {
+      "path": "/api/cron-chores-reset",
+      "schedule": "0 4,5 * * *",
+      "_comment": "Fires at 04:00 UTC (midnight EDT) and 05:00 UTC (midnight EST). Vercel cron is always UTC — two fire-times keeps reset on local midnight year-round. The handler is idempotent: it stamps last_chore_reset_date per household so only one run actually does work each day."
+    }
   ]
 }
