@@ -18,7 +18,6 @@
     {
       "path": "/api/cron-chores-reset",
       "schedule": "0 5 * * *",
-      "_comment": "5 AM UTC = midnight EST. During EDT it fires at 1 AM local — still correct day. Handler is idempotent via last_chore_reset_date so DST drift is harmless."
     }
   ]
 }
