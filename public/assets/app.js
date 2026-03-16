@@ -343,13 +343,8 @@ Hub.app = {
       // fetchAlerts() already filters out expired alerts client-side
       const alerts = await Hub.weather.fetchAlerts();
       if (alerts.length > 0) {
-        // Build threat list from real NWS event names
-        const threats = alerts.map(a => a.event || a.headline).filter(Boolean);
-        // Worst severity wins banner colour
-        const sevOrder = { extreme: 0, severe: 1, moderate: 2, minor: 3 };
-        const sorted   = [...alerts].sort((a, b) =>
-          (sevOrder[(a.severity||'').toLowerCase()] ?? 4) - (sevOrder[(b.severity||'').toLowerCase()] ?? 4));
-        Hub.ui.showBanner(threats, sorted[0].severity);
+        // Use the unified AI-summarized banner instead of the old ticker
+        Hub.weather._renderAlertBanner(alerts);
         // Show popup for highest-severity unacknowledged alert
         Hub.ui.showAlertPopup(alerts).catch(() => {});
       } else {

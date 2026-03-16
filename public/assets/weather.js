@@ -465,6 +465,22 @@ Hub.weather = {
     }
 
     el.innerHTML = html;
+
+    // Async-fill AI impact bullets (weather conditions) + AI alert summaries
+    this._fetchImpactBullets(normalized, alerts).catch(() => {});
+    if (alerts?.length) {
+      // Fill AI summaries into each alert row in the Household Impact card
+      const ATHEME = {
+        Extreme: { muted: 'text-red-300' }, Severe: { muted: 'text-orange-300' },
+        Moderate: { muted: 'text-yellow-300' }, Minor: { muted: 'text-blue-300' },
+        Unknown: { muted: 'text-gray-400' },
+      };
+      alerts.forEach((alert, i) => {
+        const t = ATHEME[alert.severity] || ATHEME.Unknown;
+        this._fetchAndFillSummary(alert, `impactAlertSummary_${i}`, t).catch(() => {});
+      });
+    }
+
     this.renderRainRadar();
   },
 
@@ -556,26 +572,152 @@ Hub.weather = {
   },
 
   // ── Household impact mode ─────────────────────────────────────
+  // Three sections rendered in order:
+  //   1. AI weather bullets (placeholder → Gemini via /api/weather-impact-summary)
+  //   2. Active alert rows (each with its own AI summary + "Full alert" drawer)
+  //   3. Rules-based static condition rows (umbrella, wind, etc.) as fallback context
   _renderHouseholdImpact(normalized, alerts) {
     const impacts = this._buildImpacts(normalized, alerts);
-    if (!impacts.length) return '';
 
-    const priorityColors = { critical: 'border-red-500 bg-red-900/20', high: 'border-orange-400', medium: 'border-blue-500', low: 'border-gray-600' };
+    const priorityColors = {
+      critical: 'border-red-500 bg-red-900/20',
+      high:     'border-orange-400 bg-orange-900/10',
+      medium:   'border-blue-500 bg-blue-900/10',
+      low:      'border-gray-600 bg-gray-800/60'
+    };
 
-    const rows = impacts.map(imp => `
-      <div class="flex items-center gap-3 px-4 py-3 rounded-lg border ${priorityColors[imp.priority] || 'border-gray-700'} bg-gray-800/60">
-        <span class="text-xl">${imp.emoji}</span>
-        <span class="text-sm text-gray-200">${Hub.utils.esc(imp.text)}</span>
+    // ── Section 1: AI weather bullet placeholder ──────────────────
+    // Filled by _fetchImpactBullets() after innerHTML is set
+    const aiBulletsSection = `
+      <div id="impactAiSection" class="space-y-2">
+        <div class="flex items-center gap-2 px-1">
+          <span class="text-xs text-gray-500 animate-pulse" id="impactAiBadge">✦ AI loading actions…</span>
+        </div>
+        <div id="impactAiBullets" class="space-y-2"></div>
       </div>
-    `).join('');
+    `;
+
+    // ── Section 2: Alert rows with AI summary + full drawer ───────
+    const alertRows = (alerts || []).map((a, i) => {
+      const THEME = {
+        Extreme: 'border-red-500 bg-red-900/20',
+        Severe:  'border-orange-500 bg-orange-900/10',
+        Moderate:'border-yellow-500 bg-yellow-900/10',
+        Minor:   'border-blue-400 bg-blue-900/10',
+      };
+      const cls = THEME[a.severity] || 'border-gray-500 bg-gray-800/60';
+      const icon = a.severity === 'Extreme' ? '🚨' : a.severity === 'Severe' ? '⚠️' : a.severity === 'Moderate' ? '🌦️' : 'ℹ️';
+      const expiresStr = a.expires
+        ? `Until ${new Date(a.expires).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`
+        : '';
+      const hasFullText = !!(a.description || a.instruction);
+      return `
+        <div class="rounded-lg border ${cls} px-4 py-3">
+          <div class="flex items-center justify-between gap-2 mb-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-lg">${icon}</span>
+              <span class="font-semibold text-sm text-white">${Hub.utils.esc(a.event || 'Weather Alert')}</span>
+              ${expiresStr ? `<span class="text-xs text-gray-400">${Hub.utils.esc(expiresStr)}</span>` : ''}
+            </div>
+            ${hasFullText ? `
+              <button onclick="Hub.weather._toggleFullAlert(${i})"
+                id="alertToggleBtn_${i}"
+                class="text-xs text-blue-400 hover:text-blue-200 flex-shrink-0 whitespace-nowrap">
+                View full ↓
+              </button>` : ''}
+          </div>
+          <p id="impactAlertSummary_${i}" class="text-sm text-gray-300 leading-snug">
+            <span class="animate-pulse text-xs text-gray-500">Getting AI summary…</span>
+          </p>
+          <div id="impactAlertFull_${i}" class="hidden mt-3 pt-3 border-t border-gray-700 space-y-2">
+            ${a.description ? `<p class="text-xs text-gray-400 leading-relaxed whitespace-pre-line">${Hub.utils.esc(a.description)}</p>` : ''}
+            ${a.instruction ? `<p class="text-xs text-yellow-300/80 leading-relaxed"><span class="font-semibold text-white">What to do: </span>${Hub.utils.esc(a.instruction)}</p>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // ── Section 3: Rules-based static rows ────────────────────────
+    const staticRows = impacts
+      .filter(imp => !imp.isAlert)
+      .map(imp => `
+        <div class="flex items-center gap-3 px-4 py-3 rounded-lg border ${priorityColors[imp.priority] || 'border-gray-700'} bg-gray-800/60">
+          <span class="text-xl">${imp.emoji}</span>
+          <span class="text-sm text-gray-200">${Hub.utils.esc(imp.text)}</span>
+        </div>
+      `).join('');
 
     return `
-      <div class="card">
+      <div class="card" id="householdImpactCard">
         <h3 class="text-lg font-bold mb-3">🏠 Household Impact</h3>
-        <div class="space-y-2">${rows}</div>
+        <div class="space-y-3">
+          ${aiBulletsSection}
+          ${alertRows ? `<div class="space-y-2">${alertRows}</div>` : ''}
+          ${staticRows ? `
+            <details class="group">
+              <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-300 select-none list-none flex items-center gap-1">
+                <span class="group-open:rotate-90 transition-transform inline-block">▶</span>
+                Rules-based checks
+              </summary>
+              <div class="space-y-2 mt-2">${staticRows}</div>
+            </details>` : ''}
+        </div>
       </div>
     `;
   },
+
+  /** Async: fetch Gemini weather bullet points and swap into impact card */
+  async _fetchImpactBullets(normalized, alerts) {
+    const bulletsEl = document.getElementById('impactAiBullets');
+    const badgeEl   = document.getElementById('impactAiBadge');
+    if (!bulletsEl) return;
+
+    try {
+      const base = Hub.utils.apiBase();
+      const resp = await fetch(`${base}/api/weather-impact-summary`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          current: normalized.current,
+          today:   normalized.today,
+          hourly:  (normalized.hourly || []).slice(0, 12),
+          alerts:  (alerts || []).map(a => ({ event: a.event, severity: a.severity })),
+        })
+      });
+
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const { bullets } = await resp.json();
+
+      if (!document.getElementById('impactAiBullets')) return; // navigated away
+
+      if (bullets?.length) {
+        bulletsEl.innerHTML = bullets.map(b => `
+          <div class="flex items-start gap-3 px-4 py-3 rounded-lg border border-gray-700 bg-gray-800/60">
+            <span class="text-sm text-gray-200 leading-snug">${Hub.utils.esc(b)}</span>
+          </div>`).join('');
+        if (badgeEl) { badgeEl.textContent = '✦ AI'; badgeEl.className = 'text-xs text-blue-400'; }
+      } else {
+        // No bullets returned — hide the AI section header cleanly
+        if (badgeEl) badgeEl.textContent = '';
+      }
+    } catch (e) {
+      console.warn('[impact-bullets] AI fetch failed:', e.message);
+      if (document.getElementById('impactAiBadge')) {
+        document.getElementById('impactAiBadge').textContent = '';
+      }
+    }
+  },
+
+  /** Toggle full NWS text drawer for an alert row in the impact card */
+  _toggleFullAlert(idx) {
+    const el  = document.getElementById(`impactAlertFull_${idx}`);
+    const btn = document.getElementById(`alertToggleBtn_${idx}`);
+    if (!el) return;
+    const nowHidden = el.classList.toggle('hidden');
+    if (btn) btn.textContent = nowHidden ? 'View full ↓' : 'Hide ↑';
+  },
+
+
 
   // ── Source confidence meter ───────────────────────────────────
   _renderConfidence(confidence) {
@@ -610,9 +752,16 @@ Hub.weather = {
   // Special Weather Statements, etc.), sorted by priority.
   // Banner shell renders immediately; Gemini AI summary fills in async.
   async _renderAlertBanner(alerts) {
+    // Kill the old CSS ticker — we own all alert display now
+    Hub.ui?.hideBanner?.();
+
     // Remove any existing banner
     const existing = document.getElementById('severeWeatherBanner');
     if (existing) existing.remove();
+
+    // Suppress the global CSS ticker on the weather page — our rich banner
+    // replaces it here. It will be restored when leaving the weather page.
+    Hub.ui?.hideBanner?.();
 
     const active = (alerts || []).filter(a => a.event);
     if (!active.length) return;
@@ -639,14 +788,12 @@ Hub.weather = {
       ? `Until ${new Date(top.expires).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`
       : '';
 
-    // Extra alert pills (collapsed by default, click to expand)
-    const extraPills = extras.map((a, i) => {
+    // Extra alert pills — plain display, details are in the Household Impact card
+    const extraPills = extras.map(a => {
       const et = THEME[a.severity] || THEME.Unknown;
-      return `<button
-        onclick="Hub.weather._expandAlert(${active.indexOf(a)})"
-        class="text-xs px-2 py-0.5 rounded-full font-semibold ${et.pill} opacity-80 hover:opacity-100 transition">
+      return `<span class="text-xs px-2 py-0.5 rounded-full font-semibold ${et.pill} opacity-80">
         ${Hub.utils.esc(a.event)}
-      </button>`;
+      </span>`;
     }).join('');
 
     // ── Banner shell ───────────────────────────────────────────
@@ -672,11 +819,20 @@ Hub.weather = {
               Getting summary…
             </span>
           </p>
-          ${extras.length ? `
-            <div class="flex flex-wrap gap-1.5 mt-2">
+          <div class="flex flex-wrap items-center gap-3 mt-1.5">
+            ${extras.length ? `
               <span class="text-xs ${t.muted}">Also active:</span>
-              ${extraPills}
-            </div>` : ''}
+              ${extraPills}` : ''}
+            ${(top.description || top.instruction) ? `
+              <button onclick="Hub.weather._toggleBannerFullAlert()"
+                class="text-xs underline ${t.muted} hover:text-white transition" id="alertViewFullBtn">
+                View full →
+              </button>` : ''}
+          </div>
+          <div id="alertFullText" class="hidden mt-3 pt-3 border-t ${t.border} border-opacity-30 space-y-2">
+            ${top.description ? `<p class="${t.text} text-xs leading-relaxed whitespace-pre-line">${Hub.utils.esc(top.description)}</p>` : ''}
+            ${top.instruction ? `<p class="${t.muted} text-xs leading-relaxed"><span class="font-semibold text-white">What to do: </span>${Hub.utils.esc(top.instruction)}</p>` : ''}
+          </div>
         </div>
         <button
           onclick="document.getElementById('severeWeatherBanner').remove()"
@@ -701,48 +857,13 @@ Hub.weather = {
     await this._fetchAndFillSummary(top, 'alertSummaryText', t);
   },
 
-  /** Expand banner to show a secondary alert's summary */
-  async _expandAlert(idx) {
-    const banner = document.getElementById('severeWeatherBanner');
-    if (!banner?._allAlerts) return;
-    const alert = banner._allAlerts[idx];
-    if (!alert) return;
-
-    const THEME = {
-      Extreme:  { bg: 'bg-red-950',    border: 'border-red-500',   pill: 'bg-red-600 text-white',    text: 'text-red-200',   muted: 'text-red-300',   icon: '🚨', pulse: true  },
-      Severe:   { bg: 'bg-orange-950', border: 'border-orange-500',pill: 'bg-orange-500 text-white', text: 'text-orange-200',muted: 'text-orange-300',icon: '⚠️', pulse: true  },
-      Moderate: { bg: 'bg-yellow-950', border: 'border-yellow-500',pill: 'bg-yellow-500 text-black', text: 'text-yellow-100',muted: 'text-yellow-300',icon: '🌦️', pulse: false },
-      Minor:    { bg: 'bg-blue-950',   border: 'border-blue-500',  pill: 'bg-blue-500 text-white',   text: 'text-blue-200',  muted: 'text-blue-300',  icon: 'ℹ️', pulse: false },
-      Unknown:  { bg: 'bg-gray-900',   border: 'border-gray-500',  pill: 'bg-gray-500 text-white',   text: 'text-gray-200',  muted: 'text-gray-400',  icon: '📢', pulse: false },
-    };
-    const t = THEME[alert.severity] || THEME.Unknown;
-
-    // Append an expanded row inside the banner
-    const expandId = `alertExpand_${idx}`;
-    if (document.getElementById(expandId)) return; // already open
-
-    const row = document.createElement('div');
-    row.id        = expandId;
-    row.className = `border-t ${t.border} border-opacity-40 px-5 py-2 max-w-5xl mx-auto`;
-    row.innerHTML = `
-      <div class="flex items-start gap-2">
-        <span class="text-lg flex-shrink-0">${t.icon}</span>
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 mb-1">
-            <span class="font-semibold text-white text-xs">${Hub.utils.esc(alert.event)}</span>
-            <span class="text-xs px-1.5 py-0.5 rounded-full ${t.pill}">${Hub.utils.esc(alert.severity)}</span>
-          </div>
-          <p id="${expandId}_text" class="${t.text} text-xs leading-snug">
-            <span class="animate-pulse opacity-60">Getting summary…</span>
-          </p>
-        </div>
-        <button onclick="document.getElementById('${expandId}').remove()"
-          class="${t.muted} hover:text-white text-sm px-1">×</button>
-      </div>
-    `;
-    banner.appendChild(row);
-
-    await this._fetchAndFillSummary(alert, `${expandId}_text`, t);
+  /** Toggle the full NWS text drawer inside the banner */
+  _toggleBannerFullAlert() {
+    const drawer = document.getElementById('alertFullText');
+    const btn    = document.getElementById('alertViewFullBtn');
+    if (!drawer) return;
+    const open = drawer.classList.toggle('hidden');
+    if (btn) btn.textContent = open ? 'View full →' : 'Hide ↑';
   },
 
   /** Shared helper: POST to Gemini endpoint, fill target element */
@@ -962,6 +1083,11 @@ Hub.weather = {
     // Remove alert banner when leaving weather page
     const banner = document.getElementById('severeWeatherBanner');
     if (banner) banner.remove();
+
+    // Re-render the unified AI banner on whatever page the user lands on
+    Hub.weather.fetchAlerts().then(alerts => {
+      if (alerts?.length) Hub.weather._renderAlertBanner(alerts);
+    }).catch(() => {});
   },
 
   onLeave() {
