@@ -240,8 +240,10 @@ Hub.weather = {
     if ((c.wind_mph ?? 0) >= 15 || (today.precip_chance ?? 0) >= 60)
       impacts.push({ emoji: '🐕', text: 'Dog walk: check best window above', priority: 'medium' });
 
-    if (alerts?.some(a => ['Extreme','Severe'].includes(a.severity)))
+    if (alerts?.some(a => ['Extreme', 'Severe'].includes(a.severity)))
       impacts.push({ emoji: '🚨', text: 'Severe alert active — stay aware of updates', priority: 'critical' });
+    else if (alerts?.length)
+      impacts.push({ emoji: '⚠️', text: `${alerts[0].event} in effect — check the alert banner`, priority: 'medium' });
 
     const hour = new Date().getHours();
     if (hour >= 7 && hour <= 9 && (today.precip_chance ?? 0) >= 40)
@@ -370,9 +372,9 @@ Hub.weather = {
       return;
     }
 
-    // ── Severe weather banner (injected above weatherContent) ──
+    // ── Alert banner — all severity levels, AI-summarized ─────
     // Fire-and-forget — banner appears immediately, AI summary fills in async
-    this._renderSevereAlert(alerts, aggregate);
+    this._renderAlertBanner(alerts);
 
     let html = '';
 
@@ -603,51 +605,82 @@ Hub.weather = {
     `;
   },
 
-  // ── Severe weather mode ───────────────────────────────────────
-  // Banner renders immediately with the NWS headline, then replaces the
-  // body text with a Gemini-generated household-friendly summary.
-  async _renderSevereAlert(alerts, aggregate) {
-    const severe = (alerts || []).filter(a => ['Extreme', 'Severe'].includes(a.severity));
-
-    // Remove any existing banner first
+  // ── Alert banner — all severity levels ───────────────────────
+  // Shows ALL active NWS alerts (Warnings, Watches, Advisories,
+  // Special Weather Statements, etc.), sorted by priority.
+  // Banner shell renders immediately; Gemini AI summary fills in async.
+  async _renderAlertBanner(alerts) {
+    // Remove any existing banner
     const existing = document.getElementById('severeWeatherBanner');
     if (existing) existing.remove();
 
-    if (!severe.length) return;
+    const active = (alerts || []).filter(a => a.event);
+    if (!active.length) return;
 
-    const top = severe[0];
-    const expiresTs = top.expires ? new Date(top.expires) : null;
-    const expiresStr = expiresTs
-      ? `Expires ${expiresTs.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`
+    // ── Priority sort: Extreme → Severe → Moderate → Minor → Unknown ──
+    const SEVERITY_ORDER = { Extreme: 0, Severe: 1, Moderate: 2, Minor: 3, Unknown: 4 };
+    const sorted = [...active].sort((a, b) =>
+      (SEVERITY_ORDER[a.severity] ?? 5) - (SEVERITY_ORDER[b.severity] ?? 5)
+    );
+    const top = sorted[0];
+    const extras = sorted.slice(1);
+
+    // ── Per-severity visual theme ──────────────────────────────
+    const THEME = {
+      Extreme:  { bg: 'bg-red-950',    border: 'border-red-500',   pill: 'bg-red-600 text-white',    text: 'text-red-200',   muted: 'text-red-300',   icon: '🚨', pulse: true  },
+      Severe:   { bg: 'bg-orange-950', border: 'border-orange-500',pill: 'bg-orange-500 text-white', text: 'text-orange-200',muted: 'text-orange-300',icon: '⚠️', pulse: true  },
+      Moderate: { bg: 'bg-yellow-950', border: 'border-yellow-500',pill: 'bg-yellow-500 text-black', text: 'text-yellow-100',muted: 'text-yellow-300',icon: '🌦️', pulse: false },
+      Minor:    { bg: 'bg-blue-950',   border: 'border-blue-500',  pill: 'bg-blue-500 text-white',   text: 'text-blue-200',  muted: 'text-blue-300',  icon: 'ℹ️', pulse: false },
+      Unknown:  { bg: 'bg-gray-900',   border: 'border-gray-500',  pill: 'bg-gray-500 text-white',   text: 'text-gray-200',  muted: 'text-gray-400',  icon: '📢', pulse: false },
+    };
+    const t = THEME[top.severity] || THEME.Unknown;
+
+    const expiresStr = top.expires
+      ? `Until ${new Date(top.expires).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`
       : '';
 
-    // Severity pill colour
-    const pillCls = top.severity === 'Extreme'
-      ? 'bg-red-600 text-white'
-      : 'bg-orange-500 text-white';
+    // Extra alert pills (collapsed by default, click to expand)
+    const extraPills = extras.map((a, i) => {
+      const et = THEME[a.severity] || THEME.Unknown;
+      return `<button
+        onclick="Hub.weather._expandAlert(${active.indexOf(a)})"
+        class="text-xs px-2 py-0.5 rounded-full font-semibold ${et.pill} opacity-80 hover:opacity-100 transition">
+        ${Hub.utils.esc(a.event)}
+      </button>`;
+    }).join('');
 
-    // ── Build banner shell immediately (no AI latency on first render) ──
+    // ── Banner shell ───────────────────────────────────────────
     const banner = document.createElement('div');
     banner.id        = 'severeWeatherBanner';
-    banner.className = 'fixed top-0 left-0 right-0 z-50 bg-red-950 border-b-2 border-red-500 shadow-lg';
+    banner.className = `fixed top-0 left-0 right-0 z-50 ${t.bg} ${t.border} border-b-2 shadow-lg`;
+
+    // Store alerts on banner for expand button
+    banner._allAlerts = sorted;
+
     banner.innerHTML = `
       <div class="flex items-start gap-3 px-5 py-3 max-w-5xl mx-auto">
-        <span class="text-2xl mt-0.5 animate-pulse flex-shrink-0">🚨</span>
+        <span class="text-2xl mt-0.5 flex-shrink-0 ${t.pulse ? 'animate-pulse' : ''}">${t.icon}</span>
         <div class="flex-1 min-w-0">
           <div class="flex flex-wrap items-center gap-2 mb-1">
-            <span class="font-bold text-white text-sm">${Hub.utils.esc(top.event || 'Severe Weather Alert')}</span>
-            <span class="text-xs px-2 py-0.5 rounded-full font-semibold ${pillCls}">${Hub.utils.esc(top.severity)}</span>
-            ${expiresStr ? `<span class="text-xs text-red-300">${Hub.utils.esc(expiresStr)}</span>` : ''}
+            <span class="font-bold text-white text-sm">${Hub.utils.esc(top.event || 'Weather Alert')}</span>
+            <span class="text-xs px-2 py-0.5 rounded-full font-semibold ${t.pill}">${Hub.utils.esc(top.severity)}</span>
+            ${expiresStr ? `<span class="text-xs ${t.muted}">${Hub.utils.esc(expiresStr)}</span>` : ''}
+            ${top.area ? `<span class="text-xs ${t.muted} truncate max-w-xs">${Hub.utils.esc(top.area)}</span>` : ''}
           </div>
-          <p id="alertSummaryText" class="text-red-200 text-sm leading-snug">
-            <span class="inline-block bg-red-800/60 rounded animate-pulse px-3 py-1 text-xs text-red-400">
-              Getting plain-language summary…
+          <p id="alertSummaryText" class="${t.text} text-sm leading-snug">
+            <span class="inline-block bg-black/20 rounded animate-pulse px-3 py-1 text-xs opacity-60">
+              Getting summary…
             </span>
           </p>
+          ${extras.length ? `
+            <div class="flex flex-wrap gap-1.5 mt-2">
+              <span class="text-xs ${t.muted}">Also active:</span>
+              ${extraPills}
+            </div>` : ''}
         </div>
         <button
           onclick="document.getElementById('severeWeatherBanner').remove()"
-          class="text-red-400 hover:text-white text-xl px-1 flex-shrink-0 leading-none mt-0.5"
+          class="${t.muted} hover:text-white text-xl px-1 flex-shrink-0 leading-none mt-0.5"
           aria-label="Dismiss">×</button>
       </div>
     `;
@@ -664,9 +697,58 @@ Hub.weather = {
       Hub.router.navigate('weather');
     }
 
-    // ── Async: fetch Gemini summary, swap in when ready ──
-    const summaryEl = document.getElementById('alertSummaryText');
-    if (!summaryEl) return;
+    // ── Async: fetch Gemini summary ────────────────────────────
+    await this._fetchAndFillSummary(top, 'alertSummaryText', t);
+  },
+
+  /** Expand banner to show a secondary alert's summary */
+  async _expandAlert(idx) {
+    const banner = document.getElementById('severeWeatherBanner');
+    if (!banner?._allAlerts) return;
+    const alert = banner._allAlerts[idx];
+    if (!alert) return;
+
+    const THEME = {
+      Extreme:  { bg: 'bg-red-950',    border: 'border-red-500',   pill: 'bg-red-600 text-white',    text: 'text-red-200',   muted: 'text-red-300',   icon: '🚨', pulse: true  },
+      Severe:   { bg: 'bg-orange-950', border: 'border-orange-500',pill: 'bg-orange-500 text-white', text: 'text-orange-200',muted: 'text-orange-300',icon: '⚠️', pulse: true  },
+      Moderate: { bg: 'bg-yellow-950', border: 'border-yellow-500',pill: 'bg-yellow-500 text-black', text: 'text-yellow-100',muted: 'text-yellow-300',icon: '🌦️', pulse: false },
+      Minor:    { bg: 'bg-blue-950',   border: 'border-blue-500',  pill: 'bg-blue-500 text-white',   text: 'text-blue-200',  muted: 'text-blue-300',  icon: 'ℹ️', pulse: false },
+      Unknown:  { bg: 'bg-gray-900',   border: 'border-gray-500',  pill: 'bg-gray-500 text-white',   text: 'text-gray-200',  muted: 'text-gray-400',  icon: '📢', pulse: false },
+    };
+    const t = THEME[alert.severity] || THEME.Unknown;
+
+    // Append an expanded row inside the banner
+    const expandId = `alertExpand_${idx}`;
+    if (document.getElementById(expandId)) return; // already open
+
+    const row = document.createElement('div');
+    row.id        = expandId;
+    row.className = `border-t ${t.border} border-opacity-40 px-5 py-2 max-w-5xl mx-auto`;
+    row.innerHTML = `
+      <div class="flex items-start gap-2">
+        <span class="text-lg flex-shrink-0">${t.icon}</span>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="font-semibold text-white text-xs">${Hub.utils.esc(alert.event)}</span>
+            <span class="text-xs px-1.5 py-0.5 rounded-full ${t.pill}">${Hub.utils.esc(alert.severity)}</span>
+          </div>
+          <p id="${expandId}_text" class="${t.text} text-xs leading-snug">
+            <span class="animate-pulse opacity-60">Getting summary…</span>
+          </p>
+        </div>
+        <button onclick="document.getElementById('${expandId}').remove()"
+          class="${t.muted} hover:text-white text-sm px-1">×</button>
+      </div>
+    `;
+    banner.appendChild(row);
+
+    await this._fetchAndFillSummary(alert, `${expandId}_text`, t);
+  },
+
+  /** Shared helper: POST to Gemini endpoint, fill target element */
+  async _fetchAndFillSummary(alert, targetId, theme) {
+    const el = document.getElementById(targetId);
+    if (!el) return;
 
     try {
       const base = Hub.utils.apiBase();
@@ -674,40 +756,38 @@ Hub.weather = {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          event:       top.event,
-          severity:    top.severity,
-          area:        top.area,
-          description: top.description,
-          instruction: top.instruction,
-          expires:     top.expires,
+          event:       alert.event,
+          severity:    alert.severity,
+          urgency:     alert.urgency,
+          area:        alert.area,
+          description: alert.description,
+          instruction: alert.instruction,
+          expires:     alert.expires,
         })
       });
 
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const { summary } = await resp.json();
 
-      // Check the banner is still in the DOM before updating
-      if (!document.getElementById('severeWeatherBanner')) return;
+      if (!document.getElementById(targetId)) return; // dismissed while loading
 
       if (summary) {
-        // Split into sentences for visual breathing room
+        // Split into two visual sentences
         const sentences = summary
           .split(/(?<=[.!?])\s+/)
           .map(s => s.trim())
           .filter(Boolean);
 
-        summaryEl.innerHTML = sentences.length > 1
-          ? `<span>${Hub.utils.esc(sentences[0])}</span> <span class="text-red-300">${Hub.utils.esc(sentences[1])}</span>`
+        document.getElementById(targetId).innerHTML = sentences.length > 1
+          ? `<span>${Hub.utils.esc(sentences[0])}</span> <span class="${theme.muted}">${Hub.utils.esc(sentences[1])}</span>`
           : Hub.utils.esc(summary);
       } else {
-        // Gemini unavailable — fall back to NWS headline gracefully
-        summaryEl.textContent = top.headline || top.event || '';
+        document.getElementById(targetId).textContent = alert.headline || alert.event || '';
       }
     } catch (e) {
-      console.warn('[severe-alert] summary fetch failed:', e.message);
-      if (summaryEl && document.getElementById('severeWeatherBanner')) {
-        summaryEl.textContent = top.headline || top.event || '';
-      }
+      console.warn('[alert-banner] summary fetch failed:', e.message);
+      const el2 = document.getElementById(targetId);
+      if (el2) el2.textContent = alert.headline || alert.event || '';
     }
   },
 
@@ -879,7 +959,7 @@ Hub.weather = {
     const container = document.getElementById('radarMap');
     if (container && container._leaflet_id) delete container._leaflet_id;
 
-    // Remove severe alert banner when leaving weather page
+    // Remove alert banner when leaving weather page
     const banner = document.getElementById('severeWeatherBanner');
     if (banner) banner.remove();
   },
