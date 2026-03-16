@@ -46,10 +46,18 @@ export default async function handler(req, res) {
     const user = await userResp.json();
     if (!user?.id) return res.status(401).json({ error: 'No user id in session' });
 
-    // ── 2) Resolve household — query by user_id (NOT email) ───────────────
-    // BUG 3 FIX: household_members has user_id UUID, not an email column.
+    // ── 2) Resolve household ───────────────────────────────────────────────
+    // household_members has BOTH email (NOT NULL) and user_id (nullable).
+    // Query by email as primary since it's always populated; include user_id
+    // as OR fallback for any future rows that might only have user_id.
+    const emailEnc  = encodeURIComponent(user.email || '');
+    const uidEnc    = encodeURIComponent(user.id    || '');
+    const memFilter = user.email
+      ? `email=eq.${emailEnc}`         // primary: email is NOT NULL in this schema
+      : `user_id=eq.${uidEnc}`;        // fallback if no email on auth object
+
     const memResp = await fetch(
-      `${SB_URL}/rest/v1/household_members?select=household_id,role&user_id=eq.${encodeURIComponent(user.id)}&limit=1`,
+      `${SB_URL}/rest/v1/household_members?select=household_id,role&${memFilter}&limit=1`,
       { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } }
     );
     if (!memResp.ok) {

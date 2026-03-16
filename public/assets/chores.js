@@ -29,6 +29,7 @@ Hub.chores = {
   },
 
   // Day mapping: category string → JS getDay() value (0=Sun, 1=Mon … 6=Sat)
+  // IMPORTANT: Sunday MUST be 0, not 7. JS Date.getDay() returns 0 for Sunday.
   DAY_MAP: {
     'Daily': null,
     'Monday (Living Room)': 1,
@@ -37,7 +38,7 @@ Hub.chores = {
     'Thursday (Kitchen)': 4,
     'Friday (Bedrooms)': 5,
     'Saturday (Miscellaneous)': 6,
-    'Sunday (Grocery/Family)': 0
+    'Sunday (Grocery/Family)': 0   // 0 = Sunday in JS (getDay() convention)
   },
 
   SORT_ORDER: [
