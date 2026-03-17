@@ -13,8 +13,8 @@ window.Hub = window.Hub || {};
 
 const SUPABASE_CONFIG = {
   DB_QUERY_TIMEOUT_MS:             6000,
-  KEEPALIVE_MINUTES:               6,      // watchdog interval
-  REFRESH_IF_EXPIRES_IN_SECONDS:   20 * 60 // refresh if < 20 min left
+  KEEPALIVE_MINUTES:               4,       // watchdog fires every 4 min — catches tokens before they expire
+  REFRESH_IF_EXPIRES_IN_SECONDS:   30 * 60  // proactively refresh if < 30 min left on token
 };
 
 (function () {
@@ -66,31 +66,51 @@ const SUPABASE_CONFIG = {
 
     try { sb.auth.startAutoRefresh?.(); } catch (e) {}
 
-    // Periodic watchdog: refresh token AND re-login app if needed
+    // ── Periodic token watchdog (every 6 min) ──────────────────
+    // Only refreshes the token. Never calls _onLogin if already logged in —
+    // that would trigger a full page reload unnecessarily.
     setInterval(async () => {
       const session = await _refreshIfNeeded('watchdog');
+
+      // App thinks it's logged out but session still exists → re-login ONCE
       if (session?.user && !Hub.app?._loggedIn) {
         console.warn('[Auth] Watchdog: session exists but app thinks logged out — re-login');
         try { await Hub.app?._onLogin?.(session.user); } catch (e) {}
+        return;
       }
+
+      // Session truly gone while logged in → show login
       if (!session && Hub.app?._loggedIn) {
-        // Session truly gone (very rare) — show login once cleanly
-        console.warn('[Auth] Watchdog: session lost while logged in');
+        console.warn('[Auth] Watchdog: session expired — showing login');
         Hub.app._loggedIn = false;
         Hub.router?.showScreen?.('login');
       }
     }, SUPABASE_CONFIG.KEEPALIVE_MINUTES * 60 * 1000);
 
-    // Restore session when tab re-focuses
+    // ── Wake / visibility restore ────────────────────────────
+    // When the Pi screen wakes up or the tab regains focus:
+    //   1. Silently refresh the token (never shows login unless truly expired)
+    //   2. If the app is already logged in, just signal a soft refresh of stale
+    //      data — NOT a full _onLogin which reloads everything
+    //   3. Only call _onLogin if the app actually thinks it's logged out
     const onWake = async () => {
       const session = await _refreshIfNeeded('wake');
-      if (session?.user && !Hub.app?._loggedIn) {
-        try { await Hub.app?._onLogin?.(session.user); } catch (e) {}
+      if (!session) return; // truly no session — watchdog will handle showing login
+
+      if (Hub.app?._loggedIn) {
+        // Already logged in — just nudge visible page data to refresh if stale
+        // without triggering a full reload or re-render of the whole app
+        Hub.app?._onWakeRefresh?.();
+        return;
       }
+
+      // Was logged out in memory but session still valid → full re-login
+      try { await Hub.app?._onLogin?.(session.user); } catch (e) {}
     };
+
     document.addEventListener('visibilitychange', () => { if (!document.hidden) onWake(); });
     window.addEventListener('focus',    onWake);
-    window.addEventListener('pageshow', onWake);
+    window.addEventListener('pageshow', (e) => { if (e.persisted) onWake(); }); // bfcache restore only
     window.addEventListener('online',   () => _refreshIfNeeded('online'));
   }
 

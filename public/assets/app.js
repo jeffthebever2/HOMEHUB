@@ -51,6 +51,8 @@ Hub.app = {
   _idleTimer: null,
   _idleListenersBound: false,   // prevents stacking listeners on re-login
   _loggedIn: false,
+  _pageLoadedAt: {},          // { pageName: timestamp } — staleness guard
+  _STALE_MS: 3 * 60 * 1000,  // 3 min — re-fetch if page data is older than this
   _authHandled: false,
   _loginInProgress: false,
   _lastPage: null,
@@ -250,6 +252,9 @@ Hub.app = {
   },
 
   _showApp() {
+    // Clear page-load timestamps so first navigation after login always loads fresh
+    this._pageLoadedAt = {};
+
     const loadingScreen = document.getElementById('loadingScreen');
     if (loadingScreen) loadingScreen.style.display = 'none';
 
@@ -313,10 +318,16 @@ Hub.app = {
     switch (page) {
       case 'dashboard': this._loadDashboard(); break;
       case 'weather':   this._loadWeatherPage(); break;
-      case 'chores':
-        Hub.chores.load();
-        Hub.chores.renderStats?.('choresStats', 7).catch?.(() => {});
+      case 'chores': {
+        const now = Date.now();
+        const last = this._pageLoadedAt['chores'] || 0;
+        if ((now - last) >= this._STALE_MS) {
+          this._pageLoadedAt['chores'] = now;
+          Hub.chores.load();
+          Hub.chores.renderStats?.('choresStats', 7).catch?.(() => {});
+        }
         break;
+      }
       case 'treats':    Hub.treats.loadDogs(); break;
       case 'standby':   Hub.standby.start(); break;
       case 'radio':     Hub.radio?.onEnter?.(); break;
@@ -328,7 +339,15 @@ Hub.app = {
     }
   },
 
-  async _loadDashboard() {
+  async _loadDashboard(forceRefresh = false) {
+    // Staleness guard: skip full reload if recently loaded (unless forced)
+    const now = Date.now();
+    const lastLoad = this._pageLoadedAt['dashboard'] || 0;
+    if (!forceRefresh && (now - lastLoad) < this._STALE_MS) {
+      console.log('[Dashboard] Skipping reload — loaded', Math.round((now - lastLoad)/1000), 's ago');
+      return;
+    }
+    this._pageLoadedAt['dashboard'] = now;
     Hub.ui.updateDashboardDate();
     Hub.ui.updateDashboardGreeting();
     Hub.chores?.renderDashboard?.().catch(e => console.warn('[Dashboard] Chores:', e));
@@ -356,7 +375,14 @@ Hub.app = {
     } catch (e) { console.error('Dashboard weather error:', e); }
   },
 
-  async _loadWeatherPage() {
+  async _loadWeatherPage(forceRefresh = false) {
+    const now = Date.now();
+    const lastLoad = this._pageLoadedAt['weather'] || 0;
+    if (!forceRefresh && (now - lastLoad) < this._STALE_MS) {
+      console.log('[Weather] Skipping reload — loaded', Math.round((now - lastLoad)/1000), 's ago');
+      return;
+    }
+    this._pageLoadedAt['weather'] = now;
     try {
       await Hub.weather.renderWeatherPage();
     } catch (e) {
@@ -590,10 +616,7 @@ Hub.app = {
     Hub.utils.$('btnDismissAlert')?.addEventListener('click',     () => Hub.ui.dismissAlert());
     Hub.utils.$('btnAddChore')?.addEventListener('click',         () => Hub.chores.showAdd());
     Hub.utils.$('btnSaveChore')?.addEventListener('click',        () => Hub.chores.add());
-    Hub.utils.$('btnAddTreat')?.addEventListener('click',         () => Hub.treats.showAddTreat());
-    Hub.utils.$('btnSaveTreat')?.addEventListener('click',        () => Hub.treats.logTreat());
-    Hub.utils.$('btnAddDog')?.addEventListener('click',           () => Hub.treats.showAddDog());
-    Hub.utils.$('btnSaveDog')?.addEventListener('click',          () => Hub.treats.addDog());
+    // Treat quick-add is handled via Hub.treats.showQuickAdd() dynamic modal
     Hub.utils.$('btnSaveSettings')?.addEventListener('click',     () => Hub.app._saveSettings());
     Hub.utils.$('btnUseLocation')?.addEventListener('click',      () => Hub.app._useCurrentLocation());
     Hub.utils.$('btnRefreshStatus')?.addEventListener('click',    () => Hub.app._loadStatusPage());
@@ -683,6 +706,53 @@ Hub.app = {
     this._idleTimer = setTimeout(() => {
       if (Hub.router.current !== 'standby' && Hub.state.user) Hub.router.go('standby');
     }, timeout);
+  },
+
+  /**
+   * _onWakeRefresh — called when screen wakes or tab refocuses while ALREADY logged in.
+   * Refreshes only stale visible data without triggering a full _onLogin/_showApp cycle.
+   * This is the key to keeping the Pi kiosk alive indefinitely without reloading everything.
+   */
+  _onWakeRefresh() {
+    const page = Hub.router?.current;
+    if (!page || page === 'standby') return; // standby manages its own refresh
+
+    const now = Date.now();
+    const lastLoad = this._pageLoadedAt[page] || 0;
+    const stale = (now - lastLoad) >= this._STALE_MS;
+
+    if (!stale) {
+      console.log(`[Wake] ${page} is fresh (${Math.round((now - lastLoad)/1000)}s old) — no reload`);
+      return;
+    }
+
+    console.log(`[Wake] ${page} is stale — soft refreshing data`);
+
+    // Invalidate only data caches, not the full page render
+    if (Hub.weather?._cache) {
+      const weatherAge = now - Hub.weather._cacheTime;
+      if (weatherAge > Hub.weather.CACHE_TTL) Hub.weather._cache = null;
+    }
+
+    // Soft-reload just the data for the current visible page
+    switch (page) {
+      case 'dashboard':
+        this._pageLoadedAt['dashboard'] = 0; // force reload
+        this._loadDashboard(true);
+        break;
+      case 'weather':
+        this._pageLoadedAt['weather'] = 0;
+        this._loadWeatherPage(true);
+        break;
+      case 'chores':
+        this._pageLoadedAt['chores'] = 0;
+        Hub.chores?.load?.();
+        break;
+      case 'grocery':
+        Hub.grocery?.onEnter?.();
+        break;
+      // Radio, treats, settings, etc. don't need wake refresh
+    }
   },
 
   /** Secure per-household chore reset (called on login, not public cron) */

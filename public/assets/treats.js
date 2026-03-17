@@ -1,92 +1,83 @@
 // ============================================================
-// assets/treats.js — Dog Treat Tracker (Firebase RTDB)
+// assets/treats.js — Barker's daily calorie tracker (Firebase RTDB)
+//
+// Data model: /familyData in Firebase
+//   settings: { dogName, goalKcal, cups, kcalPerCup }
+//   catalog:  [ { id, name, kcalPerUnit, unitLabel, step, imageUrl } ]
+//   items:    [ { id, catalogId, name, kcalPerUnit, qty, unitLabel, type } ]
+//
+// The old /dogs and /treats paths are no longer used.
 // ============================================================
 window.Hub = window.Hub || {};
 
 Hub.treats = {
-  firebaseDb: null,
-  dogs: {},
-  selectedDogId: null,
-  _listeners: [],
+  _db:       null,
+  _listener: null,  // active Firebase ref for real-time updates
 
-  /** Initialize Firebase */
-  init() {
+  // ── Firebase init ─────────────────────────────────────────
+
+  _ensureDb() {
+    if (this._db) return true;
     const cfg = window.HOME_HUB_CONFIG?.firebase;
-    if (!cfg?.apiKey) { console.warn('Firebase config missing'); return; }
+    if (!cfg?.apiKey) { console.warn('[Treats] Firebase config missing'); return false; }
     if (!firebase.apps.length) firebase.initializeApp(cfg);
-    this.firebaseDb = firebase.database();
+    this._db = firebase.database();
+    return true;
   },
 
-  /** Detach all Firebase listeners */
-  cleanup() {
-    this._listeners.forEach(({ ref, cb }) => { try { ref.off('value', cb); } catch (e) {} });
-    this._listeners = [];
-  },
+  // ── Lifecycle ─────────────────────────────────────────────
 
-  /** Load all dogs and render selectors */
+  /** Called when entering the treats page */
   async loadDogs() {
-    if (!this.firebaseDb) { this.init(); if (!this.firebaseDb) return; }
+    // "loadDogs" name kept for backward compat with app.js onPageEnter call
+    await this._renderPage();
+    this._attachListener();
+  },
 
-    const snapshot = await this.firebaseDb.ref('dogs').once('value');
-    this.dogs = snapshot.val() || {};
-    const dogIds = Object.keys(this.dogs);
+  cleanup() {
+    if (this._listener) {
+      try { this._listener.ref.off('value', this._listener.cb); } catch (_) {}
+      this._listener = null;
+    }
+  },
 
-    const selectorEl = Hub.utils.$('dogSelector');
-    if (dogIds.length === 0) {
-      selectorEl.innerHTML = '<p class="text-gray-400">No dogs yet. Add one below!</p>';
-      Hub.utils.$('selectedDogName').textContent = 'Add a dog to get started';
-      Hub.utils.$('calorieProgress').innerHTML = '';
-      Hub.utils.$('todayTreats').innerHTML = '';
-      Hub.utils.$('weekHistory').innerHTML = '';
+  // ── Page renderer ─────────────────────────────────────────
+
+  async _renderPage() {
+    if (!this._ensureDb()) {
+      this._setPageError('Firebase not configured');
+      return;
+    }
+    try {
+      const snap = await this._db.ref('familyData').once('value');
+      this._renderFromData(snap.val(), 'page');
+    } catch (e) {
+      console.error('[Treats] Page load error:', e);
+      this._setPageError('Error loading data');
+    }
+  },
+
+  _renderFromData(data, target) {
+    if (!data?.settings) {
+      if (target === 'page') this._setPageError('No dog data in Firebase. Set up familyData/settings first.');
       return;
     }
 
-    if (!this.selectedDogId || !this.dogs[this.selectedDogId]) {
-      this.selectedDogId = dogIds[0];
-    }
+    const { dogName = 'Barker', goalKcal = 1800, cups = 0, kcalPerCup = 0 } = data.settings;
+    const items        = Array.isArray(data.items) ? data.items : [];
+    const foodCal      = cups * kcalPerCup;
+    const treatCal     = items.reduce((s, it) => s + (it.kcalPerUnit || 0) * (it.qty || 0), 0);
+    const totalCal     = foodCal + treatCal;
+    const pct          = Math.min(Math.round((totalCal / goalKcal) * 100), 100);
+    const remaining    = goalKcal - totalCal;
 
-    selectorEl.innerHTML = dogIds.map(id =>
-      `<button onclick="Hub.treats.selectDog('${id}')" class="btn ${this.selectedDogId === id ? 'btn-primary' : 'btn-secondary'} mr-2 mb-2">${Hub.utils.esc(this.dogs[id].name)}</button>`
-    ).join('');
-
-    this.loadTreats(this.selectedDogId);
-    this._attachRealtimeListener(this.selectedDogId);
-  },
-
-  /** Select a dog */
-  selectDog(id) {
-    this.cleanup();
-    this.selectedDogId = id;
-    this.loadDogs();
-  },
-
-  /** Load and render treats for a dog */
-  async loadTreats(dogId) {
-    const dog = this.dogs[dogId];
-    if (!dog) return;
-
-    Hub.utils.$('selectedDogName').textContent = dog.name;
-
-    const snapshot = await this.firebaseDb.ref(`treats/${dogId}`).once('value');
-    const allTreats = snapshot.val() || {};
-    const todayStart = Hub.utils.todayStart();
-
-    // Today's treats
-    const todayTreats = Object.entries(allTreats)
-      .filter(([_, t]) => t.timestamp >= todayStart)
-      .sort((a, b) => b[1].timestamp - a[1].timestamp);
-
-    const totalCal = todayTreats.reduce((s, [_, t]) => s + (t.calories || 0), 0);
-    const limit = dog.dailyCalorieLimit || 1000;
-    const remaining = limit - totalCal;
-    const pct = Math.min((totalCal / limit) * 100, 100);
-    const color = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-yellow-500' : 'bg-green-500';
-
-    const ringColor = pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#f97316';
+    // Colour ramp: green → amber → red
+    const ringColor = pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : pct >= 60 ? '#fb923c' : '#22c55e';
     const r = 52, circ = +(2 * Math.PI * r).toFixed(3);
-    Hub.utils.$('calorieProgress').innerHTML = `
-      <div class="flex items-center gap-5">
-        <!-- Animated SVG ring -->
+
+    // ── Calorie ring ────────────────────────────────────────
+    const ringHtml = `
+      <div class="flex items-center gap-6">
         <div class="relative flex-shrink-0" style="width:128px;height:128px;">
           <svg width="128" height="128" style="transform:rotate(-90deg);">
             <circle cx="64" cy="64" r="${r}" fill="none" stroke="#1e2d3d" stroke-width="12"/>
@@ -100,368 +91,235 @@ Hub.treats = {
             <span class="text-xs text-gray-400">of limit</span>
           </div>
         </div>
-        <!-- Stats -->
         <div class="flex-1 space-y-2 text-sm">
           <div class="flex justify-between">
-            <span class="text-gray-400">Consumed</span>
-            <span class="font-bold" style="color:${ringColor};">${totalCal} cal</span>
+            <span class="text-gray-400">Food</span>
+            <span class="font-semibold">${Math.round(foodCal)} cal</span>
           </div>
           <div class="flex justify-between">
-            <span class="text-gray-400">Daily limit</span>
-            <span class="font-semibold">${limit} cal</span>
+            <span class="text-gray-400">Treats</span>
+            <span class="font-semibold">${Math.round(treatCal)} cal</span>
           </div>
-          <div class="flex justify-between border-t border-gray-700 pt-2 mt-1">
+          <div class="flex justify-between border-t border-gray-700 pt-2">
+            <span class="text-gray-400">Total</span>
+            <span class="font-bold" style="color:${ringColor};">${Math.round(totalCal)} / ${goalKcal}</span>
+          </div>
+          <div class="flex justify-between">
             <span class="text-gray-400">Remaining</span>
-            <span class="font-semibold ${remaining > 0 ? 'text-green-400' : 'text-red-400'}">${remaining > 0 ? remaining + ' cal' : '⚠️ Limit reached'}</span>
+            <span class="font-semibold ${remaining > 0 ? 'text-green-400' : 'text-red-400'}">
+              ${remaining > 0 ? Math.round(remaining) + ' cal' : '⚠️ Limit reached'}
+            </span>
           </div>
         </div>
-      </div>
-    `;
-    // Animate ring after paint — skip if prefers-reduced-motion
+      </div>`;
+
+    // ── Today's treat items ─────────────────────────────────
+    const todayItems = items.filter(it => it.qty > 0);
+    const todayHtml  = `
+      <h3 class="font-bold mb-3 text-lg">Today's Treats</h3>
+      ${todayItems.length === 0
+        ? '<p class="text-gray-400 text-sm">No treats logged yet today.</p>'
+        : todayItems.map(it => `
+            <div class="flex items-center justify-between py-2.5 border-b border-gray-700 last:border-0">
+              <div class="flex-1 min-w-0">
+                <p class="font-medium text-sm">${Hub.utils.esc(it.name)}</p>
+                <p class="text-xs text-gray-400">${it.qty} × ${it.kcalPerUnit} cal = ${it.qty * it.kcalPerUnit} cal</p>
+              </div>
+              <div class="flex items-center gap-2 flex-shrink-0">
+                <button onclick="Hub.treats._adjustQty('${it.id}', -1)"
+                  class="w-7 h-7 flex items-center justify-center rounded-full bg-gray-700 hover:bg-gray-600 text-white font-bold text-lg leading-none">−</button>
+                <span class="text-sm font-semibold w-5 text-center">${it.qty}</span>
+                <button onclick="Hub.treats._adjustQty('${it.id}', 1)"
+                  class="w-7 h-7 flex items-center justify-center rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg leading-none">+</button>
+              </div>
+            </div>`).join('')}`;
+
+    if (target === 'page') {
+      const prog = document.getElementById('calorieProgress');
+      if (prog) prog.innerHTML = ringHtml;
+      const today = document.getElementById('todayTreats');
+      if (today) today.innerHTML = todayHtml;
+    } else {
+      // dashboard widget
+      const el = Hub.utils.$('dogStatusWidget');
+      if (el) {
+        const statusLabel = pct >= 100 ? '⚠ Over limit' : pct >= 80 ? 'Getting close' : '✓ Good';
+        el.innerHTML = `
+          <div class="flex items-center gap-4">
+            <div class="relative flex-shrink-0" style="width:80px;height:80px;">
+              <svg width="80" height="80" style="transform:rotate(-90deg);">
+                <circle cx="40" cy="40" r="32" fill="none" stroke="#1e2d3d" stroke-width="8"/>
+                <circle cx="40" cy="40" r="32" fill="none" stroke="${ringColor}" stroke-width="8"
+                  stroke-linecap="round"
+                  stroke-dasharray="${+(2*Math.PI*32).toFixed(3)}"
+                  stroke-dashoffset="${+(2*Math.PI*32*(1-pct/100)).toFixed(3)}"
+                  style="transition:stroke-dashoffset .8s ease;"/>
+              </svg>
+              <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">
+                <span style="font-size:.9rem;font-weight:700;color:${ringColor};">${pct}%</span>
+              </div>
+            </div>
+            <div class="flex-1 text-sm">
+              <p class="font-semibold mb-0.5">${Math.round(totalCal)} / ${goalKcal} cal</p>
+              <p class="text-xs text-gray-400">${Math.round(foodCal)} food · ${Math.round(treatCal)} treats</p>
+              <p class="text-xs font-semibold mt-1" style="color:${ringColor};">${statusLabel}</p>
+            </div>
+          </div>`;
+      }
+    }
+
+    // Animate ring
     requestAnimationFrame(() => {
       const arc   = document.getElementById('calorieRingArc');
       const numEl = document.getElementById('calorieRingPct');
       if (!arc || !numEl) return;
+      arc.style.strokeDashoffset = String(circ - circ * pct / 100);
       const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      const targetOffset = circ - circ * Math.min(pct, 100) / 100;
-      if (reduced) { arc.style.strokeDashoffset = targetOffset; numEl.textContent = Math.round(pct) + '%'; return; }
-      arc.style.strokeDashoffset = targetOffset;
+      if (reduced) { numEl.textContent = pct + '%'; return; }
       const dur = 1400, start = performance.now();
-      const tick = (now) => {
-        const t = Math.min((now - start) / dur, 1);
-        const ease = 1 - Math.pow(1 - t, 3); // ease-out cubic
-        numEl.textContent = Math.round(ease * Math.min(pct, 100)) + '%';
+      const tick = now => {
+        const t    = Math.min((now - start) / dur, 1);
+        const ease = 1 - Math.pow(1 - t, 3);
+        numEl.textContent = Math.round(ease * pct) + '%';
         if (t < 1) requestAnimationFrame(tick);
       };
       requestAnimationFrame(tick);
     });
-
-    // Today treats list
-    if (todayTreats.length === 0) {
-      Hub.utils.$('todayTreats').innerHTML = '<p class="text-gray-400">No treats logged today</p>';
-    } else {
-      Hub.utils.$('todayTreats').innerHTML = '<h3 class="font-bold mb-3">Today\'s Treats</h3>' +
-        todayTreats.map(([_, t]) => `
-          <div class="bg-gray-700 rounded-lg p-3 mb-2 flex justify-between items-center">
-            <div><p class="font-medium">${Hub.utils.esc(t.name)}</p><p class="text-sm text-gray-400">${t.calories} cal</p></div>
-            <span class="text-sm text-gray-400">${Hub.utils.formatTime(t.timestamp)}</span>
-          </div>
-        `).join('');
-    }
-
-    // Last 7 days
-    this._renderWeekHistory(allTreats, limit);
   },
 
-  /** Render 7-day history */
-  _renderWeekHistory(allTreats, limit) {
-    const el = Hub.utils.$('weekHistory');
-    if (!el) return;
-    const entries = Object.values(allTreats);
-    const days = [];
-    for (let i = 0; i < 7; i++) {
-      const start = Hub.utils.daysAgo(i);
-      const end = start + 86400000;
-      const dayTreats = entries.filter(t => t.timestamp >= start && t.timestamp < end);
-      const total = dayTreats.reduce((s, t) => s + (t.calories || 0), 0);
-      const label = i === 0 ? 'Today' : i === 1 ? 'Yesterday' : new Date(start).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-      days.push({ label, total });
-    }
-
-    el.innerHTML = '<h3 class="font-bold mb-3">Last 7 Days</h3>' +
-      days.map(d => {
-        const pct = Math.min((d.total / limit) * 100, 100);
-        const c = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-yellow-500' : 'bg-blue-500';
-        return `<div class="flex items-center gap-3 mb-2">
-          <span class="text-xs text-gray-400 w-24 text-right">${Hub.utils.esc(d.label)}</span>
-          <div class="flex-1 progress-bar" style="height:.5rem"><div class="progress-fill ${c}" style="width:${pct}%;height:100%"></div></div>
-          <span class="text-xs text-gray-400 w-16">${d.total} cal</span>
-        </div>`;
-      }).join('');
-  },
-
-  /** Attach real-time listener for a dog's treats */
-  _attachRealtimeListener(dogId) {
-    if (!this.firebaseDb) return;
-    const ref = this.firebaseDb.ref(`treats/${dogId}`);
-    const cb = () => { this.loadTreats(dogId); };
-    ref.on('value', cb);
-    this._listeners.push({ ref, cb });
-  },
-
-  /** Add a new dog */
-  async addDog() {
-    const name = Hub.utils.$('dogName').value.trim();
-    const cal = parseInt(Hub.utils.$('dogCalories').value) || 1000;
-    if (!name) return Hub.ui.toast('Enter a dog name', 'error');
-
-    await this.firebaseDb.ref('dogs').push({ name, dailyCalorieLimit: cal });
-    Hub.utils.$('dogName').value = '';
-    Hub.utils.$('dogCalories').value = '1000';
-    Hub.ui.closeModal('addDogModal');
-    Hub.ui.toast(name + ' added!');
-    this.loadDogs();
-  },
-
-  /** Log a treat */
-  async logTreat() {
-    if (!this.selectedDogId) return Hub.ui.toast('Select a dog first', 'error');
-    const name = Hub.utils.$('treatName').value.trim();
-    const cal = parseInt(Hub.utils.$('treatCalories').value);
-    if (!name || !cal) return Hub.ui.toast('Enter treat name and calories', 'error');
-
-    await this.firebaseDb.ref(`treats/${this.selectedDogId}`).push({
-      name, calories: cal, timestamp: Date.now(), dogId: this.selectedDogId
+  _setPageError(msg) {
+    const ids = ['calorieProgress', 'todayTreats', 'weekHistory'];
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = `<p class="text-gray-400 text-sm">${Hub.utils.esc(msg)}</p>`;
     });
-    Hub.utils.$('treatName').value = '';
-    Hub.utils.$('treatCalories').value = '';
-    Hub.ui.closeModal('addTreatModal');
-    Hub.ui.toast('Treat logged!');
-    // Realtime listener will refresh
   },
 
-  /** Show add-dog modal */
-  showAddDog() { Hub.ui.openModal('addDogModal'); },
+  // ── Real-time listener ────────────────────────────────────
 
-  /** Show add-treat modal */
-  showAddTreat() {
-    if (!this.selectedDogId) return Hub.ui.toast('Select a dog first', 'error');
-    Hub.ui.openModal('addTreatModal');
+  _attachListener() {
+    this.cleanup();
+    if (!this._ensureDb()) return;
+    const ref = this._db.ref('familyData');
+    const cb  = snap => this._renderFromData(snap.val(), 'page');
+    ref.on('value', cb);
+    this._listener = { ref, cb };
   },
 
-  /** Render dog status widget for dashboard with circular gauge */
+  // ── Treat quantity adjustment ─────────────────────────────
+
+  async _adjustQty(itemId, delta) {
+    if (!this._ensureDb()) return;
+    try {
+      const snap  = await this._db.ref('familyData/items').once('value');
+      const items = snap.val() || [];
+      const idx   = items.findIndex(it => it.id === itemId);
+      if (idx < 0) return;
+      const newQty = Math.max(0, (items[idx].qty || 0) + delta);
+      if (newQty === 0) {
+        items.splice(idx, 1); // remove item when quantity hits 0
+      } else {
+        items[idx] = { ...items[idx], qty: newQty };
+      }
+      await this._db.ref('familyData/items').set(items);
+    } catch (e) {
+      Hub.ui?.toast?.('Failed to update — check connection', 'error');
+    }
+  },
+
+  // ── Quick-add treat from catalog ─────────────────────────
+
+  async showQuickAdd() {
+    if (!this._ensureDb()) { Hub.ui?.toast?.('Firebase not configured', 'error'); return; }
+    try {
+      const snap    = await this._db.ref('familyData/catalog').once('value');
+      const catalog = snap.val() || [];
+      if (!catalog.length) { Hub.ui?.toast?.('No treats in catalog yet', 'error'); return; }
+
+      const modal = document.createElement('div');
+      modal.className = 'fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4';
+      modal.innerHTML = `
+        <div class="bg-gray-800 rounded-xl p-6 max-w-sm w-full max-h-[80vh] overflow-y-auto">
+          <h3 class="text-xl font-bold mb-4">Add Treat for Barker</h3>
+          <div class="space-y-2 mb-4">
+            ${catalog.map(treat => `
+              <button onclick="Hub.treats._quickAdd('${treat.id}')"
+                class="w-full text-left px-4 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors">
+                <div class="font-semibold">${Hub.utils.esc(treat.name)}</div>
+                <div class="text-xs text-gray-400">${treat.kcalPerUnit} cal / ${treat.unitLabel || 'unit'}</div>
+              </button>`).join('')}
+          </div>
+          <button onclick="this.closest('.fixed').remove()"
+            class="w-full btn btn-secondary">Cancel</button>
+        </div>`;
+      document.body.appendChild(modal);
+      modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+    } catch (e) {
+      console.error('[Treats] showQuickAdd error:', e);
+      Hub.ui?.toast?.('Error loading catalog', 'error');
+    }
+  },
+
+  async _quickAdd(treatId) {
+    document.querySelectorAll('.fixed.inset-0').forEach(m => m.remove());
+    if (!this._ensureDb()) return;
+    try {
+      const [catalogSnap, itemsSnap] = await Promise.all([
+        this._db.ref('familyData/catalog').once('value'),
+        this._db.ref('familyData/items').once('value'),
+      ]);
+      const catalog = catalogSnap.val() || [];
+      const items   = itemsSnap.val()   || [];
+      const treat   = catalog.find(t => t.id === treatId);
+      if (!treat) { Hub.ui?.toast?.('Treat not found', 'error'); return; }
+
+      // If already in today's items, increment qty instead of adding duplicate
+      const existing = items.find(it => it.catalogId === treatId);
+      if (existing) {
+        existing.qty = (existing.qty || 0) + (treat.step || 1);
+      } else {
+        items.push({
+          id:         Date.now().toString(),
+          catalogId:  treatId,
+          name:       treat.name,
+          kcalPerUnit: treat.kcalPerUnit,
+          qty:        treat.step || 1,
+          unitLabel:  treat.unitLabel || 'unit',
+          type:       'catalog',
+        });
+      }
+      await this._db.ref('familyData/items').set(items);
+      Hub.ui?.toast?.(`Added ${treat.name}! 🐕`, 'success');
+    } catch (e) {
+      console.error('[Treats] _quickAdd error:', e);
+      Hub.ui?.toast?.('Failed to add treat', 'error');
+    }
+  },
+
+  // ── Dashboard widget ──────────────────────────────────────
+
   async renderDashboardWidget() {
     const el = Hub.utils.$('dogStatusWidget');
     if (!el) return;
-
-    if (!this.firebaseDb) {
-      this.init();
-      if (!this.firebaseDb) {
-        el.innerHTML = '<p class="text-gray-400 text-sm">Firebase not configured</p>';
-        return;
-      }
+    if (!this._ensureDb()) {
+      el.innerHTML = '<p class="text-gray-400 text-sm">Firebase not configured</p>';
+      return;
     }
-
     try {
-      // Load Barker's data from familyData
-      const snapshot = await this.firebaseDb.ref('familyData').once('value');
-      const familyData = snapshot.val();
-      
-      if (!familyData || !familyData.settings) {
-        el.innerHTML = '<p class="text-gray-400 text-sm">No dog data yet</p>';
-        return;
-      }
-
-      const dogName = familyData.settings.dogName || 'Barker';
-      const limit = familyData.settings.goalKcal || 1800;
-      const cups = familyData.settings.cups || 4;
-      const kcalPerCup = familyData.settings.kcalPerCup || 384;
-      
-      // Calculate food calories (cups × calories per cup)
-      const foodCalories = cups * kcalPerCup;
-      
-      // Calculate treats from items (these should be automatically added by recurring treats)
-      const items = familyData.items || [];
-      const treatCalories = items.reduce((sum, item) => {
-        const calories = (item.kcalPerUnit || 0) * (item.qty || 0);
-        return sum + calories;
-      }, 0);
-      
-      const totalCal = foodCalories + treatCalories;
-      const percent = Math.round((totalCal / limit) * 100);
-
-      // Color changes: green -> yellow -> orange -> red
-      let gaugeColor, statusText, statusIcon;
-      if (percent <= 50) {
-        gaugeColor = '#22c55e'; // Green
-        statusText = 'Great!';
-        statusIcon = '✓';
-      } else if (percent <= 75) {
-        gaugeColor = '#84cc16'; // Light green
-        statusText = 'Good';
-        statusIcon = '✓';
-      } else if (percent <= 90) {
-        gaugeColor = '#f59e0b'; // Orange
-        statusText = 'Getting Close';
-        statusIcon = '⚠';
-      } else if (percent <= 100) {
-        gaugeColor = '#fb923c'; // Dark orange
-        statusText = 'Almost There';
-        statusIcon = '⚠';
-      } else {
-        gaugeColor = '#ef4444'; // Red
-        statusText = 'Over Limit!';
-        statusIcon = '✗';
-      }
-
-      // Calculate arc for circular gauge
-      const radius = 45;
-      const circumference = 2 * Math.PI * radius;
-      const strokeDashoffset = circumference - (Math.min(percent, 100) / 100) * circumference;
-
-      el.innerHTML = `
-        <div>
-          <!-- Dog name and status -->
-          <div class="flex items-center justify-between mb-3">
-            <span class="font-semibold text-base">${Hub.utils.esc(dogName)}</span>
-            <span class="text-xs font-bold" style="color: ${gaugeColor};">${statusIcon} ${statusText}</span>
-          </div>
-          
-          <!-- Circular gauge -->
-          <div class="flex items-center gap-4">
-            <!-- SVG Gauge -->
-            <svg class="transform -rotate-90" width="120" height="120" viewBox="0 0 120 120">
-              <!-- Background circle -->
-              <circle
-                cx="60"
-                cy="60"
-                r="${radius}"
-                stroke="#374151"
-                stroke-width="10"
-                fill="none"
-              />
-              <!-- Progress arc -->
-              <circle
-                cx="60"
-                cy="60"
-                r="${radius}"
-                stroke="${gaugeColor}"
-                stroke-width="10"
-                fill="none"
-                stroke-linecap="round"
-                style="
-                  stroke-dasharray: ${circumference};
-                  stroke-dashoffset: ${strokeDashoffset};
-                  transition: stroke-dashoffset 0.5s ease, stroke 0.5s ease;
-                "
-              />
-              <!-- Center text -->
-              <text
-                x="60"
-                y="60"
-                text-anchor="middle"
-                dominant-baseline="middle"
-                class="transform rotate-90"
-                style="
-                  font-size: 24px;
-                  font-weight: 700;
-                  fill: ${gaugeColor};
-                  transform-origin: 60px 60px;
-                "
-              >${percent}%</text>
-            </svg>
-            
-            <!-- Stats -->
-            <div class="flex-1">
-              <p class="text-sm font-semibold mb-1">${Math.round(totalCal)} / ${limit} cal</p>
-              <p class="text-xs text-gray-400">Food: ${foodCalories} + Treats: ${Math.round(treatCalories)}</p>
-              ${percent > 100 ? `<p class="text-xs font-bold mt-1" style="color: ${gaugeColor};">+${Math.round(totalCal - limit)} over!</p>` : ''}
-            </div>
-          </div>
-        </div>
-      `;
-
+      const snap = await this._db.ref('familyData').once('value');
+      this._renderFromData(snap.val(), 'dashboard');
     } catch (e) {
-      console.error('[Treats] Error rendering dashboard widget:', e);
+      console.error('[Treats] Dashboard widget error:', e);
       el.innerHTML = '<p class="text-gray-400 text-sm">Error loading dog status</p>';
     }
   },
 
-  /** Show quick add treat modal */
-  async showQuickAdd() {
-    if (!this.firebaseDb) {
-      this.init();
-      if (!this.firebaseDb) {
-        Hub.ui.toast('Firebase not configured', 'error');
-        return;
-      }
-    }
+  // ── Compatibility stubs ───────────────────────────────────
+  // Kept so any old onPageEnter/button wiring doesn't throw
 
-    try {
-      // Load catalog from Firebase
-      const catalogSnap = await this.firebaseDb.ref('familyData/catalog').once('value');
-      const catalog = catalogSnap.val() || [];
-
-      if (!catalog.length) {
-        Hub.ui.toast('No treats in catalog', 'error');
-        return;
-      }
-
-      // Show modal with treat selection
-      const modal = document.createElement('div');
-      modal.className = 'fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4';
-      modal.innerHTML = `
-        <div class="bg-gray-800 rounded-xl p-6 max-w-md w-full max-h-[80vh] overflow-y-auto">
-          <h3 class="text-xl font-bold mb-4">Add Treat for Barker</h3>
-          <div class="space-y-2 mb-4">
-            ${catalog.map((treat, idx) => `
-              <button 
-                onclick="Hub.treats.addQuickTreat('${treat.id}', '${Hub.utils.esc(treat.name)}', ${treat.kcalPerUnit})"
-                class="w-full text-left px-4 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
-              >
-                <div class="font-semibold">${Hub.utils.esc(treat.name)}</div>
-                <div class="text-sm text-gray-400">${treat.kcalPerUnit} cal per ${treat.unitLabel || 'unit'}</div>
-              </button>
-            `).join('')}
-          </div>
-          <button 
-            onclick="this.closest('.fixed').remove()"
-            class="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg"
-          >
-            Cancel
-          </button>
-        </div>
-      `;
-      document.body.appendChild(modal);
-    } catch (e) {
-      console.error('[Treats] Error showing quick add:', e);
-      Hub.ui.toast('Error loading treats', 'error');
-    }
-  },
-
-  /** Add a quick treat (default quantity 1) */
-  async addQuickTreat(treatId, treatName, calories) {
-    try {
-      // Get current items
-      const itemsSnap = await this.firebaseDb.ref('familyData/items').once('value');
-      const items = itemsSnap.val() || [];
-
-      // Find the treat in catalog for full details
-      const catalogSnap = await this.firebaseDb.ref('familyData/catalog').once('value');
-      const catalog = catalogSnap.val() || [];
-      const treat = catalog.find(t => t.id === treatId);
-
-      if (!treat) {
-        Hub.ui.toast('Treat not found', 'error');
-        return;
-      }
-
-      // Add new item
-      const newItem = {
-        id: Date.now().toString(),
-        catalogId: treatId,
-        name: treatName,
-        kcalPerUnit: calories,
-        qty: 1,
-        unitLabel: treat.unitLabel || 'unit',
-        step: treat.step || 1,
-        type: 'catalog',
-        imageUrl: treat.imageUrl || ''
-      };
-
-      items.push(newItem);
-      await this.firebaseDb.ref('familyData/items').set(items);
-
-      // Close modal
-      document.querySelectorAll('.fixed.inset-0').forEach(m => m.remove());
-
-      // Refresh dashboard
-      await this.renderDashboardWidget();
-      
-      Hub.ui.toast(`Added ${treatName} for Barker!`, 'success');
-    } catch (e) {
-      console.error('[Treats] Error adding treat:', e);
-      Hub.ui.toast('Error adding treat', 'error');
-    }
-  }
+  init()        { this._ensureDb(); },
+  showAddTreat(){ this.showQuickAdd(); },
+  showAddDog()  {},
+  logTreat()    {},
+  addDog()      {},
 };

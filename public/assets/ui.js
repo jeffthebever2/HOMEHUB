@@ -25,52 +25,9 @@ Hub.ui = {
    * Starts a watchdog that re-checks live alerts every 2 min and
    * hides the banner automatically when all alerts have expired.
    */
-  showBanner(threats, severity) {
-    const banner = Hub.utils.$('alertBanner');
-    if (!banner) return;
-
-    const threatList = Array.isArray(threats) ? threats : [threats];
-    if (!threatList.length) { this.hideBanner(); return; }
-
-    // Deduplicate
-    const unique = [...new Set(threatList.filter(Boolean))];
-
-    // Build ticker text repeated twice for seamless CSS loop
-    const segment = unique.map(t => '⚠ ' + t).join('  ·  ');
-    const ticker  = segment + '  ·  ' + segment;
-
-    // Map NWS severity names to CSS classes (CSS defines warning/watch/advisory)
-    const rawSev = (severity || 'watch').toLowerCase();
-    const sevMap = { extreme: 'warning', severe: 'warning', moderate: 'watch', minor: 'advisory' };
-    const sev    = sevMap[rawSev] || rawSev; // pass through warning/watch/advisory unchanged
-    banner.className = 'alert-banner alert-banner--ticker ' + sev;
-    banner.innerHTML =
-      '<div class="alert-banner__track" aria-label="Weather alert ticker">' +
-        '<span class="alert-banner__text">' + Hub.utils.esc(ticker) + '</span>' +
-      '</div>' +
-      '<button class="alert-banner__close" onclick="Hub.ui.hideBanner()" aria-label="Dismiss alert">✕</button>';
-
-    banner.classList.remove('hidden');
-
-    // Watchdog: re-fetch live alerts every 2 minutes; auto-hide when all expired
-    if (this._bannerWatchdog) clearInterval(this._bannerWatchdog);
-    this._bannerWatchdog = setInterval(async () => {
-      try {
-        const live = await Hub.weather.fetchAlerts();
-        if (!live.length) {
-          console.log('[UI] Banner watchdog: all alerts expired — hiding banner');
-          this.hideBanner();
-        } else {
-          // Refresh banner text in case event names changed
-          const fresh  = [...new Set(live.map(a => a.event || a.headline).filter(Boolean))];
-          const seg    = fresh.map(t => '⚠ ' + t).join('  ·  ');
-          const tick   = seg + '  ·  ' + seg;
-          const track  = banner.querySelector('.alert-banner__text');
-          if (track) track.textContent = tick;
-        }
-      } catch (e) { /* network error — keep showing until next check */ }
-    }, 2 * 60 * 1000); // every 2 minutes
-  },
+  // showBanner() is retired — Hub.weather._renderAlertBanner() handles all alert display now.
+  // Kept as a no-op so any stale call sites don't throw.
+  showBanner() {},
 
   /** Hide alert banner and cancel its watchdog */
   hideBanner() {
@@ -89,20 +46,18 @@ Hub.ui = {
   async showAlertPopup(alerts) {
     if (!alerts || !alerts.length) return;
 
-    // Respect quiet hours — suppress advisory/watch during quiet, keep warning
+    // Quiet hours — suppress non-severe alerts
     const s       = Hub.state.settings || {};
     const isQuiet = Hub.utils.isQuietHours(s.quiet_hours_start, s.quiet_hours_end);
 
-    // Sort by severity: extreme > severe > moderate > minor
     const sevOrder = { extreme: 0, severe: 1, moderate: 2, minor: 3, unknown: 4 };
     const sorted   = [...alerts].sort((a, b) =>
       (sevOrder[(a.severity||'').toLowerCase()] ?? 4) - (sevOrder[(b.severity||'').toLowerCase()] ?? 4)
     );
-
     const top = sorted[0];
     if (isQuiet && !['extreme','severe'].includes((top.severity||'').toLowerCase())) return;
 
-    // Use alert id + event as the seen-key so each unique alert type is tracked
+    // Idempotency — don't re-show an already-acknowledged alert
     const alertId = (top.id || top.event || top.headline || 'alert').slice(0, 200);
     if (Hub.state.user) {
       try {
@@ -111,38 +66,118 @@ Hub.ui = {
       } catch (e) {}
     }
 
-    const popupText = Hub.utils.$('alertPopupText');
-    if (popupText) {
-      popupText.dataset.alertId = alertId;
-      const expireMs = top.expires ? new Date(top.expires).getTime() : null;
-      const expiresStr = expireMs
-        ? new Date(expireMs).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-        : null;
-      popupText.textContent =
-        (top.event || top.headline || 'Weather Alert') +
-        (top.area      ? ' · ' + top.area        : '') +
-        (expiresStr    ? ' (expires ' + expiresStr + ')' : '');
+    // Expiry guard
+    if (top.expires) {
+      const msLeft = new Date(top.expires).getTime() - Date.now();
+      if (msLeft <= 0) return;
+      // Auto-close when it expires
+      setTimeout(() => {
+        const popup = Hub.utils.$('alertPopup');
+        if (popup && !popup.classList.contains('hidden')) popup.classList.add('hidden');
+      }, msLeft);
+    }
 
-      // Auto-close popup when its own expiry arrives (to the second)
-      if (expireMs) {
-        const msUntilExpiry = expireMs - Date.now();
-        if (msUntilExpiry > 0) {
-          setTimeout(() => {
-            const popup = Hub.utils.$('alertPopup');
-            if (popup && !popup.classList.contains('hidden')) {
-              console.log('[UI] Popup auto-closed: alert expired');
-              popup.classList.add('hidden');
-            }
-          }, msUntilExpiry);
-        } else {
-          // Already expired — don't show at all
-          return;
+    // ── Per-severity theming ─────────────────────────────────────────────
+    const THEME = {
+      Extreme:  { bar: '#dc2626', pill: '#dc2626', icon: '🚨' },
+      Severe:   { bar: '#ea580c', pill: '#ea580c', icon: '⚠️' },
+      Moderate: { bar: '#d97706', pill: '#d97706', icon: '🌦️' },
+      Minor:    { bar: '#2563eb', pill: '#2563eb', icon: 'ℹ️' },
+      Unknown:  { bar: '#4b5563', pill: '#4b5563', icon: '📢' },
+    };
+    const th = THEME[top.severity] || THEME.Unknown;
+
+    // ── Populate modal ───────────────────────────────────────────────────
+    const $ = id => document.getElementById(id);
+
+    // Store alert id for dismissal
+    const popupText = Hub.utils.$('alertPopupText');
+    if (popupText) popupText.dataset.alertId = alertId;
+
+    // Colour bar + pill
+    const bar = $('alertPopupBar');
+    if (bar) bar.style.background = th.bar;
+    const pill = $('alertPopupSeverityPill');
+    if (pill) { pill.textContent = top.severity || 'Alert'; pill.style.background = th.pill; }
+    const icon = $('alertPopupIcon');
+    if (icon) icon.textContent = th.icon;
+
+    // Event name
+    const evEl = $('alertPopupEvent');
+    if (evEl) evEl.textContent = top.event || 'Weather Alert';
+
+    // Area + expires
+    const areaEl = $('alertPopupArea');
+    if (areaEl) areaEl.textContent = top.area || '';
+    const expEl = $('alertPopupExpires');
+    if (expEl && top.expires) {
+      expEl.textContent = 'Until ' + new Date(top.expires)
+        .toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    } else if (expEl) {
+      expEl.textContent = '';
+    }
+
+    // Full NWS text
+    const descEl = $('alertPopupDesc');
+    if (descEl) descEl.textContent = top.description || '';
+    const instrEl = $('alertPopupInstr');
+    if (instrEl) {
+      instrEl.textContent = top.instruction ? '⚡ What to do: ' + top.instruction : '';
+    }
+
+    // Reset full-text toggle
+    const fullWrap = $('alertPopupFullWrap');
+    const toggleBtn = $('alertPopupToggleFull');
+    if (fullWrap) fullWrap.classList.add('hidden');
+    if (toggleBtn) toggleBtn.textContent = 'View full alert ↓';
+
+    // Hide full text button if nothing to show
+    if (toggleBtn) {
+      toggleBtn.style.visibility = (top.description || top.instruction) ? 'visible' : 'hidden';
+    }
+
+    // Show modal
+    Hub.utils.$('alertPopup')?.classList.remove('hidden');
+
+    // ── Async: Gemini summary ────────────────────────────────────────────
+    const aiText = $('alertPopupAiText');
+    if (aiText) {
+      try {
+        const base = Hub.utils.apiBase();
+        const resp = await fetch(base + '/api/weather-alert-summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event: top.event, severity: top.severity, urgency: top.urgency,
+            area: top.area, description: top.description,
+            instruction: top.instruction, expires: top.expires,
+          })
+        });
+        const { summary } = await resp.json();
+        if (!Hub.utils.$('alertPopup')?.classList.contains('hidden')) {
+          if (summary) {
+            const sents = summary.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+            aiText.innerHTML = sents.length > 1
+              ? sents[0] + ' <span style="color:#9ca3af;">' + Hub.utils.esc(sents[1]) + '</span>'
+              : Hub.utils.esc(summary);
+          } else {
+            aiText.textContent = top.headline || top.event || '';
+          }
         }
+      } catch (e) {
+        if (aiText) aiText.textContent = top.headline || top.event || '';
       }
     }
-    Hub.utils.$('alertPopup')?.classList.remove('hidden');
   },
 
+  /** Toggle full NWS text in alert popup */
+  toggleAlertPopupFull() {
+    const wrap = document.getElementById('alertPopupFullWrap');
+    const btn  = document.getElementById('alertPopupToggleFull');
+    if (!wrap) return;
+    const hidden = wrap.classList.toggle('hidden');
+    if (btn) btn.textContent = hidden ? 'View full alert ↓' : 'Hide full alert ↑';
+  },
   /** Dismiss alert popup and mark as seen */
   async dismissAlert() {
     const popupText = Hub.utils.$('alertPopupText');

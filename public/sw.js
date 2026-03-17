@@ -6,14 +6,15 @@
 //   - Images: cache-first with 7-day TTL
 // ============================================================
 
-const CACHE_NAME  = 'homehub-v4';
-const CACHE_SHELL = 'homehub-shell-v4';
+const CACHE_NAME  = 'homehub-v5';
+const CACHE_SHELL = 'homehub-shell-v5';
 
 // Static app-shell assets to pre-cache on install
 const SHELL_URLS = [
   '/',
   '/index.html',
   '/config.js',
+  '/assets/tailwind.css',
   '/assets/utils.js',
   '/assets/supabase.js',
   '/assets/router.js',

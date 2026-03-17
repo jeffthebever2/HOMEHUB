@@ -117,14 +117,41 @@ Hub.standby = {
         el.innerHTML = '<p class="text-gray-500 text-sm">Weather unavailable</p>';
       }
 
-      // Alert strip — use LIVE alerts (not AI hazards) so expiry is always respected
+      // Alert strip — severity-aware colour + icon
       if (alertEl) {
         if (liveAlerts.length > 0) {
-          // Build NWS event names for the ticker, deduplicated
-          const threats = [...new Set(liveAlerts.map(a => a.event || a.headline).filter(Boolean))];
-          const segment = threats.map(t => '⚠ ' + t).join('  ·  ');
-          const ticker  = segment + '  ·  ' + segment; // duplicate for seamless CSS loop
-          alertEl.innerHTML = '<span class="marquee-text">' + Hub.utils.esc(ticker) + '</span>';
+          // Sort by severity so worst alert drives the colour
+          const sevOrder = { extreme: 0, severe: 1, moderate: 2, minor: 3, unknown: 4 };
+          const sorted = [...liveAlerts].sort((a, b) =>
+            (sevOrder[(a.severity||'').toLowerCase()] ?? 4) -
+            (sevOrder[(b.severity||'').toLowerCase()] ?? 4)
+          );
+          const worst = sorted[0];
+          const SEV_STYLE = {
+            Extreme:  { bg: 'rgba(185,28,28,.92)',  icon: '🚨' },
+            Severe:   { bg: 'rgba(194,65,12,.92)',  icon: '⚠️' },
+            Moderate: { bg: 'rgba(180,83,9,.88)',   icon: '🌦️' },
+            Minor:    { bg: 'rgba(29,78,216,.85)',  icon: 'ℹ️' },
+            Unknown:  { bg: 'rgba(75,85,99,.85)',   icon: '📢' },
+          };
+          const style = SEV_STYLE[worst.severity] || SEV_STYLE.Unknown;
+
+          const names = [...new Set(liveAlerts.map(a => a.event || a.headline).filter(Boolean))];
+          const label = names.join('  ·  ');
+          // Duplicate for seamless CSS scroll loop
+          const ticker = label + '  ·  ' + label;
+
+          alertEl.style.background = style.bg;
+          alertEl.innerHTML =
+            '<span style="margin-right:.5rem;flex-shrink:0;">' + style.icon + '</span>' +
+            '<span class="marquee-text">' + Hub.utils.esc(ticker) + '</span>' +
+            (liveAlerts.length > 1
+              ? '<span style="margin-left:.75rem;opacity:.7;flex-shrink:0;font-size:.7rem;">+' +
+                (liveAlerts.length - 1) + ' more</span>'
+              : '');
+          alertEl.style.display = 'flex';
+          alertEl.style.alignItems = 'center';
+          alertEl.style.overflow = 'hidden';
           alertEl.classList.remove('hidden');
         } else {
           alertEl.classList.add('hidden');

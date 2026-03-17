@@ -1,0 +1,12 @@
+{
+  "name": "homehub",
+  "version": "1.0.0",
+  "description": "Family kiosk dashboard on Vercel + Supabase",
+  "scripts": {
+    "build:css": "tailwindcss -i tw_input.css -o public/assets/tailwind.css --minify",
+    "build:css:watch": "tailwindcss -i tw_input.css -o public/assets/tailwind.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3"
+  }
+}
