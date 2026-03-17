@@ -20,13 +20,22 @@ vercel --prod       # deploy
 |---|---|---|
 | `SUPABASE_URL` | ✅ | Your Supabase project URL |
 | `SUPABASE_ANON_KEY` | ✅ | Supabase anon/public key |
-| `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Used by cron jobs (server-side only) |
+| `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Used by cron jobs and the manual chore reset endpoint |
 | `HOMEHUB_TZ` | ✅ | Timezone for cron (e.g. `America/New_York`) |
+| `GOOGLE_AI_KEY` | ✅ | Google Gemini key for alert summaries and household impact AI |
 | `TOMORROW_KEY` | optional | Tomorrow.io API key (Tier-2 weather enrichment) |
 | `VISUAL_CROSSING_KEY` | optional | Visual Crossing key (Tier-2 weather enrichment) |
-| `WEATHERBIT_KEY` | optional | Weatherbit key (unused in tiered stack, kept for compat) |
 
 Weather core (Open-Meteo, Weather.gov, RainViewer) is **free with no API key**.
+
+> **Google Photos removed (March 2025):** Google shut down the Library API's
+> read/browse access for normal user albums on March 31, 2025. The
+> `photoslibrary.readonly` scope and `albums.list` / `mediaItems.search`
+> endpoints return 403 for existing user libraries. HomeHub now uses
+> **Imgur** (public album, zero config) and **Immich** (local NAS) for
+> photo slideshows. Set your preferred source in Settings → Photos.
+> The `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REFRESH_TOKEN`
+> variables are no longer needed and can be removed from Vercel.
 
 ---
 

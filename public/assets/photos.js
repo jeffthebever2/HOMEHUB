@@ -31,11 +31,7 @@ Hub.photos = {
       || 'kAG2MS3';
   },
 
-  _getGoogleAlbumId() {
-    return (Hub.state?.settings?.google_photos_album_id)
-      || localStorage.getItem('google_photos_album_id')
-      || null;
-  },
+
 
   // ── Timeout wrapper ─────────────────────────────────────────
   _withTimeout(promise, ms) {
@@ -77,13 +73,17 @@ Hub.photos = {
   },
 
   _buildChain(preferred) {
+    // Google Photos removed as a provider — the Library API read/browse
+    // endpoints were shut down on March 31, 2025 for normal user libraries.
     const providers = {
-      google:  { name: 'google_photos',  fetcher: () => this._fetchGooglePhotos() },
-      imgur:   { name: 'imgur',           fetcher: () => this._fetchImgur() },
-      immich:  { name: 'immich',          fetcher: () => this._fetchImmich() },
+      imgur:  { name: 'imgur',  fetcher: () => this._fetchImgur() },
+      immich: { name: 'immich', fetcher: () => this._fetchImmich() },
     };
 
-    // Put preferred first, then the rest, always end with placeholders
+    // 'off' means placeholders only — do not try any network provider
+    if (preferred === 'off') return [];
+
+    // Put preferred first, then the remaining provider as fallback
     const chain = [];
     if (preferred && providers[preferred]) {
       chain.push(providers[preferred]);
@@ -94,25 +94,7 @@ Hub.photos = {
     return chain;
   },
 
-  // ── Google Photos (server-side endpoint) ────────────────────
-  async _fetchGooglePhotos() {
-    const albumId = this._getGoogleAlbumId();
-    const base = Hub.utils?.apiBase?.() || '';
-    let url = `${base}/api/google-photos?action=images&pageSize=50`;
-    if (albumId) url += `&albumId=${encodeURIComponent(albumId)}`;
-
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    const data = await resp.json();
-
-    if (data.degraded) {
-      console.warn('[Photos] Google Photos degraded:', data.error);
-      throw new Error(data.error || 'degraded');
-    }
-
-    if (!data.images?.length) throw new Error('No images returned');
-    return data.images.map(img => img.url);
-  },
+  // Google Photos removed — API shut down March 31, 2025. See README for details.
 
   // ── Imgur ───────────────────────────────────────────────────
   async _fetchImgur() {
@@ -276,20 +258,11 @@ Hub.photos = {
     const results = { timestamp: new Date().toISOString(), providers: {} };
     const base = Hub.utils?.apiBase?.() || '';
 
-    // Google Photos server
-    try {
-      const t0 = Date.now();
-      const resp = await fetch(`${base}/api/google-photos?action=images&pageSize=5`);
-      const data = await resp.json();
-      results.providers.google_photos = {
-        status: data.degraded ? 'degraded' : 'ok',
-        images: data.images?.length || 0,
-        error: data.error || null,
-        latencyMs: Date.now() - t0
-      };
-    } catch (e) {
-      results.providers.google_photos = { status: 'error', error: e.message };
-    }
+    // Google Photos — removed (API shut down March 2025)
+    results.providers.google_photos = {
+      status: 'removed',
+      error:  'Library API removed for normal user albums on March 31, 2025',
+    };
 
     // Imgur
     try {

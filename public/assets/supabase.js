@@ -139,7 +139,9 @@ const SUPABASE_CONFIG = {
             'profile',
             'https://www.googleapis.com/auth/calendar.readonly',
             'https://www.googleapis.com/auth/calendar.events',
-            'https://www.googleapis.com/auth/photoslibrary.readonly'
+            // photoslibrary.readonly REMOVED — Google shut down Library API
+            // read/browse access for normal user albums on March 31, 2025.
+            // Photos slideshow now uses Imgur or Immich instead.
           ].join(' '),
           queryParams: {
             access_type:             'offline',

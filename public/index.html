@@ -937,18 +937,15 @@
             <div><h2 class="text-lg font-bold">Standby Photos</h2><p class="text-gray-500 text-xs">Source for the full-screen photo slideshow</p></div>
           </div>
           <!-- Provider selector cards -->
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <button onclick="Hub.app._selectPhotoProvider('imgur')"   id="pp-imgur"  class="photo-provider-card active-provider">
+          <div class="grid grid-cols-3 gap-3">
+            <button onclick="Hub.app._selectPhotoProvider('imgur')"  id="pp-imgur"  class="photo-provider-card active-provider">
               <span class="text-2xl">🖼</span><span class="text-xs font-semibold mt-1">Imgur</span><span class="text-xs text-gray-500">Public album</span>
             </button>
-            <button onclick="Hub.app._selectPhotoProvider('google')"  id="pp-google" class="photo-provider-card">
-              <span class="text-2xl">📷</span><span class="text-xs font-semibold mt-1">Google</span><span class="text-xs text-gray-500">Photos album</span>
-            </button>
-            <button onclick="Hub.app._selectPhotoProvider('immich')"  id="pp-immich" class="photo-provider-card">
+            <button onclick="Hub.app._selectPhotoProvider('immich')" id="pp-immich" class="photo-provider-card">
               <span class="text-2xl">🗄</span><span class="text-xs font-semibold mt-1">Immich</span><span class="text-xs text-gray-500">Local NAS</span>
             </button>
-            <button onclick="Hub.app._selectPhotoProvider('off')"     id="pp-off"    class="photo-provider-card">
-              <span class="text-2xl">🚫</span><span class="text-xs font-semibold mt-1">Off</span><span class="text-xs text-gray-500">Placeholders</span>
+            <button onclick="Hub.app._selectPhotoProvider('off')"    id="pp-off"    class="photo-provider-card">
+              <span class="text-2xl">🚫</span><span class="text-xs font-semibold mt-1">Off</span><span class="text-xs text-gray-500">Placeholders only</span>
             </button>
           </div>
           <input id="settingPhotoProvider" type="hidden">
@@ -961,18 +958,7 @@
             </div>
             <button id="btnTestSlideshow2" onclick="Hub.app._testSlideshow()" class="btn btn-secondary text-sm">▶ Test Slideshow</button>
           </div>
-          <div id="photoSettingsGoogle" style="display:none;" class="card space-y-3">
-            <p class="text-xs text-blue-400 font-semibold">Uses your Google sign-in — sign out/in to refresh Photos access</p>
-            <div class="flex gap-2">
-              <button id="btnLoadGoogleAlbums" class="btn btn-secondary text-sm flex-1">Load My Albums</button>
-              <button id="btnTestSlideshow" class="btn btn-secondary text-sm flex-1">▶ Test</button>
-            </div>
-            <select id="settingGooglePhotosAlbumSelect" class="input">
-              <option value="">— click Load My Albums first —</option>
-            </select>
-            <input id="settingGooglePhotosAlbumId" type="hidden">
-            <input id="settingGooglePhotosAlbumTitle" type="text" class="input text-xs text-gray-400" placeholder="Album title (auto-filled)" readonly>
-          </div>
+
           <div id="photoSettingsImmich" style="display:none;" class="card space-y-3">
             <p class="text-xs text-purple-400 font-semibold">Local Immich server — must be on same network</p>
             <div><label class="settings-label">Immich Base URL</label><input id="settingImmichUrl" type="url" class="input" placeholder="http://192.168.1.100:2283"></div>
@@ -1363,208 +1349,6 @@
   <script src="assets/icons.js"></script>
   <script src="assets/radio.js"></script>
   <script src="assets/notifications.js"></script>
-  <script src="assets/app.js"></script>
-
-  <!-- Service Worker registration (PWA — no UI here, install UI lives in Admin Panel only) -->
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').then(reg => {
-          console.log('[SW] Registered, scope:', reg.scope);
-        }).catch(err => console.warn('[SW] Registration failed:', err));
-      });
-    }
-  </script>
-</body>
-</html>
-
-
-  <!-- ========== MODALS ========== -->
-  <!-- Grocery: Confirm Clear All modal -->
-  <div id="groceryClearModal" class="modal-overlay hidden">
-    <div class="card max-w-sm w-full text-center">
-      <p class="text-3xl mb-3">🗑️</p>
-      <h2 class="text-xl font-bold mb-2">Clear All Groceries?</h2>
-      <p class="text-gray-400 text-sm mb-6">This will delete every item from the household list. This cannot be undone.</p>
-      <div class="flex gap-3">
-        <button onclick="Hub.ui.closeModal('groceryClearModal')"
-          class="btn btn-secondary flex-1">Cancel</button>
-        <button onclick="Hub.grocery.confirmClearAllConfirmed()"
-          class="btn btn-primary flex-1" style="background:#dc2626;">Yes, Clear All</button>
-      </div>
-    </div>
-  </div>
-
-
-  <div id="addChoreModal" class="modal-overlay hidden">
-    <div class="card max-w-lg w-full">
-      <h2 class="text-2xl font-bold mb-4">Add Chore</h2>
-      <div class="space-y-4">
-        <input id="choreTitle" type="text" placeholder="Title" class="input">
-        <textarea id="choreDescription" placeholder="Description (optional)" class="input" rows="3"></textarea>
-        <select id="choreCategory" class="input">
-          <option value="Daily">Daily</option>
-          <option value="Monday (Living Room)">Monday (Living Room)</option>
-          <option value="Tuesday (Bathrooms)">Tuesday (Bathrooms)</option>
-          <option value="Wednesday (Entryway)">Wednesday (Entryway)</option>
-          <option value="Thursday (Kitchen)">Thursday (Kitchen)</option>
-          <option value="Friday (Bedrooms)">Friday (Bedrooms)</option>
-          <option value="Saturday (Miscellaneous)">Saturday (Miscellaneous)</option>
-          <option value="Sunday (Grocery/Family)">Sunday (Grocery/Family)</option>
-        </select>
-        <select id="chorePriority" class="input">
-          <option value="low">Low Priority</option>
-          <option value="medium" selected>Medium Priority</option>
-          <option value="high">High Priority</option>
-        </select>
-        <div class="flex gap-3">
-          <button id="btnSaveChore" class="btn btn-primary flex-1">Create Chore</button>
-          <button onclick="Hub.ui.closeModal('addChoreModal')" class="btn btn-secondary">Cancel</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-
-    <!-- ========== RADIO PAGE ========== -->
-    <div id="radioPage" class="page">
-      <div class="max-w-4xl mx-auto p-4 md:p-6">
-        <header class="flex items-center justify-between mb-6">
-          <h1 class="text-3xl md:text-4xl font-bold">📻 Radio</h1>
-          <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
-        </header>
-        <!-- Radio player rendered by Hub.radio._renderPage() into this container -->
-        <div id="radioPlayerArea">
-          <p class="text-gray-400 text-center py-12">Loading radio…</p>
-        </div>
-      </div>
-    </div>
-
-    <!-- ========== GROCERY LIST ========== -->
-    <div id="groceryPage" class="page">
-      <div class="max-w-5xl mx-auto p-4 md:p-6">
-        <header class="flex items-center justify-between mb-6">
-          <h1 class="text-3xl font-bold">🛒 Grocery List</h1>
-          <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
-        </header>
-        <div id="groceryList">
-          <p class="text-gray-400 text-center py-8">Loading…</p>
-        </div>
-      </div>
-    </div>
-
-    <!-- ========== ADMIN PANEL ========== -->
-    
-
-
-
-    <!-- ══════════════════════════════════════════════
-         BOTTOM NAVIGATION BAR
-         Visibility: body.show-nav (set by app.js on login)
-         Active state: router._activate() adds .active class
-    ══════════════════════════════════════════════ -->
-    <nav id="mainNav" aria-label="Main navigation">
-      <div class="nav-bar">
-
-        <!-- Home -->
-        <button class="nav-item" id="nav-dashboard" onclick="Hub.router.go('dashboard')" aria-label="Home">
-          <div class="nav-badge"></div>
-          <svg viewBox="0 0 24 24">
-            <path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9.5z"/>
-            <path d="M9 21V12h6v9"/>
-          </svg>
-          <span>Home</span>
-        </button>
-
-        <!-- Weather -->
-        <button class="nav-item" id="nav-weather" onclick="Hub.router.go('weather')" aria-label="Weather">
-          <div class="nav-badge"></div>
-          <svg viewBox="0 0 24 24">
-            <path d="M12 2v2M4.22 4.22l1.42 1.42M2 12h2M4.22 19.78l1.42-1.42M12 22v-2M19.78 19.78l-1.42-1.42M22 12h-2M19.78 4.22l-1.42 1.42"/>
-            <circle cx="12" cy="12" r="4"/>
-            <path d="M16.5 17.5A4.5 4.5 0 0 1 7.5 17.5" stroke-dasharray="2 1"/>
-          </svg>
-          <span>Weather</span>
-        </button>
-
-        <!-- Chores -->
-        <button class="nav-item" id="nav-chores" onclick="Hub.router.go('chores')" aria-label="Chores">
-          <div class="nav-badge"></div>
-          <svg viewBox="0 0 24 24">
-            <rect x="3" y="3" width="18" height="18" rx="2.5"/>
-            <path d="M8 12l3 3 5-5"/>
-          </svg>
-          <span>Chores</span>
-        </button>
-
-        <!-- Grocery -->
-        <button class="nav-item" id="nav-grocery" onclick="Hub.router.go('grocery')" aria-label="Grocery">
-          <div class="nav-badge"></div>
-          <svg viewBox="0 0 24 24">
-            <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
-            <line x1="3" y1="6" x2="21" y2="6"/>
-            <path d="M16 10a4 4 0 0 1-8 0"/>
-          </svg>
-          <span>Grocery</span>
-        </button>
-
-        <!-- Radio -->
-        <button class="nav-item" id="nav-radio" onclick="Hub.router.go('radio')" aria-label="Radio">
-          <div class="nav-badge"></div>
-          <svg viewBox="0 0 24 24">
-            <rect x="2" y="8" width="20" height="13" rx="2"/>
-            <path d="M6 8l6-5 6 5"/>
-            <circle cx="8" cy="14" r="2"/>
-            <path d="M13 13h4M13 16h4"/>
-          </svg>
-          <span>Radio</span>
-        </button>
-
-        <!-- Dog Treats -->
-        <button class="nav-item" id="nav-treats" onclick="Hub.router.go('treats')" aria-label="Dog">
-          <div class="nav-badge"></div>
-          <svg viewBox="0 0 24 24">
-            <path d="M8.5 14.5s-1.5 1-1.5 3 1.5 3 5 3 5-1 5-3-1.5-3-1.5-3"/>
-            <path d="M9 9c0-1.66 1.34-3 3-3s3 1.34 3 3c0 2-1.5 3.5-3 5-1.5-1.5-3-3-3-5z"/>
-            <circle cx="10" cy="8" r="1" fill="currentColor" stroke="none"/>
-            <circle cx="14" cy="8" r="1" fill="currentColor" stroke="none"/>
-          </svg>
-          <span>Dog</span>
-        </button>
-
-        <!-- Settings -->
-        <button class="nav-item" id="nav-settings" onclick="Hub.router.go('settings')" aria-label="Settings">
-          <div class="nav-badge"></div>
-          <svg viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/>
-          </svg>
-          <span>Settings</span>
-        </button>
-
-      </div>
-    </nav>
-
-  <!-- Scripts (order matters) -->
-  <script src="assets/utils.js"></script>
-  <script src="assets/supabase.js"></script>
-  <script src="assets/router.js"></script>
-  <script src="assets/ui.js"></script>
-  <script src="assets/weather.js"></script>
-  <script src="assets/ai.js"></script>
-  <script src="assets/calendar.js"></script>
-  <script src="assets/treats.js"></script>
-  <script src="assets/chores.js"></script>
-  <script src="assets/control.js"></script>
-  <script src="assets/siteControl.js"></script>
-  <script src="assets/grocery.js"></script>
-  <script src="assets/standby.js"></script>
-  <script src="assets/immich.js"></script>
-  <script src="assets/googlePhotos.js"></script>
-  <script src="assets/photos.js"></script>
-  <script src="assets/player.js"></script>
-  <script src="assets/icons.js"></script>
-  <script src="assets/radio.js"></script>
   <script src="assets/app.js"></script>
 
   <!-- Service Worker registration (PWA — no UI here, install UI lives in Admin Panel only) -->

@@ -463,14 +463,7 @@ Hub.app = {
     if (imgurAlbumEl) {
       imgurAlbumEl.value = s.imgur_album_id || localStorage.getItem('imgur_album_id') || 'kAG2MS3';
     }
-    const gpAlbumTitleEl = document.getElementById('settingGooglePhotosAlbumTitle');
-    if (gpAlbumTitleEl) {
-      gpAlbumTitleEl.value = s.google_photos_album_title || localStorage.getItem('google_photos_album_title') || '';
-    }
-    const gpAlbumIdEl = document.getElementById('settingGooglePhotosAlbumId');
-    if (gpAlbumIdEl) {
-      gpAlbumIdEl.value = s.google_photos_album_id || localStorage.getItem('google_photos_album_id') || '';
-    }
+
 
     this._loadCalendarSelection();
 
@@ -489,51 +482,13 @@ Hub.app = {
   },
 
   _updatePhotoProviderUI(provider) {
-    const googleSection = document.getElementById('photoSettingsGoogle');
     const imgurSection  = document.getElementById('photoSettingsImgur');
     const immichSection = document.getElementById('photoSettingsImmich');
-    if (googleSection) googleSection.style.display = provider === 'google'  ? '' : 'none';
     if (imgurSection)  imgurSection.style.display  = provider === 'imgur'   ? '' : 'none';
     if (immichSection) immichSection.style.display = provider === 'immich'  ? '' : 'none';
   },
 
-  async _loadGooglePhotoAlbums() {
-    const btn       = document.getElementById('btnLoadGoogleAlbums');
-    const albumSel  = document.getElementById('settingGooglePhotosAlbumSelect');
-    const albumId   = document.getElementById('settingGooglePhotosAlbumId');
-    const albumTitle = document.getElementById('settingGooglePhotosAlbumTitle');
-    if (!albumSel) return;
-
-    if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
-    albumSel.innerHTML = '<option value="">Loading albums…</option>';
-
-    try {
-      const albums = await Hub.googlePhotos?.listAlbums?.();
-      if (!albums || albums.error) {
-        albumSel.innerHTML = `<option value="">Error: ${albums?.error || 'unknown'}</option>`;
-        Hub.ui?.toast?.('Could not load albums — try signing out and back in', 'error');
-        return;
-      }
-      albumSel.innerHTML = '<option value="">— Select album —</option>'
-        + albums.map(a => `<option value="${Hub.utils.esc(a.id)}" data-title="${Hub.utils.esc(a.title)}">${Hub.utils.esc(a.title)} (${a.mediaItemsCount || '?'} items)</option>`).join('');
-
-      // Restore saved selection
-      const saved = albumId?.value;
-      if (saved) albumSel.value = saved;
-
-      albumSel.onchange = () => {
-        const opt = albumSel.selectedOptions[0];
-        if (albumId) albumId.value = albumSel.value;
-        if (albumTitle) albumTitle.value = opt?.dataset.title || '';
-      };
-    } catch (e) {
-      albumSel.innerHTML = `<option value="">Error: ${e.message}</option>`;
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = 'Load My Albums'; }
-    }
-  },
-
-  async _loadCalendarSelection() {
+async _loadCalendarSelection() {
     const container = Hub.utils.$('calendarCheckboxes');
     if (!container) return;
     container.innerHTML = '<p class="text-gray-400 text-sm">Click "Load My Calendars" to select which calendars to display</p>';
@@ -584,8 +539,7 @@ Hub.app = {
     // Photo provider
     const photoProvider     = document.getElementById('settingPhotoProvider')?.value || 'imgur';
     const imgurAlbumId      = document.getElementById('settingImgurAlbum')?.value.trim()    || '';
-    const gpAlbumId         = document.getElementById('settingGooglePhotosAlbumId')?.value.trim()    || '';
-    const gpAlbumTitle      = document.getElementById('settingGooglePhotosAlbumTitle')?.value.trim() || '';
+
 
     const payload = {
       location_name:              Hub.utils.$('settingLocationName').value.trim(),
@@ -599,15 +553,13 @@ Hub.app = {
       immich_album_id:            Hub.utils.$('settingImmichAlbum').value.trim(),
       selected_calendars:         selectedCalendars.length > 0 ? selectedCalendars : ['primary'],
       photo_provider:             photoProvider,
-      google_photos_album_id:     gpAlbumId,
-      google_photos_album_title:  gpAlbumTitle,
+
       imgur_album_id:             imgurAlbumId
     };
 
     // Always save photo settings to localStorage too (works without DB columns)
     localStorage.setItem('photo_provider',               photoProvider);
-    localStorage.setItem('google_photos_album_id',       gpAlbumId);
-    localStorage.setItem('google_photos_album_title',    gpAlbumTitle);
+
     localStorage.setItem('imgur_album_id',               imgurAlbumId);
 
     try {
@@ -650,8 +602,7 @@ Hub.app = {
     Hub.utils.$('btnRefreshStatus')?.addEventListener('click',    () => Hub.app._loadStatusPage());
     Hub.utils.$('btnManualResetChores')?.addEventListener('click', () => Hub.app._forceResetChores());
     Hub.utils.$('btnLoadCalendars')?.addEventListener('click',    () => Hub.app._fetchAndDisplayCalendars());
-    Hub.utils.$('btnLoadGoogleAlbums')?.addEventListener('click', () => Hub.app._loadGooglePhotoAlbums());
-    Hub.utils.$('btnTestSlideshow')?.addEventListener('click',    () => Hub.app._testSlideshow());
+    Hub.utils.$('btnTestSlideshow2')?.addEventListener('click',  () => Hub.app._testSlideshow());
 
     // Photo provider changes handled by _selectPhotoProvider() card buttons
 
@@ -943,7 +894,7 @@ Hub.app = {
   /** Handle photo provider card selection */
   _selectPhotoProvider(provider) {
     // Update card visual states
-    ['imgur','google','immich','off'].forEach(p => {
+    ['imgur','immich','off'].forEach(p => {
       const card = document.getElementById(`pp-${p}`);
       if (card) card.classList.toggle('active-provider', p === provider);
     });
