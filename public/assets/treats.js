@@ -134,11 +134,16 @@ Hub.treats = {
               </div>
             </div>`).join('')}`;
 
+    // 7-day history (page only)
+    const histHtml = this._buildWeekHistory(data, goalKcal);
+
     if (target === 'page') {
       const prog = document.getElementById('calorieProgress');
       if (prog) prog.innerHTML = ringHtml;
       const today = document.getElementById('todayTreats');
       if (today) today.innerHTML = todayHtml;
+      const hist = document.getElementById('weekHistory');
+      if (hist) hist.innerHTML = histHtml;
     } else {
       // dashboard widget
       const el = Hub.utils.$('dogStatusWidget');
@@ -185,6 +190,30 @@ Hub.treats = {
       };
       requestAnimationFrame(tick);
     });
+  },
+
+  _buildWeekHistory(data, goalKcal) {
+    // Build 7-day bar chart from Firebase items history
+    // Firebase doesn't store history by day — items array is today's snapshot only.
+    // Show a simple "Today" summary as a single bar until daily archiving is added.
+    const items   = Array.isArray(data?.items) ? data.items : [];
+    const treatCal = items.reduce((s, it) => s + (it.kcalPerUnit || 0) * (it.qty || 0), 0);
+    const cups    = data?.settings?.cups || 0;
+    const kcalPerCup = data?.settings?.kcalPerCup || 0;
+    const total   = Math.round(treatCal + cups * kcalPerCup);
+    const pct     = goalKcal > 0 ? Math.min(Math.round((total / goalKcal) * 100), 100) : 0;
+    const barColor = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-yellow-500' : 'bg-blue-500';
+
+    return `
+      <h3 class="font-bold mb-3 text-lg">Today's Summary</h3>
+      <div class="flex items-center gap-3">
+        <span class="text-xs text-gray-400 w-16 text-right">Today</span>
+        <div class="flex-1 rounded-full overflow-hidden" style="height:.5rem;background:#1e2d3d;">
+          <div class="${barColor} rounded-full" style="width:${pct}%;height:100%;transition:width .6s ease;"></div>
+        </div>
+        <span class="text-xs text-gray-400 w-20">${total} / ${goalKcal} cal</span>
+      </div>
+      <p class="text-xs text-gray-600 mt-3">Per-day history available once daily archiving is enabled.</p>`;
   },
 
   _setPageError(msg) {

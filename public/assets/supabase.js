@@ -514,37 +514,20 @@ const SUPABASE_CONFIG = {
 
     /** Load chore completion leaderboard for last N days */
     async loadChoreLeaderboard(householdId, days = 7) {
-      const since = new Date(Date.now() - days * 86400000).toISOString();
       const { data, error } = await timed(
-        sb.from('chore_logs')
-          .select('notes, completed_at, completed_by')
-          .eq('household_id', householdId)
-          .gte('completed_at', since)
-          .order('completed_at', { ascending: false })
+        sb.rpc('get_chore_leaderboard', { p_household_id: householdId, p_days: days })
       );
       if (error) throw error;
-
-      // Tally by name — notes field holds "Completed by <name>"
-      const counts = {};
-      (data || []).forEach(log => {
-        const m    = (log.notes || '').match(/Completed by (.+)/);
-        const name = m ? m[1].trim() : 'Someone';
-        counts[name] = (counts[name] || 0) + 1;
-      });
-
-      // Sort descending
-      return Object.entries(counts)
-        .map(([name, count]) => ({ name, count }))
-        .sort((a, b) => b.count - a.count);
+      return (data || []).map(r => ({ name: r.name, count: Number(r.count) }));
     },
 
     /** Load member names from DB (used to keep config.js in sync) */
     async loadMemberNames(householdId) {
+      // Uses SECURITY DEFINER function to bypass RLS and return all household members.
+      // Direct household_members query with eq(household_id) is blocked by RLS
+      // which only returns the calling user's own row.
       const { data, error } = await timed(
-        sb.from('household_members')
-          .select('name, email, role')
-          .eq('household_id', householdId)
-          .order('created_at', { ascending: true })
+        sb.rpc('get_household_members', { p_household_id: householdId })
       );
       if (error) throw error;
       return data || [];

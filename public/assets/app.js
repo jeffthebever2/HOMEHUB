@@ -340,7 +340,6 @@ Hub.app = {
         if ((now - last) >= this._STALE_MS) {
           this._pageLoadedAt['chores'] = now;
           Hub.chores.load();
-          Hub.chores.renderStats?.('choresStats', 7).catch?.(() => {});
         }
         break;
       }
@@ -367,7 +366,6 @@ Hub.app = {
     Hub.ui.updateDashboardDate();
     Hub.ui.updateDashboardGreeting();
     Hub.chores?.renderDashboard?.().catch(e => console.warn('[Dashboard] Chores:', e));
-    Hub.chores?.renderStats?.('dashboardChoreStats', 7, { compact: true }).catch(() => {});
     this._loadDashboardWeather();
     Hub.calendar?.renderDashboard?.().catch(() => {});
     Hub.treats?.renderDashboardWidget?.().catch(() => {});
