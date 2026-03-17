@@ -174,6 +174,48 @@ Hub.grocery = {
     }
 
     el.innerHTML = html;
+    // Wire drag-to-reorder on pending items after DOM update
+    requestAnimationFrame(() => this._initDrag());
+  },
+
+  _initDrag() {
+    const list = document.getElementById('groceryList');
+    if (!list) return;
+    const cards = [...list.querySelectorAll('.grocery-drag-item')];
+    if (cards.length < 2) return;
+
+    let dragging = null;
+
+    cards.forEach(card => {
+      card.addEventListener('dragstart', e => {
+        dragging = card;
+        card.style.opacity = '0.4';
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      card.addEventListener('dragend', () => {
+        card.style.opacity = '';
+        dragging = null;
+        this._persistOrder();
+      });
+      card.addEventListener('dragover', e => {
+        e.preventDefault();
+        if (!dragging || dragging === card) return;
+        const rect   = card.getBoundingClientRect();
+        const midY   = rect.top + rect.height / 2;
+        const parent = card.parentNode;
+        if (e.clientY < midY) parent.insertBefore(dragging, card);
+        else                  parent.insertBefore(dragging, card.nextSibling);
+      });
+    });
+  },
+
+  async _persistOrder() {
+    if (!this._useSupabase) return;
+    const list = document.getElementById('groceryList');
+    if (!list) return;
+    const cards   = [...list.querySelectorAll('.grocery-drag-item')];
+    const updates = cards.map((c, i) => ({ id: c.dataset.id, position: i }));
+    try { await Hub.db.updateGroceryPositions(updates); } catch (_) {}
   },
 
   _itemHTML(item) {
@@ -185,7 +227,9 @@ Hub.grocery = {
     var requester = item.requested_by || item.added_by_name || '';
     var who = requester
       ? '<span class="text-xs text-gray-600 ml-1">' + Hub.utils.esc(requester) + '</span>' : '';
-    return '<div class="card flex items-center gap-3 select-none active:opacity-70"' +
+    var dragAttr = !done ? ' draggable="true" class="grocery-drag-item"' : '';
+    return '<div class="card flex items-center gap-3' + (done ? '' : '') + ' active:opacity-70"' +
+      ' data-id="' + item.id + '"' + dragAttr +
       ' style="padding:.85rem 1rem;margin:0;cursor:pointer;" onclick="Hub.grocery.toggle(\'' + item.id + '\')">' +
       '<span style="min-width:26px;display:flex;align-items:center;">' + check + '</span>' +
       '<span class="flex-1 text-base ' + textCls + '">' + Hub.utils.esc(item.text) + who + '</span>' +

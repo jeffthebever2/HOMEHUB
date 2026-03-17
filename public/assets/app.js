@@ -241,6 +241,19 @@ Hub.app = {
         Hub.state.settings = {};
       }
 
+      // Load member names from DB so the whole app can reference them
+      // without depending solely on config.js familyMembers array
+      try {
+        const members = await Hub.db.loadMemberNames(Hub.state.household_id);
+        Hub.state.members = members; // [{name, email, role}]
+        // Keep config.js familyMembers in sync with DB names so old call sites still work
+        if (members.length && window.HOME_HUB_CONFIG) {
+          window.HOME_HUB_CONFIG.familyMembers = members.map(m => m.name).filter(Boolean);
+        }
+      } catch (e) {
+        console.warn('[Auth] Member names load failed:', e.message);
+      }
+
       this._showApp();
     } catch (e) {
       console.error('[Auth] _onLogin error:', e);
@@ -289,6 +302,9 @@ Hub.app = {
 
     // Trigger chore reset check in background (never blocks login)
     setTimeout(() => this._callChoreResetEndpoint().catch(() => {}), 2000);
+
+    // Init push notifications if permission already granted
+    setTimeout(() => Hub.notifications?.init?.().catch(() => {}), 3000);
   },
 
   /** Called by router BEFORE switching away from a page */
@@ -357,6 +373,7 @@ Hub.app = {
     Hub.treats?.renderDashboardWidget?.().catch(() => {});
     Hub.photos?.renderDashboardWidget?.().catch(() => {});
     Hub.player?.updateUI?.();
+    this._loadChoreLeaderboard().catch(() => {});
   },
 
   async _loadDashboardWeather() {
@@ -369,6 +386,9 @@ Hub.app = {
         Hub.weather._renderAlertBanner(alerts);
         // Show popup for highest-severity unacknowledged alert
         Hub.ui.showAlertPopup(alerts).catch(() => {});
+        // Push notify for Severe/Extreme alerts
+        const severeAlerts = alerts.filter(a => ['Extreme','Severe'].includes(a.severity));
+        if (severeAlerts.length) Hub.notifications?.notifyAlert?.(severeAlerts[0]).catch(() => {});
       } else {
         Hub.ui.hideBanner();
       }
@@ -424,13 +444,21 @@ Hub.app = {
     Hub.utils.$('settingQuietStart').value    = s.quiet_hours_start || '22:00';
     Hub.utils.$('settingQuietEnd').value      = s.quiet_hours_end   || '07:00';
 
-    // Photo provider settings
-    const photoProviderEl = document.getElementById('settingPhotoProvider');
-    if (photoProviderEl) {
-      const provider = s.photo_provider || localStorage.getItem('photo_provider') || 'imgur';
-      photoProviderEl.value = provider;
-      this._updatePhotoProviderUI(provider);
+    // Sync idle timeout range slider display
+    const idleRange = document.getElementById('settingIdleTimeout');
+    const idleVal   = document.getElementById('idleTimeoutVal');
+    if (idleRange && idleVal) {
+      idleRange.value    = s.standby_timeout_min || 10;
+      idleVal.textContent = idleRange.value + 'm';
+      idleRange.addEventListener('input', () => { idleVal.textContent = idleRange.value + 'm'; });
     }
+
+    // Refresh push notification status display
+    Hub.notifications?.refreshSettingsUI?.().catch(() => {});
+
+    // Photo provider settings — drive the new card-based selector
+    const provider = s.photo_provider || localStorage.getItem('photo_provider') || 'imgur';
+    this._selectPhotoProvider(provider);
     const imgurAlbumEl = document.getElementById('settingImgurAlbum');
     if (imgurAlbumEl) {
       imgurAlbumEl.value = s.imgur_album_id || localStorage.getItem('imgur_album_id') || 'kAG2MS3';
@@ -625,8 +653,7 @@ Hub.app = {
     Hub.utils.$('btnLoadGoogleAlbums')?.addEventListener('click', () => Hub.app._loadGooglePhotoAlbums());
     Hub.utils.$('btnTestSlideshow')?.addEventListener('click',    () => Hub.app._testSlideshow());
 
-    const providerSel = document.getElementById('settingPhotoProvider');
-    if (providerSel) providerSel.addEventListener('change', e => Hub.app._updatePhotoProviderUI(e.target.value));
+    // Photo provider changes handled by _selectPhotoProvider() card buttons
 
     this._bindSecretControlEntry();
   },
@@ -756,6 +783,47 @@ Hub.app = {
   },
 
   /** Secure per-household chore reset (called on login, not public cron) */
+  /** Load and render the chore completion leaderboard for the dashboard */
+  async _loadChoreLeaderboard() {
+    const el = document.getElementById('choreLeaderboard');
+    if (!el || !Hub.state?.household_id) return;
+
+    try {
+      const data = await Hub.db.loadChoreLeaderboard(Hub.state.household_id, 7);
+
+      if (!data.length) {
+        el.innerHTML = '<p class="text-gray-400 text-sm">No chores completed yet this week.</p>';
+        return;
+      }
+
+      const medals = ['🥇','🥈','🥉'];
+      const max    = data[0].count;
+
+      el.innerHTML = data.map((entry, i) => {
+        const pct   = max > 0 ? Math.round((entry.count / max) * 100) : 0;
+        const medal = medals[i] || '';
+        const bar   = i === 0 ? 'bg-yellow-500' : i === 1 ? 'bg-gray-400' : i === 2 ? 'bg-orange-400' : 'bg-blue-600';
+        return `
+          <div class="flex items-center gap-3 mb-3 last:mb-0">
+            <span class="text-lg w-6 text-center flex-shrink-0">${medal || '<span class="text-gray-600 text-sm font-bold">${i+1}</span>'}</span>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center justify-between mb-0.5">
+                <span class="text-sm font-semibold">${Hub.utils.esc(entry.name)}</span>
+                <span class="text-xs text-gray-400">${entry.count} done</span>
+              </div>
+              <div class="rounded-full overflow-hidden" style="height:5px;background:#1e2d3d;">
+                <div class="${bar} rounded-full" style="width:${pct}%;height:100%;transition:width .6s ease;"></div>
+              </div>
+            </div>
+          </div>`;
+      }).join('');
+    } catch (e) {
+      console.warn('[Leaderboard] Load failed:', e.message);
+      const el2 = document.getElementById('choreLeaderboard');
+      if (el2) el2.innerHTML = '';
+    }
+  },
+
   async _callChoreResetEndpoint() {
     if (!Hub.state.household_id) return;
 
@@ -857,7 +925,34 @@ Hub.app = {
         }
       }
     }, { passive: true });
-  }
+  },
+
+  /** Switch settings section pill nav */
+  _settingsSection(section) {
+    document.querySelectorAll('.settings-section').forEach(el => el.classList.add('hidden'));
+    document.querySelectorAll('.settings-pill').forEach(el => el.classList.remove('active'));
+    const sec = document.getElementById(`ssec-${section}`);
+    const pill = document.getElementById(`spill-${section}`);
+    if (sec)  sec.classList.remove('hidden');
+    if (pill) pill.classList.add('active');
+    // Hide save button on display and system sections (no DB-persisted settings)
+    const saveRow = document.getElementById('settingsSaveRow');
+    if (saveRow) saveRow.style.display = ['display','system'].includes(section) ? 'none' : '';
+  },
+
+  /** Handle photo provider card selection */
+  _selectPhotoProvider(provider) {
+    // Update card visual states
+    ['imgur','google','immich','off'].forEach(p => {
+      const card = document.getElementById(`pp-${p}`);
+      if (card) card.classList.toggle('active-provider', p === provider);
+    });
+    // Update hidden input
+    const hidden = document.getElementById('settingPhotoProvider');
+    if (hidden) hidden.value = provider;
+    // Show/hide provider settings panels
+    this._updatePhotoProviderUI(provider);
+  },
 };
 
 window.addEventListener('DOMContentLoaded', () => Hub.app.init());

@@ -6,8 +6,8 @@
 //   - Images: cache-first with 7-day TTL
 // ============================================================
 
-const CACHE_NAME  = 'homehub-v5';
-const CACHE_SHELL = 'homehub-shell-v5';
+const CACHE_NAME  = 'homehub-v6';
+const CACHE_SHELL = 'homehub-shell-v6';
 
 // Static app-shell assets to pre-cache on install
 const SHELL_URLS = [
@@ -34,6 +34,7 @@ const SHELL_URLS = [
   '/assets/player.js',
   '/assets/radio.js',
   '/assets/icons.js',
+  '/assets/notifications.js',
   '/assets/siteControl.js',
   '/manifest.webmanifest',
   '/favicon.svg',
@@ -117,4 +118,35 @@ self.addEventListener('fetch', (evt) => {
     );
   }
   // All other cross-origin: pass through
+});
+
+// ── Push notification handler ─────────────────────────────
+self.addEventListener('push', event => {
+  if (!event.data) return;
+  let data = {};
+  try { data = event.data.json(); } catch (_) { data = { title: 'HomeHub Alert', body: event.data.text() }; }
+
+  const options = {
+    body:    data.body    || '',
+    icon:    data.icon    || '/icons/icon-192.png',
+    badge:   data.badge   || '/icons/icon-192.png',
+    tag:     data.tag     || 'homehub',
+    data:    data.data    || {},
+    vibrate: [200, 100, 200],
+    requireInteraction: (data.data?.severity === 'Extreme' || data.data?.severity === 'Severe'),
+  };
+
+  event.waitUntil(self.registration.showNotification(data.title || 'HomeHub', options));
+});
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const url = event.notification.data?.url || '/';
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      const existing = list.find(c => c.url.includes(self.location.origin));
+      if (existing) { existing.focus(); existing.navigate(existing.url.split('#')[0] + '#' + url.replace('/', '')); }
+      else clients.openWindow(url);
+    })
+  );
 });

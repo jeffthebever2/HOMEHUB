@@ -343,6 +343,69 @@
     }
     .nav-item.has-badge .nav-badge { display: block; }
 
+    /* ── Settings page ──────────────────────────────────── */
+    .settings-section-header {
+      display: flex; align-items: center; gap: .75rem; margin-bottom: .5rem;
+    }
+    .settings-label {
+      display: block; font-size: .78rem; font-weight: 600; color: #9ca3af;
+      text-transform: uppercase; letter-spacing: .05em; margin-bottom: .4rem;
+    }
+    .settings-pill {
+      flex-shrink: 0; padding: .4rem 1rem; border-radius: 9999px;
+      font-size: .8rem; font-weight: 600; border: none; cursor: pointer;
+      background: rgba(255,255,255,.05); color: #9ca3af;
+      transition: background .15s, color .15s; white-space: nowrap;
+    }
+    .settings-pill.active { background: #1d4ed8; color: #fff; }
+    .settings-pill:hover:not(.active) { background: rgba(255,255,255,.1); color: #e5e7eb; }
+    .settings-toggle {
+      display: flex; align-items: center; justify-content: space-between; cursor: pointer; gap: 1rem;
+    }
+    .settings-toggle-input { display: none; }
+    .settings-toggle-track {
+      width: 42px; height: 24px; border-radius: 12px; flex-shrink: 0;
+      background: #374151; position: relative; transition: background .2s;
+    }
+    .settings-toggle-track::after {
+      content: ''; position: absolute; top: 3px; left: 3px;
+      width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .2s;
+    }
+    .settings-toggle-input:checked + .settings-toggle-track { background: #2563eb; }
+    .settings-toggle-input:checked + .settings-toggle-track::after { transform: translateX(18px); }
+    .photo-provider-card {
+      display: flex; flex-direction: column; align-items: center; gap: .25rem;
+      padding: .85rem .5rem; border-radius: .75rem; border: 1.5px solid transparent;
+      background: rgba(255,255,255,.04); cursor: pointer; transition: all .15s;
+    }
+    .photo-provider-card:hover { background: rgba(255,255,255,.08); }
+    .photo-provider-card.active-provider { border-color: #2563eb; background: rgba(37,99,235,.12); }
+
+    /* ── Admin panel ─────────────────────────────────────── */
+    .admin-tab {
+      display: flex; align-items: center; gap: .4rem; flex-shrink: 0;
+      padding: .5rem .9rem; border-radius: .5rem; border: 1px solid transparent;
+      cursor: pointer; font-size: .78rem; font-weight: 600; letter-spacing: .02em;
+      background: rgba(255,255,255,.05); color: #9ca3af; transition: all .15s;
+    }
+    .admin-tab:hover:not(.admin-tab-active) { background: rgba(255,255,255,.1); color: #e5e7eb; }
+    .admin-tab-active { background: #1e3a5f; color: #60a5fa; border-color: rgba(96,165,250,.3); }
+    .admin-stat {
+      background: rgba(255,255,255,.04); border-radius: .75rem; padding: 1rem;
+      text-align: center; border: 1px solid rgba(255,255,255,.06);
+    }
+    .admin-stat-val { font-size: 1.6rem; font-weight: 800; line-height: 1; }
+    .admin-stat-label { font-size: .7rem; color: #6b7280; text-transform: uppercase; letter-spacing: .06em; margin-top: .25rem; }
+    .admin-tile {
+      display: flex; flex-direction: column; align-items: flex-start; gap: .2rem;
+      padding: .85rem 1rem; border-radius: .75rem; background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.06); cursor: pointer; transition: all .15s; text-align: left;
+    }
+    .admin-tile:hover { background: rgba(255,255,255,.09); border-color: rgba(255,255,255,.12); }
+    .admin-tile.danger { border-color: rgba(239,68,68,.15); }
+    .admin-tile.danger:hover { background: rgba(239,68,68,.1); border-color: rgba(239,68,68,.4); }
+
+
   </style>
 </head>
 <body>
@@ -540,6 +603,18 @@
           <div class="card card-enter">
             <h2 class="text-xl font-bold mb-4">🎵 Now Playing</h2>
             <div id="nowPlayingWidget"></div>
+          </div>
+
+          <!-- Chore Leaderboard -->
+          <div class="card card-enter">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="text-xl font-bold">🏆 This Week</h2>
+              <span class="text-xs text-gray-500">Chores completed</span>
+            </div>
+            <div id="choreLeaderboard">
+              <div class="skeleton skeleton-text"></div>
+              <div class="skeleton skeleton-text" style="width:75%"></div>
+            </div>
           </div>
 
           <!-- Photos Widget — full width -->
@@ -807,212 +882,251 @@
 
     <div id="settingsPage" class="page">
       <div class="max-w-4xl mx-auto p-4 md:p-6">
-        <header class="flex items-center justify-between mb-6">
-          <h1 class="text-3xl font-bold">⚙️ Settings</h1>
-          <button onclick="Hub.router.go('dashboard')" class="btn btn-secondary">← Back</button>
+
+        <!-- ── Header ──────────────────────────────────────────── -->
+        <header class="mb-8">
+          <h1 class="text-3xl font-bold tracking-tight">Settings</h1>
+          <p class="text-gray-500 text-sm mt-1">Personalize HomeHub for your household</p>
         </header>
-        <div class="space-y-6">
-          <!-- Location -->
-          <div class="card">
-            <h2 class="text-xl font-bold mb-4">📍 Location</h2>
-            <div class="space-y-4">
-              <div><label class="block text-sm font-medium mb-2">Location Name</label><input id="settingLocationName" type="text" class="input" placeholder="Home"></div>
-              <div class="grid grid-cols-2 gap-4">
-                <div><label class="block text-sm font-medium mb-2">Latitude</label><input id="settingLat" type="number" step="0.000001" class="input"></div>
-                <div><label class="block text-sm font-medium mb-2">Longitude</label><input id="settingLon" type="number" step="0.000001" class="input"></div>
-              </div>
-              <button id="btnUseLocation" class="btn btn-secondary text-sm">📍 Use Current Location</button>
-            </div>
+
+        <!-- ── Section nav pills ───────────────────────────────── -->
+        <div class="flex gap-2 overflow-x-auto pb-2 mb-6" style="scrollbar-width:none;">
+          <button onclick="Hub.app._settingsSection('location')"   class="settings-pill active" id="spill-location">📍 Location</button>
+          <button onclick="Hub.app._settingsSection('photos')"     class="settings-pill" id="spill-photos">📸 Photos</button>
+          <button onclick="Hub.app._settingsSection('calendars')"  class="settings-pill" id="spill-calendars">📅 Calendars</button>
+          <button onclick="Hub.app._settingsSection('standby')"    class="settings-pill" id="spill-standby">💤 Standby</button>
+          <button onclick="Hub.app._settingsSection('display')"    class="settings-pill" id="spill-display">🖥 Display</button>
+          <button onclick="Hub.app._settingsSection('notify')"     class="settings-pill" id="spill-notify">🔔 Alerts</button>
+          <button onclick="Hub.app._settingsSection('system')"     class="settings-pill" id="spill-system">⚙️ System</button>
+        </div>
+
+        <!-- ── Sections ────────────────────────────────────────── -->
+
+        <!-- LOCATION -->
+        <div id="ssec-location" class="settings-section space-y-4">
+          <div class="settings-section-header">
+            <span class="text-2xl">📍</span>
+            <div><h2 class="text-lg font-bold">Location</h2><p class="text-gray-500 text-xs">Used for weather, forecasts and alerts</p></div>
           </div>
-          <!-- Standby Photos -->
-          <div class="card">
-            <h2 class="text-xl font-bold mb-4">
-              <svg style="display:inline;vertical-align:-.1em;margin-right:.4em" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-              Standby Photos
-            </h2>
-            <div class="space-y-4">
+          <div class="card space-y-4">
+            <div>
+              <label class="settings-label">Location Name</label>
+              <input id="settingLocationName" type="text" class="input" placeholder="Home">
+            </div>
+            <div class="grid grid-cols-2 gap-3">
               <div>
-                <label class="block text-sm font-medium mb-2">Photo Source</label>
-                <select id="settingPhotoProvider" class="input">
-                  <option value="imgur">Imgur Album</option>
-                  <option value="google">Google Photos Album</option>
-                  <option value="immich">Immich (local NAS)</option>
-                  <option value="off">Off (placeholders)</option>
-                </select>
+                <label class="settings-label">Latitude</label>
+                <input id="settingLat" type="number" step="0.000001" class="input">
               </div>
-
-              <!-- Google Photos settings -->
-              <div id="photoSettingsGoogle" style="display:none;" class="space-y-3 border-l-2 border-blue-600 pl-4">
-                <p class="text-xs text-blue-400">Uses your Google sign-in. If photos stop loading, sign out and back in to refresh access.</p>
-                <div>
-                  <label class="block text-sm font-medium mb-2">Album</label>
-                  <div class="flex gap-2 mb-2">
-                    <button id="btnLoadGoogleAlbums" class="btn btn-secondary text-sm">Load My Albums</button>
-                    <button id="btnTestSlideshow" class="btn btn-secondary text-sm">Test Slideshow</button>
-                  </div>
-                  <select id="settingGooglePhotosAlbumSelect" class="input mb-2">
-                    <option value="">— click Load My Albums first —</option>
-                  </select>
-                  <input id="settingGooglePhotosAlbumId" type="hidden">
-                  <input id="settingGooglePhotosAlbumTitle" type="text" class="input text-xs text-gray-400" placeholder="Album title (auto-filled)" readonly>
-                </div>
-                <p class="text-xs text-gray-500">If photos stop working, sign out and back in to re-grant Photos permission.</p>
-              </div>
-
-              <!-- Imgur settings -->
-              <div id="photoSettingsImgur" class="space-y-3 border-l-2 border-orange-500 pl-4">
-                <p class="text-xs text-orange-400">Public Imgur album — no account needed</p>
-                <div>
-                  <label class="block text-sm font-medium mb-2">Imgur Album ID</label>
-                  <input id="settingImgurAlbum" type="text" class="input" placeholder="kAG2MS3">
-                </div>
-                <button id="btnTestSlideshow2" class="btn btn-secondary text-sm" onclick="Hub.app._testSlideshow()">Test Slideshow</button>
-              </div>
-
-              <!-- Immich settings -->
-              <div id="photoSettingsImmich" style="display:none;" class="space-y-3 border-l-2 border-purple-500 pl-4">
-                <p class="text-xs text-purple-400">Local Immich server — must be on same network</p>
-                <div><label class="block text-sm font-medium mb-2">Immich Base URL</label><input id="settingImmichUrl" type="url" class="input" placeholder="http://192.168.1.100:2283"></div>
-                <div><label class="block text-sm font-medium mb-2">API Key / Shared Token</label><input id="settingImmichKey" type="password" class="input" placeholder="Your Immich API key"></div>
-                <div><label class="block text-sm font-medium mb-2">Album ID (optional)</label><input id="settingImmichAlbum" type="text" class="input" placeholder="Shared album ID or leave blank for library"></div>
+              <div>
+                <label class="settings-label">Longitude</label>
+                <input id="settingLon" type="number" step="0.000001" class="input">
               </div>
             </div>
+            <button id="btnUseLocation" class="btn btn-secondary text-sm w-full">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="display:inline;margin-right:.4em"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/></svg>
+              Use Current GPS Location
+            </button>
           </div>
-          <!-- Standby -->
-          <div class="card">
-            <h2 class="text-xl font-bold mb-4">💤 Standby Mode</h2>
-            <div class="space-y-4">
-              <div><label class="block text-sm font-medium mb-2">Auto-enter after (minutes)</label><input id="settingIdleTimeout" type="number" class="input" value="10" min="1" max="60"></div>
-              <div class="grid grid-cols-2 gap-4">
-                <div><label class="block text-sm font-medium mb-2">Quiet Hours Start</label><input id="settingQuietStart" type="time" class="input" value="22:00"></div>
-                <div><label class="block text-sm font-medium mb-2">Quiet Hours End</label><input id="settingQuietEnd" type="time" class="input" value="07:00"></div>
-              </div>
+        </div>
+
+        <!-- PHOTOS -->
+        <div id="ssec-photos" class="settings-section hidden space-y-4">
+          <div class="settings-section-header">
+            <span class="text-2xl">📸</span>
+            <div><h2 class="text-lg font-bold">Standby Photos</h2><p class="text-gray-500 text-xs">Source for the full-screen photo slideshow</p></div>
+          </div>
+          <!-- Provider selector cards -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <button onclick="Hub.app._selectPhotoProvider('imgur')"   id="pp-imgur"  class="photo-provider-card active-provider">
+              <span class="text-2xl">🖼</span><span class="text-xs font-semibold mt-1">Imgur</span><span class="text-xs text-gray-500">Public album</span>
+            </button>
+            <button onclick="Hub.app._selectPhotoProvider('google')"  id="pp-google" class="photo-provider-card">
+              <span class="text-2xl">📷</span><span class="text-xs font-semibold mt-1">Google</span><span class="text-xs text-gray-500">Photos album</span>
+            </button>
+            <button onclick="Hub.app._selectPhotoProvider('immich')"  id="pp-immich" class="photo-provider-card">
+              <span class="text-2xl">🗄</span><span class="text-xs font-semibold mt-1">Immich</span><span class="text-xs text-gray-500">Local NAS</span>
+            </button>
+            <button onclick="Hub.app._selectPhotoProvider('off')"     id="pp-off"    class="photo-provider-card">
+              <span class="text-2xl">🚫</span><span class="text-xs font-semibold mt-1">Off</span><span class="text-xs text-gray-500">Placeholders</span>
+            </button>
+          </div>
+          <input id="settingPhotoProvider" type="hidden">
+          <!-- Provider-specific settings -->
+          <div id="photoSettingsImgur" class="card space-y-3">
+            <p class="text-xs text-orange-400 font-semibold">Public Imgur album — no account needed</p>
+            <div>
+              <label class="settings-label">Imgur Album ID</label>
+              <input id="settingImgurAlbum" type="text" class="input" placeholder="kAG2MS3">
             </div>
+            <button id="btnTestSlideshow2" onclick="Hub.app._testSlideshow()" class="btn btn-secondary text-sm">▶ Test Slideshow</button>
           </div>
-          <!-- Calendar Selection -->
+          <div id="photoSettingsGoogle" style="display:none;" class="card space-y-3">
+            <p class="text-xs text-blue-400 font-semibold">Uses your Google sign-in — sign out/in to refresh Photos access</p>
+            <div class="flex gap-2">
+              <button id="btnLoadGoogleAlbums" class="btn btn-secondary text-sm flex-1">Load My Albums</button>
+              <button id="btnTestSlideshow" class="btn btn-secondary text-sm flex-1">▶ Test</button>
+            </div>
+            <select id="settingGooglePhotosAlbumSelect" class="input">
+              <option value="">— click Load My Albums first —</option>
+            </select>
+            <input id="settingGooglePhotosAlbumId" type="hidden">
+            <input id="settingGooglePhotosAlbumTitle" type="text" class="input text-xs text-gray-400" placeholder="Album title (auto-filled)" readonly>
+          </div>
+          <div id="photoSettingsImmich" style="display:none;" class="card space-y-3">
+            <p class="text-xs text-purple-400 font-semibold">Local Immich server — must be on same network</p>
+            <div><label class="settings-label">Immich Base URL</label><input id="settingImmichUrl" type="url" class="input" placeholder="http://192.168.1.100:2283"></div>
+            <div><label class="settings-label">API Key / Shared Token</label><input id="settingImmichKey" type="password" class="input"></div>
+            <div><label class="settings-label">Album ID (optional)</label><input id="settingImmichAlbum" type="text" class="input" placeholder="Shared album ID or blank for library"></div>
+          </div>
+        </div>
+
+        <!-- CALENDARS -->
+        <div id="ssec-calendars" class="settings-section hidden space-y-4">
+          <div class="settings-section-header">
+            <span class="text-2xl">📅</span>
+            <div><h2 class="text-lg font-bold">Calendar Selection</h2><p class="text-gray-500 text-xs">Choose which Google Calendars appear on the dashboard</p></div>
+          </div>
           <div class="card">
-            <h2 class="text-xl font-bold mb-4">📅 Calendar Selection</h2>
             <div id="calendarSelectionContainer">
-              <p class="text-gray-400 text-sm mb-3">Choose which Google Calendars to display on your dashboard</p>
-              <button id="btnLoadCalendars" class="btn btn-secondary text-sm mb-3">Load My Calendars</button>
+              <button id="btnLoadCalendars" class="btn btn-secondary text-sm mb-3 w-full">Load My Calendars</button>
               <div id="calendarCheckboxes" class="space-y-2"></div>
             </div>
           </div>
-          
-          <!-- Changelog -->
-          <div class="card">
-            <h2 class="text-xl font-bold mb-4">📋 What's New</h2>
-            <div class="space-y-3 text-sm">
-              <div class="border-l-4 border-blue-500 pl-4 py-2">
-                <p class="font-semibold text-blue-400">v2.0.0 - February 9, 2026</p>
-                <ul class="list-disc pl-5 mt-2 space-y-1 text-gray-400">
-                  <li>✨ Multi-calendar selection - choose which calendars to display</li>
-                  <li>📅 Automatic Google Calendar permission requests</li>
-                  <li>👤 Personalization - greetings and chore attribution</li>
-                  <li>🌤️ Redesigned weather center with animated radar</li>
-                  <li>🎨 Color-coded calendar indicators</li>
-                  <li>💾 Settings now persist forever</li>
-                </ul>
-              </div>
-              <div class="border-l-4 border-gray-500 pl-4 py-2">
-                <p class="font-semibold text-gray-300">v1.5.0 - February 8, 2026</p>
-                <ul class="list-disc pl-5 mt-2 space-y-1 text-gray-400">
-                  <li>Fixed navigation tabs</li>
-                  <li>Added standby mode improvements</li>
-                  <li>Google Calendar integration</li>
-                </ul>
-              </div>
-              <div class="border-l-4 border-gray-500 pl-4 py-2">
-                <p class="font-semibold text-gray-300">v1.0.0 - January 2026</p>
-                <ul class="list-disc pl-5 mt-2 space-y-1 text-gray-400">
-                  <li>Initial release</li>
-                  <li>Chores tracking</li>
-                  <li>Dog treat tracker</li>
-                  <li>Weather integration</li>
-                </ul>
-              </div>
-            </div>
-          </div>
-
-          <!-- Legal & Privacy -->
-          <div class="card bg-gray-800">
-            <h2 class="text-xl font-bold mb-4">⚖️ Legal & Privacy</h2>
-            <div class="space-y-3 text-sm">
-              <p class="text-gray-400">Your settings and data are stored securely and persist indefinitely while your account is active.</p>
-              <div class="flex flex-wrap gap-4">
-                <a href="/privacy.html" target="_blank" class="text-blue-400 hover:text-blue-300 underline">
-                  📜 Privacy Policy
-                </a>
-                <a href="/tos.html" target="_blank" class="text-blue-400 hover:text-blue-300 underline">
-                  📋 Terms of Service
-                </a>
-                <a href="https://myaccount.google.com/permissions" target="_blank" class="text-blue-400 hover:text-blue-300 underline">
-                  🔐 Manage Google Permissions
-                </a>
-              </div>
-              <p class="text-xs text-gray-500 mt-3">
-                Home Hub uses Google Calendar API. By using calendar features, you agree to our Terms of Service and Privacy Policy, 
-                and acknowledge our compliance with <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" class="text-blue-400 hover:text-blue-300 underline">Google API Services User Data Policy</a>.
-              </p>
-            </div>
-          </div>
-
-          <!-- Touchscreen Mode -->
-          <div class="card">
-            <h2 class="text-xl font-bold mb-4 accordion-toggle" onclick="Hub.ui.toggleAccordion(this)">📱 Touchscreen Mode</h2>
-            <div class="accordion-body">
-              <div class="space-y-4">
-                <label class="flex items-center justify-between cursor-pointer">
-                  <span class="text-sm font-medium">Larger UI density</span>
-                  <input type="checkbox" id="tsLargerUI" class="w-5 h-5 rounded" onchange="Hub.ui.applyTouchscreenMode()">
-                </label>
-                <label class="flex items-center justify-between cursor-pointer">
-                  <span class="text-sm font-medium">Disable hover states</span>
-                  <input type="checkbox" id="tsDisableHover" class="w-5 h-5 rounded" onchange="Hub.ui.applyTouchscreenMode()">
-                </label>
-                <label class="flex items-center justify-between cursor-pointer">
-                  <span class="text-sm font-medium">Increase button hit areas</span>
-                  <input type="checkbox" id="tsLargeHits" class="w-5 h-5 rounded" onchange="Hub.ui.applyTouchscreenMode()">
-                </label>
-                <label class="flex items-center justify-between cursor-pointer">
-                  <span class="text-sm font-medium">Reduce motion (performance)</span>
-                  <input type="checkbox" id="tsReduceMotion" class="w-5 h-5 rounded" onchange="Hub.ui.applyTouchscreenMode()">
-                </label>
-                <p class="text-xs text-gray-500">Touchscreen mode optimises the UI for kiosk/Pi use.</p>
-              </div>
-            </div>
-          </div>
-
-          <!-- Fullscreen Controls -->
-          <div class="card">
-            <h2 class="text-xl font-bold mb-4">🖥 Fullscreen</h2>
-            <div class="flex gap-3">
-              <button onclick="Hub.ui.enterFullscreen()" class="btn btn-primary flex-1">⛶ Enter Fullscreen</button>
-              <button onclick="Hub.ui.exitFullscreen()" class="btn btn-secondary flex-1">✕ Exit Fullscreen</button>
-            </div>
-            <p id="fullscreenStatus" class="text-xs text-gray-500 mt-2 text-center"></p>
-          </div>
-
-          <!-- Admin Panel — button shown/hidden based on role by _loadSettingsForm() -->
-          <div id="settingsAdminCard" class="card" style="border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.05);">
-            <div class="flex items-center justify-between">
-              <div>
-                <h2 class="text-xl font-bold">🛠 Admin Panel</h2>
-                <p class="text-gray-400 text-sm mt-1">Live control console — system, media, display, debug, simulation</p>
-              </div>
-              <div id="settingsAdminBtn">
-                <!-- Populated by _loadSettingsForm based on role -->
-                <span class="text-gray-500 text-sm">Checking access…</span>
-              </div>
-            </div>
-          </div>
-
-          <button id="btnSaveSettings" class="btn btn-primary w-full py-3">💾 Save All Settings</button>
-          <p class="text-center text-sm text-gray-500 mt-2">Settings are automatically saved to your account and persist forever</p>
         </div>
+
+        <!-- STANDBY -->
+        <div id="ssec-standby" class="settings-section hidden space-y-4">
+          <div class="settings-section-header">
+            <span class="text-2xl">💤</span>
+            <div><h2 class="text-lg font-bold">Standby Mode</h2><p class="text-gray-500 text-xs">Screen saver and quiet hours</p></div>
+          </div>
+          <div class="card space-y-5">
+            <div>
+              <label class="settings-label">Auto-enter after (minutes of inactivity)</label>
+              <div class="flex items-center gap-4">
+                <input id="settingIdleTimeout" type="range" min="1" max="60" value="10" class="flex-1" style="accent-color:#3b82f6;"
+                  oninput="document.getElementById('idleTimeoutVal').textContent=this.value+'m'">
+                <span id="idleTimeoutVal" class="text-sm font-semibold text-blue-400 w-8">10m</span>
+              </div>
+            </div>
+            <div class="border-t border-gray-700 pt-4">
+              <p class="settings-label mb-3">Quiet Hours <span class="text-gray-500 font-normal">(suppress non-urgent alerts)</span></p>
+              <div class="grid grid-cols-2 gap-3">
+                <div><label class="text-xs text-gray-500 mb-1 block">Start</label><input id="settingQuietStart" type="time" class="input" value="22:00"></div>
+                <div><label class="text-xs text-gray-500 mb-1 block">End</label><input id="settingQuietEnd" type="time" class="input" value="07:00"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- DISPLAY -->
+        <div id="ssec-display" class="settings-section hidden space-y-4">
+          <div class="settings-section-header">
+            <span class="text-2xl">🖥</span>
+            <div><h2 class="text-lg font-bold">Display & Input</h2><p class="text-gray-500 text-xs">Optimize for your screen and input method</p></div>
+          </div>
+          <div class="card space-y-4">
+            <div class="flex gap-3">
+              <button onclick="Hub.ui.enterFullscreen()" class="btn btn-primary flex-1">⛶ Fullscreen</button>
+              <button onclick="Hub.ui.exitFullscreen()"  class="btn btn-secondary flex-1">✕ Exit</button>
+            </div>
+            <p id="fullscreenStatus" class="text-xs text-gray-500 text-center"></p>
+          </div>
+          <div class="card space-y-4">
+            <p class="text-sm font-semibold text-gray-300">Touchscreen optimizations</p>
+            <label class="settings-toggle">
+              <span class="text-sm">Larger UI density</span>
+              <input type="checkbox" id="tsLargerUI" class="settings-toggle-input" onchange="Hub.ui.applyTouchscreenMode()">
+              <span class="settings-toggle-track"></span>
+            </label>
+            <label class="settings-toggle">
+              <span class="text-sm">Disable hover states</span>
+              <input type="checkbox" id="tsDisableHover" class="settings-toggle-input" onchange="Hub.ui.applyTouchscreenMode()">
+              <span class="settings-toggle-track"></span>
+            </label>
+            <label class="settings-toggle">
+              <span class="text-sm">Larger button hit areas</span>
+              <input type="checkbox" id="tsLargeHits" class="settings-toggle-input" onchange="Hub.ui.applyTouchscreenMode()">
+              <span class="settings-toggle-track"></span>
+            </label>
+            <label class="settings-toggle">
+              <span class="text-sm">Reduce motion</span>
+              <input type="checkbox" id="tsReduceMotion" class="settings-toggle-input" onchange="Hub.ui.applyTouchscreenMode()">
+              <span class="settings-toggle-track"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- NOTIFICATIONS -->
+        <div id="ssec-notify" class="settings-section hidden space-y-4">
+          <div class="settings-section-header">
+            <span class="text-2xl">🔔</span>
+            <div><h2 class="text-lg font-bold">Weather Alert Notifications</h2><p class="text-gray-500 text-xs">Push notifications to this device for severe weather</p></div>
+          </div>
+          <div class="card">
+            <div class="flex items-center justify-between gap-4">
+              <div class="flex-1">
+                <p id="pushStatusText" class="text-sm font-medium">Checking…</p>
+                <p class="text-xs text-gray-500 mt-1">Fires for Severe and Extreme alerts only. Works even when screen is off.</p>
+              </div>
+              <button id="btnPushToggle" onclick="Hub.notifications._toggleFromSettings()"
+                class="btn btn-secondary px-5 flex-shrink-0">Enable</button>
+            </div>
+          </div>
+          <div class="card" style="border-color:rgba(251,191,36,.2);background:rgba(251,191,36,.03);">
+            <p class="text-xs text-yellow-400 font-semibold mb-1">How it works</p>
+            <p class="text-xs text-gray-400">Your browser subscribes to push notifications. When HomeHub detects a Severe or Extreme weather alert from the National Weather Service, a notification is sent to every household device that has this enabled — even in standby or background.</p>
+          </div>
+        </div>
+
+        <!-- SYSTEM -->
+        <div id="ssec-system" class="settings-section hidden space-y-4">
+          <div class="settings-section-header">
+            <span class="text-2xl">⚙️</span>
+            <div><h2 class="text-lg font-bold">System</h2><p class="text-gray-500 text-xs">Legal, account, and admin access</p></div>
+          </div>
+
+          <!-- Admin access card -->
+          <div id="settingsAdminCard" class="card" style="border:1px solid rgba(239,68,68,.25);background:rgba(239,68,68,.04);">
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <h3 class="font-bold">🛠 Admin Panel</h3>
+                <p class="text-gray-400 text-sm mt-0.5">Household management, chore controls, debug tools</p>
+              </div>
+              <div id="settingsAdminBtn" class="flex-shrink-0">
+                <span class="text-gray-500 text-sm">Checking…</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Legal -->
+          <div class="card space-y-3">
+            <p class="text-sm font-semibold text-gray-300">Privacy & Legal</p>
+            <div class="flex flex-wrap gap-4 text-sm">
+              <a href="/privacy.html" target="_blank" class="text-blue-400 hover:text-blue-300 underline">Privacy Policy</a>
+              <a href="/tos.html"     target="_blank" class="text-blue-400 hover:text-blue-300 underline">Terms of Service</a>
+              <a href="https://myaccount.google.com/permissions" target="_blank" class="text-blue-400 hover:text-blue-300 underline">Manage Google Permissions</a>
+            </div>
+            <p class="text-xs text-gray-500">HomeHub uses the Google Calendar API. By using calendar features you agree to our Terms and Google's <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" class="text-blue-400">API Services User Data Policy</a>.</p>
+          </div>
+
+          <!-- Sign out -->
+          <button id="btnSignOutSettings" onclick="Hub.auth.signOut?.()" class="btn btn-secondary w-full text-sm">
+            Sign out of HomeHub
+          </button>
+        </div>
+
+        <!-- ── Save button (visible in all sections except display/system) -->
+        <div id="settingsSaveRow" class="mt-6 pt-4 border-t border-gray-800">
+          <button id="btnSaveSettings" class="btn btn-primary w-full py-3 text-base font-semibold">
+            💾 Save Settings
+          </button>
+          <p class="text-center text-xs text-gray-600 mt-2">Settings sync to your account and persist across devices</p>
+        </div>
+
       </div>
     </div>
-  </div>
 
   <!-- ========== MODALS ========== -->
   <!-- Grocery: Confirm Clear All modal -->
@@ -1090,16 +1204,52 @@
     <!-- ========== ADMIN PANEL ========== -->
     <div id="adminPage" class="page">
       <div class="max-w-4xl mx-auto p-4 md:p-6">
-        <header class="flex items-center justify-between mb-6">
+
+        <header class="mb-6 flex items-start justify-between gap-4">
           <div>
-            <h1 class="text-3xl font-bold">🛠 Admin Panel</h1>
-            <p class="text-gray-400 text-sm">Live control console · Tap = immediate effect</p>
+            <h1 class="text-3xl font-bold tracking-tight">Admin Panel</h1>
+            <p class="text-gray-500 text-sm mt-1" id="adminSubtitle">Household control console</p>
           </div>
-          <button onclick="Hub.router.go('settings')" class="btn btn-secondary">← Settings</button>
+          <button onclick="Hub.router.go('settings')" class="btn btn-secondary text-sm flex-shrink-0">← Settings</button>
         </header>
-        <div id="adminPanelContent">
-          <p class="text-gray-400 text-center py-8">Loading admin panel…</p>
+
+        <!-- Admin tabs -->
+        <div class="flex gap-1.5 overflow-x-auto pb-2 mb-5" style="scrollbar-width:none;">
+          <button onclick="Hub.control.switchTab('household')" id="adminTab_household" class="admin-tab admin-tab-active">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            Household
+          </button>
+          <button onclick="Hub.control.switchTab('chores')" id="adminTab_chores" class="admin-tab">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12l3 3 5-5"/></svg>
+            Chores
+          </button>
+          <button onclick="Hub.control.switchTab('system')" id="adminTab_system" class="admin-tab">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+            System
+          </button>
+          <button onclick="Hub.control.switchTab('media')" id="adminTab_media" class="admin-tab">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Media
+          </button>
+          <button onclick="Hub.control.switchTab('display')" id="adminTab_display" class="admin-tab">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+            Display
+          </button>
+          <button onclick="Hub.control.switchTab('debug')" id="adminTab_debug" class="admin-tab">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M12 8v4M12 16h.01"/></svg>
+            Debug
+          </button>
+          <button onclick="Hub.control.switchTab('simulate')" id="adminTab_simulate" class="admin-tab">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18"/></svg>
+            Simulate
+          </button>
         </div>
+
+        <!-- Tab content container -->
+        <div id="adminTabContent">
+          <p class="text-gray-400 text-center py-8">Loading…</p>
+        </div>
+
       </div>
     </div>
 
@@ -1212,6 +1362,7 @@
   <script src="assets/player.js"></script>
   <script src="assets/icons.js"></script>
   <script src="assets/radio.js"></script>
+  <script src="assets/notifications.js"></script>
   <script src="assets/app.js"></script>
 
   <!-- Service Worker registration (PWA — no UI here, install UI lives in Admin Panel only) -->
@@ -1303,20 +1454,7 @@
     </div>
 
     <!-- ========== ADMIN PANEL ========== -->
-    <div id="adminPage" class="page">
-      <div class="max-w-4xl mx-auto p-4 md:p-6">
-        <header class="flex items-center justify-between mb-6">
-          <div>
-            <h1 class="text-3xl font-bold">🛠 Admin Panel</h1>
-            <p class="text-gray-400 text-sm">Live control console · Tap = immediate effect</p>
-          </div>
-          <button onclick="Hub.router.go('settings')" class="btn btn-secondary">← Settings</button>
-        </header>
-        <div id="adminPanelContent">
-          <p class="text-gray-400 text-center py-8">Loading admin panel…</p>
-        </div>
-      </div>
-    </div>
+    
 
 
 

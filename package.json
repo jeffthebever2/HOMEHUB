@@ -8,5 +8,8 @@
   },
   "devDependencies": {
     "tailwindcss": "^3"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
   }
 }

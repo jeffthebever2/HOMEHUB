@@ -510,6 +510,52 @@ const SUPABASE_CONFIG = {
         .subscribe();
     },
 
+    /** Load chore completion leaderboard for last N days */
+    async loadChoreLeaderboard(householdId, days = 7) {
+      const since = new Date(Date.now() - days * 86400000).toISOString();
+      const { data, error } = await timed(
+        sb.from('chore_logs')
+          .select('notes, completed_at, completed_by')
+          .eq('household_id', householdId)
+          .gte('completed_at', since)
+          .order('completed_at', { ascending: false })
+      );
+      if (error) throw error;
+
+      // Tally by name — notes field holds "Completed by <name>"
+      const counts = {};
+      (data || []).forEach(log => {
+        const m    = (log.notes || '').match(/Completed by (.+)/);
+        const name = m ? m[1].trim() : 'Someone';
+        counts[name] = (counts[name] || 0) + 1;
+      });
+
+      // Sort descending
+      return Object.entries(counts)
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count);
+    },
+
+    /** Load member names from DB (used to keep config.js in sync) */
+    async loadMemberNames(householdId) {
+      const { data, error } = await timed(
+        sb.from('household_members')
+          .select('name, email, role')
+          .eq('household_id', householdId)
+          .order('created_at', { ascending: true })
+      );
+      if (error) throw error;
+      return data || [];
+    },
+
+    /** Update grocery item position (for drag reorder) */
+    async updateGroceryPositions(updates) {
+      // updates: [{id, position}]
+      await Promise.all(updates.map(({ id, position }) =>
+        timed(sb.from('grocery_items').update({ position }).eq('id', id))
+      ));
+    },
+
     async logSystem(source, service, status, message, latencyMs) {
       await timed(sb.from('system_logs').insert({ source, service, status, message, latency_ms: latencyMs }).select());
     }
