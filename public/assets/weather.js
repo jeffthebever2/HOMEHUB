@@ -835,17 +835,32 @@ Hub.weather = {
           </div>
         </div>
         <button
-          onclick="document.getElementById('severeWeatherBanner').remove()"
+          onclick="Hub.weather._dismissAlertBanner()"
           class="${t.muted} hover:text-white text-xl px-1 flex-shrink-0 leading-none mt-0.5"
           aria-label="Dismiss">×</button>
       </div>
     `;
 
     // Always insert directly into document.body.
-    // Inserting relative to weatherContent is wrong because weatherContent
-    // lives inside #weatherPage which has display:none on other pages —
-    // a position:fixed child of a display:none ancestor is never rendered.
     document.body.insertBefore(banner, document.body.firstChild);
+
+    // ── Sync bannerSpacer so page content is never hidden under the banner ──
+    // rAF ensures the banner has actually rendered before measuring offsetHeight.
+    const spacer = document.getElementById('bannerSpacer');
+    if (spacer) {
+      const syncSpacer = () => {
+        const b = document.getElementById('severeWeatherBanner');
+        spacer.style.height = b ? b.offsetHeight + 'px' : '0';
+      };
+      requestAnimationFrame(() => {
+        syncSpacer();
+        if (window.ResizeObserver) {
+          const ro = new ResizeObserver(syncSpacer);
+          ro.observe(banner);
+          banner._spacerRO = ro;
+        }
+      });
+    }
 
     // Auto-navigate to weather page on Extreme alerts
     if (top.severity === 'Extreme' && Hub.router?.navigate) {
@@ -854,6 +869,17 @@ Hub.weather = {
 
     // ── Async: fetch Gemini summary ────────────────────────────
     await this._fetchAndFillSummary(top, 'alertSummaryText', t);
+  },
+
+  /** Dismiss the alert banner and reset the content spacer */
+  _dismissAlertBanner() {
+    const banner = document.getElementById('severeWeatherBanner');
+    if (banner) {
+      banner._spacerRO?.disconnect();
+      banner.remove();
+    }
+    const spacer = document.getElementById('bannerSpacer');
+    if (spacer) spacer.style.height = '0';
   },
 
   /** Toggle the full NWS text drawer inside the banner */
@@ -1079,9 +1105,8 @@ Hub.weather = {
     const container = document.getElementById('radarMap');
     if (container && container._leaflet_id) delete container._leaflet_id;
 
-    // Remove alert banner when leaving weather page
-    const banner = document.getElementById('severeWeatherBanner');
-    if (banner) banner.remove();
+    // Remove alert banner when leaving weather page (re-rendered on landing page)
+    this._dismissAlertBanner();
 
     // Re-render the unified AI banner on whatever page the user lands on
     Hub.weather.fetchAlerts().then(alerts => {

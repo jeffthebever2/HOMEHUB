@@ -253,6 +253,9 @@ Hub.app = {
     const loadingScreen = document.getElementById('loadingScreen');
     if (loadingScreen) loadingScreen.style.display = 'none';
 
+    // Show bottom navigation now that user is authenticated
+    document.body.classList.add('show-nav');
+
     document.querySelectorAll('.page').forEach(p => {
       p.classList.remove('active');
       p.style.display = 'none';

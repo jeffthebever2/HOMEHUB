@@ -140,6 +140,9 @@ const SUPABASE_CONFIG = {
       Hub.state.household_id = null;
       Hub.state.userRole     = null;
 
+      // Hide bottom navigation
+      document.body.classList.remove('show-nav', 'standby-mode');
+
       // 1) Try to revoke Google provider token
       try {
         const { data: { session } } = await sb.auth.getSession();

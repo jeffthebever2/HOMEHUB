@@ -230,10 +230,124 @@
     /* ── Chore SVG check transition ── */
     .chore-check-svg { transition: transform .2s cubic-bezier(0.34,1.56,0.64,1); }
     .chore-card { transition: opacity .3s, background .3s; }
+
+    /* ══════════════════════════════════════════════
+       BOTTOM NAVIGATION BAR
+    ══════════════════════════════════════════════ */
+    #mainNav {
+      display: none; /* hidden until logged in */
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      z-index: 45;
+      background: rgba(10, 14, 26, 0.96);
+      backdrop-filter: blur(16px) saturate(180%);
+      -webkit-backdrop-filter: blur(16px) saturate(180%);
+      border-top: 1px solid rgba(255,255,255,.07);
+      padding-bottom: env(safe-area-inset-bottom, 0);
+      box-shadow: 0 -4px 24px rgba(0,0,0,.4);
+    }
+    body.show-nav #mainNav { display: flex; }
+    body.standby-mode #mainNav { display: none !important; }
+    body.standby-mode { padding-bottom: 0 !important; }
+
+    /* Bottom padding so content clears the nav bar */
+    body.show-nav { padding-bottom: 5rem; }
+
+    /* ── Navigation bar ─────────────────────────── */
+    .nav-bar {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      padding: .35rem .5rem;
+      gap: .15rem;
+    }
+
+    .nav-item {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: .5rem .25rem .4rem;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: #6b7280;
+      font-size: .6rem;
+      font-weight: 700;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      gap: .28rem;
+      min-height: 3.6rem;
+      border-radius: .75rem;
+      position: relative;
+      transition: color .18s, background .18s;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    .nav-item svg {
+      width: 22px; height: 22px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.75;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      flex-shrink: 0;
+      transition: transform .22s cubic-bezier(0.34,1.56,0.64,1), stroke .18s, filter .18s;
+    }
+
+    /* Tap scale feedback */
+    .nav-item:active { transform: scale(0.92); }
+
+    /* Active state — glowing pill highlight */
+    .nav-item.active {
+      color: #93c5fd;
+      background: rgba(59, 130, 246, 0.12);
+    }
+    .nav-item.active svg {
+      stroke: #60a5fa;
+      filter: drop-shadow(0 0 5px rgba(96,165,250,.55));
+      transform: translateY(-1px) scale(1.08);
+    }
+
+    /* Top accent line on active item */
+    .nav-item.active::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 20%; right: 20%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, #60a5fa, transparent);
+      border-radius: 0 0 3px 3px;
+    }
+
+    /* Hover for non-touch */
+    @media (hover: hover) {
+      .nav-item:not(.active):hover {
+        color: #9ca3af;
+        background: rgba(255,255,255,.04);
+      }
+    }
+
+    /* Nav notification dot */
+    .nav-item .nav-badge {
+      position: absolute;
+      top: .45rem; 
+      right: calc(50% - 14px);
+      width: 7px; height: 7px;
+      background: #ef4444;
+      border-radius: 50%;
+      border: 1.5px solid #0B0F19;
+      display: none;
+    }
+    .nav-item.has-badge .nav-badge { display: block; }
+
   </style>
 </head>
 <body>
   <div id="app">
+    <!-- Banner spacer — height managed by JS to push content below alert banner -->
+    <div id="bannerSpacer" style="height:0;transition:height .2s ease;flex-shrink:0;"></div>
     <!-- Loading Screen -->
     <div id="loadingScreen" class="min-h-screen flex items-center justify-center">
       <div class="text-center">
@@ -968,6 +1082,94 @@
       </div>
     </div>
 
+
+
+    <!-- ══════════════════════════════════════════════
+         BOTTOM NAVIGATION BAR
+         Visibility: body.show-nav (set by app.js on login)
+         Active state: router._activate() adds .active class
+    ══════════════════════════════════════════════ -->
+    <nav id="mainNav" aria-label="Main navigation">
+      <div class="nav-bar">
+
+        <!-- Home -->
+        <button class="nav-item" id="nav-dashboard" onclick="Hub.router.go('dashboard')" aria-label="Home">
+          <div class="nav-badge"></div>
+          <svg viewBox="0 0 24 24">
+            <path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9.5z"/>
+            <path d="M9 21V12h6v9"/>
+          </svg>
+          <span>Home</span>
+        </button>
+
+        <!-- Weather -->
+        <button class="nav-item" id="nav-weather" onclick="Hub.router.go('weather')" aria-label="Weather">
+          <div class="nav-badge"></div>
+          <svg viewBox="0 0 24 24">
+            <path d="M12 2v2M4.22 4.22l1.42 1.42M2 12h2M4.22 19.78l1.42-1.42M12 22v-2M19.78 19.78l-1.42-1.42M22 12h-2M19.78 4.22l-1.42 1.42"/>
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M16.5 17.5A4.5 4.5 0 0 1 7.5 17.5" stroke-dasharray="2 1"/>
+          </svg>
+          <span>Weather</span>
+        </button>
+
+        <!-- Chores -->
+        <button class="nav-item" id="nav-chores" onclick="Hub.router.go('chores')" aria-label="Chores">
+          <div class="nav-badge"></div>
+          <svg viewBox="0 0 24 24">
+            <rect x="3" y="3" width="18" height="18" rx="2.5"/>
+            <path d="M8 12l3 3 5-5"/>
+          </svg>
+          <span>Chores</span>
+        </button>
+
+        <!-- Grocery -->
+        <button class="nav-item" id="nav-grocery" onclick="Hub.router.go('grocery')" aria-label="Grocery">
+          <div class="nav-badge"></div>
+          <svg viewBox="0 0 24 24">
+            <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
+            <line x1="3" y1="6" x2="21" y2="6"/>
+            <path d="M16 10a4 4 0 0 1-8 0"/>
+          </svg>
+          <span>Grocery</span>
+        </button>
+
+        <!-- Radio -->
+        <button class="nav-item" id="nav-radio" onclick="Hub.router.go('radio')" aria-label="Radio">
+          <div class="nav-badge"></div>
+          <svg viewBox="0 0 24 24">
+            <rect x="2" y="8" width="20" height="13" rx="2"/>
+            <path d="M6 8l6-5 6 5"/>
+            <circle cx="8" cy="14" r="2"/>
+            <path d="M13 13h4M13 16h4"/>
+          </svg>
+          <span>Radio</span>
+        </button>
+
+        <!-- Dog Treats -->
+        <button class="nav-item" id="nav-treats" onclick="Hub.router.go('treats')" aria-label="Dog">
+          <div class="nav-badge"></div>
+          <svg viewBox="0 0 24 24">
+            <path d="M8.5 14.5s-1.5 1-1.5 3 1.5 3 5 3 5-1 5-3-1.5-3-1.5-3"/>
+            <path d="M9 9c0-1.66 1.34-3 3-3s3 1.34 3 3c0 2-1.5 3.5-3 5-1.5-1.5-3-3-3-5z"/>
+            <circle cx="10" cy="8" r="1" fill="currentColor" stroke="none"/>
+            <circle cx="14" cy="8" r="1" fill="currentColor" stroke="none"/>
+          </svg>
+          <span>Dog</span>
+        </button>
+
+        <!-- Settings -->
+        <button class="nav-item" id="nav-settings" onclick="Hub.router.go('settings')" aria-label="Settings">
+          <div class="nav-badge"></div>
+          <svg viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/>
+          </svg>
+          <span>Settings</span>
+        </button>
+
+      </div>
+    </nav>
 
   <!-- Scripts (order matters) -->
   <script src="assets/utils.js"></script>

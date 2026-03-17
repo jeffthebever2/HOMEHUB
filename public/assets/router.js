@@ -46,6 +46,15 @@ Hub.router = {
     const el = Hub.utils.$(page + 'Page');
     if (el) { el.classList.add('active'); el.style.display = 'block'; }
     Hub.app?.onPageEnter?.(page);
+
+    // ── Sync bottom nav active state ──────────────────────────────────────
+    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('active'));
+    const activeBtn = document.getElementById('nav-' + page);
+    if (activeBtn) activeBtn.classList.add('active');
+
+    // ── Standby mode: hide nav + remove body bottom padding ───────────────
+    const isStandby = page === 'standby';
+    document.body.classList.toggle('standby-mode', isStandby);
   },
 
   _resolveRoute() {
