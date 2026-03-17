@@ -61,10 +61,10 @@ Hub.notifications = {
       const session = await Hub.auth?.getSession?.();
       const token   = session?.access_token;
       if (!token) return;
-      await fetch(Hub.utils.apiBase() + '/api/push-subscribe', {
+      await fetch(Hub.utils.apiBase() + '/api/push-notifications', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body:    JSON.stringify({ subscription: sub.toJSON(), action }),
+        body:    JSON.stringify({ action, subscription: sub.toJSON() }),
       });
     } catch (e) {
       console.warn('[Push] Server sync failed:', e.message);
@@ -87,10 +87,11 @@ Hub.notifications = {
       const session = await Hub.auth?.getSession?.();
       const token   = session?.access_token;
       if (!token || !Hub.state?.household_id) return;
-      await fetch(Hub.utils.apiBase() + '/api/push-alert', {
+      await fetch(Hub.utils.apiBase() + '/api/push-notifications', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body:    JSON.stringify({
+          action:       'send',
           household_id: Hub.state.household_id,
           title:        `⚠️ ${alert.event || 'Weather Alert'}`,
           body:         alert.headline || alert.area || '',

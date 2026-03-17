@@ -144,10 +144,11 @@ Hub.ui = {
     if (aiText) {
       try {
         const base = Hub.utils.apiBase();
-        const resp = await fetch(base + '/api/weather-alert-summary', {
+        const resp = await fetch(base + '/api/weather-ai-summary', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            type: 'alert',
             event: top.event, severity: top.severity, urgency: top.urgency,
             area: top.area, description: top.description,
             instruction: top.instruction, expires: top.expires,

@@ -573,7 +573,7 @@ Hub.weather = {
 
   // ── Household impact mode ─────────────────────────────────────
   // Three sections rendered in order:
-  //   1. AI weather bullets (placeholder → Gemini via /api/weather-impact-summary)
+  //   1. AI weather bullets (placeholder → Gemini via /api/weather-ai-summary?type=impact)
   //   2. Active alert rows (each with its own AI summary + "Full alert" drawer)
   //   3. Rules-based static condition rows (umbrella, wind, etc.) as fallback context
   _renderHouseholdImpact(normalized, alerts) {
@@ -674,10 +674,11 @@ Hub.weather = {
 
     try {
       const base = Hub.utils.apiBase();
-      const resp = await fetch(`${base}/api/weather-impact-summary`, {
+      const resp = await fetch(`${base}/api/weather-ai-summary`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          type:    'impact',
           current: normalized.current,
           today:   normalized.today,
           hourly:  (normalized.hourly || []).slice(0, 12),
@@ -898,10 +899,11 @@ Hub.weather = {
 
     try {
       const base = Hub.utils.apiBase();
-      const resp = await fetch(`${base}/api/weather-alert-summary`, {
+      const resp = await fetch(`${base}/api/weather-ai-summary`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          type:        'alert',
           event:       alert.event,
           severity:    alert.severity,
           urgency:     alert.urgency,
