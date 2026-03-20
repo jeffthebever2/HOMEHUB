@@ -636,57 +636,51 @@
     </div>
 
     <!-- ========== STANDBY ========== -->
-    <div id="standbyPage" class="page min-h-screen bg-black text-white relative overflow-hidden cursor-pointer">
+    <div id="standbyPage" class="page min-h-screen bg-black text-white relative overflow-hidden cursor-pointer" style="transition:filter 2s ease;">
       <!-- Full screen photo background - two-layer RAF crossfade -->
       <div id="standbyPhotoBackground" class="absolute inset-0">
         <img id="slideshowLayerA" class="slideshow-layer" alt="" style="opacity:0;z-index:2;" />
         <img id="slideshowLayerB" class="slideshow-layer" alt="" style="opacity:0;z-index:1;" />
       </div>
-      
+
       <!-- Dark overlay for readability -->
       <div class="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/20"></div>
-      
-      <!-- Content overlay - responsive -->
+
+      <!-- Content overlay -->
       <div class="relative z-10 min-h-screen p-4 sm:p-6 md:p-8 flex flex-col justify-end" id="standbyContent">
-        
-        <!-- Time and Date - Bottom Left Corner -->
-        <div class="mb-4">
-          <!-- Clock -->
+
+        <!-- Clock block — repositioned to center during deep quiet mode -->
+        <div class="mb-4" id="standbyClockBlock">
           <div id="standbyClock" class="text-5xl sm:text-6xl md:text-7xl font-bold tracking-tight mb-1"></div>
-          <!-- Date -->
           <div id="standbyDate" class="text-base sm:text-lg md:text-xl text-gray-300 font-light"></div>
         </div>
 
-        <!-- Info Cards — single horizontal row -->
-        <div class="w-full max-w-6xl mb-4" style="display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem;">
+        <!-- Info cards — hidden during quiet hours dim/deep mode -->
+        <div id="standbyInfoCards" class="w-full max-w-6xl mb-4" style="display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem;transition:opacity 1.5s ease;">
 
-          <!-- 1 · Calendar -->
           <div class="glass-panel rounded-xl p-3 min-w-0">
             <h3 class="text-xs font-semibold mb-1 text-blue-400 uppercase tracking-wide">📅 Upcoming</h3>
             <div id="standbyCalendar" class="space-y-1 text-xs max-h-28 overflow-hidden">
-              <p class="text-gray-400">Loading...</p>
+              <p class="text-gray-400">Loading…</p>
             </div>
           </div>
 
-          <!-- 2 · Chores -->
           <div class="glass-panel rounded-xl p-3 min-w-0">
             <h3 class="text-xs font-semibold mb-1 text-green-400 uppercase tracking-wide">✅ Chores</h3>
             <div id="standbyChores" class="space-y-1 text-xs max-h-28 overflow-hidden">
-              <p class="text-gray-400">Loading...</p>
+              <p class="text-gray-400">Loading…</p>
             </div>
           </div>
 
-          <!-- 3 · Weather -->
           <div class="glass-panel rounded-xl p-3 min-w-0">
             <h3 class="text-xs font-semibold mb-1 text-yellow-400 uppercase tracking-wide">🌤️ Weather</h3>
             <div id="standbyWeather" class="text-xs">
-              <p class="text-gray-400">Loading...</p>
+              <p class="text-gray-400">Loading…</p>
             </div>
             <div id="standbyTomorrow" class="text-xs text-gray-400 mt-1 hidden"></div>
             <div id="standbyAlertStrip" class="standby-alert-strip mt-1 hidden"></div>
           </div>
 
-          <!-- 4 · Now Playing -->
           <div class="glass-panel rounded-xl p-3 min-w-0 flex flex-col justify-center">
             <h3 class="text-xs font-semibold mb-1 text-purple-400 uppercase tracking-wide">🎵 Now Playing</h3>
             <div id="standbyNowPlaying" class="text-xs">
@@ -696,9 +690,9 @@
 
         </div>
 
-        <!-- Tap to wake hint - always at very bottom -->
+        <!-- Wake hint -->
         <div class="text-center mt-4 sm:mt-6">
-          <p class="text-gray-500 text-xs">Tap anywhere to wake</p>
+          <p id="standbyWakeHint" class="text-gray-500 text-xs" style="transition:opacity 1s ease;">Tap anywhere to wake</p>
         </div>
 
       </div>
@@ -937,7 +931,10 @@
             <div><h2 class="text-lg font-bold">Standby Photos</h2><p class="text-gray-500 text-xs">Source for the full-screen photo slideshow</p></div>
           </div>
           <!-- Provider selector cards -->
-          <div class="grid grid-cols-3 gap-3">
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <button onclick="Hub.app._selectPhotoProvider('cloudflare')" id="pp-cloudflare" class="photo-provider-card">
+              <span class="text-2xl">☁️</span><span class="text-xs font-semibold mt-1">Cloudflare</span><span class="text-xs text-gray-500">R2 bucket</span>
+            </button>
             <button onclick="Hub.app._selectPhotoProvider('imgur')"  id="pp-imgur"  class="photo-provider-card active-provider">
               <span class="text-2xl">🖼</span><span class="text-xs font-semibold mt-1">Imgur</span><span class="text-xs text-gray-500">Public album</span>
             </button>
@@ -950,6 +947,11 @@
           </div>
           <input id="settingPhotoProvider" type="hidden">
           <!-- Provider-specific settings -->
+          <div id="photoSettingsCloudflare" style="display:none;" class="card space-y-3">
+            <p class="text-xs text-orange-400 font-semibold">Cloudflare R2 via Workers — set up Worker URL in config.js first</p>
+            <div><label class="settings-label">Worker URL</label><input id="settingCfWorkerUrl" type="url" class="input" placeholder="https://homehub-media.your-account.workers.dev"></div>
+            <div><label class="settings-label">Album / Prefix</label><input id="settingCfAlbum" type="text" class="input" placeholder="default"></div>
+          </div>
           <div id="photoSettingsImgur" class="card space-y-3">
             <p class="text-xs text-orange-400 font-semibold">Public Imgur album — no account needed</p>
             <div>

@@ -1,0 +1,74 @@
+# ============================================================
+# wrangler.toml — HomeHub Cloudflare Worker configuration
+#
+# Deploy:  npx wrangler deploy
+# Dev:     npx wrangler dev
+# Secrets: npx wrangler secret put <NAME>
+#
+# All resource names/IDs come from your Cloudflare account.
+# Run `npx wrangler d1 list`, `wrangler r2 bucket list`, etc.
+# to find IDs, then fill in the placeholders below.
+# ============================================================
+
+name    = "homehub-media"
+main    = "src/index.js"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ── Workers AI (used for any on-edge AI tasks) ───────────────
+[ai]
+binding = "AI"
+
+# ── R2 Bucket — photo/media storage ─────────────────────────
+[[r2_buckets]]
+binding    = "MEDIA"
+bucket_name = "homehub-media"          # Change to your R2 bucket name
+# preview_bucket_name = "homehub-media-dev"  # optional dev bucket
+
+# ── D1 Database — metadata, logs, history ───────────────────
+[[d1_databases]]
+binding      = "DB"
+database_name = "homehub"              # Change to your D1 database name
+database_id  = "YOUR_D1_DATABASE_ID"  # npx wrangler d1 list → copy ID here
+
+# ── KV Namespaces ────────────────────────────────────────────
+[[kv_namespaces]]
+binding = "CACHE"
+id      = "YOUR_KV_CACHE_ID"          # npx wrangler kv namespace list → copy ID
+# preview_id = "YOUR_KV_CACHE_PREVIEW_ID"
+
+[[kv_namespaces]]
+binding = "FLAGS"
+id      = "YOUR_KV_FLAGS_ID"          # separate namespace for feature flags
+# preview_id = "YOUR_KV_FLAGS_PREVIEW_ID"
+
+# ── Queues ────────────────────────────────────────────────────
+[[queues.producers]]
+binding    = "JOBS"
+queue      = "homehub-jobs"            # npx wrangler queues create homehub-jobs
+
+[[queues.consumers]]
+queue         = "homehub-jobs"
+max_batch_size    = 10
+max_batch_timeout = 30
+max_retries       = 3
+dead_letter_queue = "homehub-jobs-dlq"
+
+# ── Cron Triggers ─────────────────────────────────────────────
+[triggers]
+crons = [
+  "0 5 * * *",    # 5am UTC daily — photo metadata sync + stale cache purge
+  "0 * * * *",    # Every hour — feature flag refresh from KV
+  "*/15 * * * *", # Every 15 min — dead-letter queue retry check
+]
+
+# ── Environment Variables (non-secret) ───────────────────────
+[vars]
+ENVIRONMENT       = "production"
+ALLOWED_ORIGIN    = "https://homehub.jeffthebever2.com"  # Your Vercel domain
+MAX_UPLOAD_MB     = "25"
+PHOTO_CACHE_TTL   = "3600"           # seconds
+
+# ── Dev overrides ─────────────────────────────────────────────
+[env.dev]
+vars = { ENVIRONMENT = "dev", ALLOWED_ORIGIN = "*" }

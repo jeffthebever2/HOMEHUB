@@ -36,6 +36,15 @@ window.HOME_HUB_CONFIG = {
   // === API BASE (leave empty for same-origin) ===
   apiBase: '',
 
+  // === CLOUDFLARE (Optional — R2 photos, KV cache, WAF) ===
+  // Set workerUrl to your deployed Worker URL (e.g. https://homehub-media.your-subdomain.workers.dev)
+  // Leave empty if you are not using Cloudflare services.
+  cloudflare: {
+    workerUrl:      '',        // https://homehub-media.<account>.workers.dev
+    photoAlbum:     'default', // R2 album/prefix to use for standby slideshow
+    turnstileSiteKey: '',      // Cloudflare Turnstile site key (for upload form protection)
+  },
+
   // === MUSIC (Spotify) ===
   music: {
     // Spotify embed URL (you manage playlists in Spotify app)

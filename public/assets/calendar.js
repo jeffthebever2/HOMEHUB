@@ -17,26 +17,22 @@ Hub.calendar = {
   },
 
   // --- Token helpers: keep Google Calendar auth alive ---
+  // Delegates to Hub.auth.getGoogleAccessToken() which has a 4-tier fallback:
+  //   localStorage cache → session.provider_token → refreshSession → /api/token-refresh
   async _getProviderToken() {
-    try {
-      const { data: { session } } = await Hub.sb.auth.getSession();
-      if (session?.provider_token) return session.provider_token;
-
-      // Try refreshing Supabase session; this often refreshes Google provider_token too
-      if (Hub.auth?.ensureFreshSession) await Hub.auth.ensureFreshSession('google-token');
-
-      const { data: { session: s2 } } = await Hub.sb.auth.getSession();
-      return s2?.provider_token || null;
-    } catch (e) {
-      console.warn('[Calendar] Provider token lookup failed:', e.message);
-      return null;
-    }
+    return Hub.auth?.getGoogleAccessToken?.() || null;
   },
 
   async _googleFetch(url, init = {}, retry = true) {
     if (!Hub.sb) return { error: 'App not initialized - please refresh the page' };
     let token = await this._getProviderToken();
-    if (!token) return { error: 'Not authenticated. Please sign out and sign in again to grant calendar access.' };
+    if (!token) {
+      const expired = Hub.state?._googleAuthExpired;
+      return { error: expired
+        ? 'Google Calendar access expired. Please sign out and sign in again to restore access.'
+        : 'Not authenticated with Google. Please sign out and sign in again to grant calendar access.'
+      };
+    }
 
     const headers = Object.assign({
       'Authorization': `Bearer ${token}`,
@@ -45,13 +41,11 @@ Hub.calendar = {
 
     let response = await fetch(url, Object.assign({}, init, { headers }));
 
-    // If Google says token expired, refresh session and retry once
+    // 401 → force-refresh token and retry once
     if (response.status === 401 && retry) {
-      console.warn('[Calendar] 401 from Google — attempting silent refresh');
-      try {
-        if (Hub.auth?.ensureFreshSession) await Hub.auth.ensureFreshSession('google-401');
-      } catch (e) {}
-
+      console.warn('[Calendar] 401 from Google — force-refreshing token');
+      // Clear the cached token so getGoogleAccessToken skips the cache
+      try { localStorage.removeItem('hub_google_token'); localStorage.removeItem('hub_google_token_exp'); } catch (_) {}
       token = await this._getProviderToken();
       if (!token) return response;
       const headers2 = Object.assign({}, headers, { 'Authorization': `Bearer ${token}` });

@@ -480,8 +480,10 @@ Hub.app = {
   },
 
   _updatePhotoProviderUI(provider) {
+    const cfSection     = document.getElementById('photoSettingsCloudflare');
     const imgurSection  = document.getElementById('photoSettingsImgur');
     const immichSection = document.getElementById('photoSettingsImmich');
+    if (cfSection) cfSection.style.display = provider === 'cloudflare' ? '' : 'none';
     if (imgurSection)  imgurSection.style.display  = provider === 'imgur'   ? '' : 'none';
     if (immichSection) immichSection.style.display = provider === 'immich'  ? '' : 'none';
   },
@@ -675,10 +677,17 @@ async _loadCalendarSelection() {
 
   _resetIdleTimer() {
     if (this._idleTimer) clearTimeout(this._idleTimer);
-    // Don't schedule a new fire if we're already in standby — nothing to do
     if (Hub.router?.current === 'standby') return;
     if (!Hub.state?.user) return;
-    const timeout = ((Hub.state.settings?.standby_timeout_min) || 10) * 60 * 1000;
+
+    const s = Hub.state.settings || {};
+    const normalTimeout = ((s.standby_timeout_min) || 10) * 60 * 1000;
+
+    // During quiet hours: use 2-minute idle timeout regardless of setting
+    // so the screen dims quickly at night without user interaction
+    const isQuiet = Hub.standby?._isQuietHours?.() || false;
+    const timeout = isQuiet ? Math.min(normalTimeout, 2 * 60 * 1000) : normalTimeout;
+
     this._idleTimer = setTimeout(() => {
       if (Hub.router.current !== 'standby' && Hub.state.user) Hub.router.go('standby');
     }, timeout);
@@ -892,7 +901,7 @@ async _loadCalendarSelection() {
   /** Handle photo provider card selection */
   _selectPhotoProvider(provider) {
     // Update card visual states
-    ['imgur','immich','off'].forEach(p => {
+    ['cloudflare','imgur','immich','off'].forEach(p => {
       const card = document.getElementById(`pp-${p}`);
       if (card) card.classList.toggle('active-provider', p === provider);
     });

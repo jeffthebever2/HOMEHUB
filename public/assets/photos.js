@@ -73,17 +73,14 @@ Hub.photos = {
   },
 
   _buildChain(preferred) {
-    // Google Photos removed as a provider — the Library API read/browse
-    // endpoints were shut down on March 31, 2025 for normal user libraries.
     const providers = {
-      imgur:  { name: 'imgur',  fetcher: () => this._fetchImgur() },
-      immich: { name: 'immich', fetcher: () => this._fetchImmich() },
+      cloudflare: { name: 'cloudflare_r2', fetcher: () => this._fetchCloudflare() },
+      imgur:      { name: 'imgur',          fetcher: () => this._fetchImgur() },
+      immich:     { name: 'immich',         fetcher: () => this._fetchImmich() },
     };
 
-    // 'off' means placeholders only — do not try any network provider
     if (preferred === 'off') return [];
 
-    // Put preferred first, then the remaining provider as fallback
     const chain = [];
     if (preferred && providers[preferred]) {
       chain.push(providers[preferred]);
@@ -95,6 +92,22 @@ Hub.photos = {
   },
 
   // Google Photos removed — API shut down March 31, 2025. See README for details.
+
+  // ── Cloudflare R2 (via Worker) ──────────────────────────────
+  async _fetchCloudflare() {
+    const cfg = window.HOME_HUB_CONFIG?.cloudflare || {};
+    const base  = cfg.workerUrl;
+    const album = cfg.photoAlbum || 'default';
+    if (!base) throw new Error('Cloudflare Worker URL not configured');
+
+    const resp = await fetch(`${base}/media/photos?album=${encodeURIComponent(album)}&limit=100`);
+    if (!resp.ok) throw new Error('CF Worker HTTP ' + resp.status);
+    const data = await resp.json();
+
+    if (!data.photos?.length) throw new Error('No photos in R2 album');
+    // Map to full URLs — Worker serves them at /media/photos/<key>
+    return data.photos.map(p => `${base}${p.url}`);
+  },
 
   // ── Imgur ───────────────────────────────────────────────────
   async _fetchImgur() {

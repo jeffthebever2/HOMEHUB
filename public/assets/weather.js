@@ -467,7 +467,6 @@ Hub.weather = {
     el.innerHTML = html;
 
     // Async-fill AI impact bullets (weather conditions) + AI alert summaries
-    this._fetchImpactBullets(normalized, alerts).catch(() => {});
     if (alerts?.length) {
       // Fill AI summaries into each alert row in the Household Impact card
       const ATHEME = {
@@ -477,7 +476,6 @@ Hub.weather = {
       };
       alerts.forEach((alert, i) => {
         const t = ATHEME[alert.severity] || ATHEME.Unknown;
-        this._fetchAndFillSummary(alert, `impactAlertSummary_${i}`, t).catch(() => {});
       });
     }
 
@@ -571,9 +569,90 @@ Hub.weather = {
     `;
   },
 
+  // ── Condition bullets (replaces AI-generated bullets) ──────────
+  // Reads normalized weather + active alerts and returns ready-to-display
+  // bullet objects: { emoji, text }
+  _buildConditionBullets(normalized, alerts) {
+    const c = normalized?.current || {};
+    const t = normalized?.today   || {};
+    const h = normalized?.hourly  || [];
+    const bullets = [];
+
+    // ── Active alerts first ───────────────────────────────────────
+    if (alerts?.length) {
+      const worst = alerts[0];
+      const parsed = Hub.ai.parseNWSAlert(worst);
+      // Key measurements from the worst alert
+      parsed.keyNumbers.slice(0, 2).forEach(n => bullets.push({ emoji: null, text: n }));
+      // Timing if present
+      if (parsed.when) {
+        bullets.push({ emoji: '🕐', text: parsed.when.trim() });
+      }
+    }
+
+    // ── Temperature feel ─────────────────────────────────────────
+    if (c.temp_f != null) {
+      const feels = c.feels_like_f ?? c.temp_f;
+      const diff  = Math.abs(Math.round(c.temp_f - feels));
+      if (diff >= 5) {
+        const dir = feels < c.temp_f ? 'colder' : 'warmer';
+        bullets.push({ emoji: '🌡️', text: `Feels ${dir} than ${Math.round(c.temp_f)}°F — more like ${Math.round(feels)}°F outside.` });
+      }
+    }
+
+    // ── Precipitation today ───────────────────────────────────────
+    const precip = t.precip_chance ?? null;
+    if (precip != null && precip >= 20) {
+      const intensity = precip >= 70 ? 'Likely' : precip >= 40 ? 'Chance of' : 'Slight chance of';
+      // Find first rain window from hourly
+      const rainHour = h.find(hh => (hh.precip_prob ?? 0) >= 40);
+      const when = rainHour
+        ? ` starting around ${new Date(rainHour.time).toLocaleTimeString('en-US', { hour: 'numeric', hour12: true })}`
+        : ' today';
+      bullets.push({ emoji: '🌧️', text: `${intensity} rain${when} (${precip}% chance).` });
+    }
+
+    // ── Wind ─────────────────────────────────────────────────────
+    if (c.wind_mph != null && c.wind_mph >= 15) {
+      const gust = c.gusts_mph && c.gusts_mph > c.wind_mph ? `, gusts to ${Math.round(c.gusts_mph)} mph` : '';
+      const adj  = c.wind_mph >= 30 ? 'Strong' : c.wind_mph >= 20 ? 'Breezy' : 'Windy';
+      bullets.push({ emoji: '💨', text: `${adj} — ${Math.round(c.wind_mph)} mph winds${gust}. Secure loose outdoor items.` });
+    }
+
+    // ── Humidity / heat index ─────────────────────────────────────
+    if (c.humidity != null && c.temp_f != null) {
+      if (c.humidity >= 85 && c.temp_f >= 75) {
+        bullets.push({ emoji: '😓', text: `High humidity (${c.humidity}%) makes it feel muggy. Stay hydrated.` });
+      } else if (c.humidity <= 25) {
+        bullets.push({ emoji: '🏜️', text: `Very dry air (${c.humidity}% humidity). Good day to moisturize and water plants.` });
+      }
+    }
+
+    // ── Visibility ───────────────────────────────────────────────
+    if (c.visibility_mi != null && c.visibility_mi < 3) {
+      const desc = c.visibility_mi < 0.5 ? 'Dense fog' : 'Reduced visibility';
+      bullets.push({ emoji: '🌫️', text: `${desc} — ${c.visibility_mi} mile(s). Allow extra travel time, use low beams.` });
+    }
+
+    // ── Sun/UV ───────────────────────────────────────────────────
+    if (t.sunrise && t.sunset && !bullets.some(b => b.text.includes('rain'))) {
+      if (c.condition?.toLowerCase().match(/clear|sunny|fair/)) {
+        bullets.push({ emoji: '☀️', text: `Clear skies today. Sunrise ${t.sunrise}, sunset ${t.sunset}.` });
+      }
+    }
+
+    // ── High / low ───────────────────────────────────────────────
+    if (t.high_f != null && t.low_f != null) {
+      const label = t.high_f >= 90 ? '🥵 Hot day' : t.high_f <= 32 ? '🥶 Freezing today' : `📊 Today`;
+      bullets.push({ emoji: null, text: `${label}: High ${Math.round(t.high_f)}°F, Low ${Math.round(t.low_f)}°F.` });
+    }
+
+    return bullets.slice(0, 5); // max 5 bullets
+  },
+
   // ── Household impact mode ─────────────────────────────────────
   // Three sections rendered in order:
-  //   1. AI weather bullets (placeholder → Gemini via /api/weather-ai-summary?type=impact)
+  //   1. NWS-parsed condition bullets (built synchronously from normalized data)
   //   2. Active alert rows (each with its own AI summary + "Full alert" drawer)
   //   3. Rules-based static condition rows (umbrella, wind, etc.) as fallback context
   _renderHouseholdImpact(normalized, alerts) {
@@ -586,16 +665,18 @@ Hub.weather = {
       low:      'border-gray-600 bg-gray-800/60'
     };
 
-    // ── Section 1: AI weather bullet placeholder ──────────────────
-    // Filled by _fetchImpactBullets() after innerHTML is set
-    const aiBulletsSection = `
-      <div id="impactAiSection" class="space-y-2">
-        <div class="flex items-center gap-2 px-1">
-          <span class="text-xs text-gray-500 animate-pulse" id="impactAiBadge">✦ AI loading actions…</span>
-        </div>
-        <div id="impactAiBullets" class="space-y-2"></div>
-      </div>
-    `;
+    // ── Section 1: NWS-parsed conditions bullets ──────────────────
+    // Built inline from normalized weather data — no AI, no network call
+    const conditionBullets = this._buildConditionBullets(normalized, alerts);
+    const aiBulletsSection = conditionBullets.length
+      ? `<div class="space-y-2">
+          ${conditionBullets.map(b => `
+            <div class="flex items-start gap-3 px-4 py-3 rounded-lg border border-gray-700 bg-gray-800/60">
+              ${b.emoji ? `<span class="text-xl flex-shrink-0">${b.emoji}</span>` : '<span class="text-xl flex-shrink-0 opacity-0">•</span>'}
+              <span class="text-sm text-gray-200 leading-snug">${Hub.utils.esc(b.text)}</span>
+            </div>`).join('')}
+        </div>`
+      : '';
 
     // ── Section 2: Alert rows with AI summary + full drawer ───────
     const alertRows = (alerts || []).map((a, i) => {
@@ -626,8 +707,8 @@ Hub.weather = {
                 View full ↓
               </button>` : ''}
           </div>
-          <p id="impactAlertSummary_${i}" class="text-sm text-gray-300 leading-snug">
-            <span class="animate-pulse text-xs text-gray-500">Getting AI summary…</span>
+          <p class="text-sm text-gray-300 leading-snug">
+            ${Hub.utils.esc(Hub.ai.alertSummary(a))}
           </p>
           <div id="impactAlertFull_${i}" class="hidden mt-3 pt-3 border-t border-gray-700 space-y-2">
             ${a.description ? `<p class="text-xs text-gray-400 leading-relaxed whitespace-pre-line">${Hub.utils.esc(a.description)}</p>` : ''}
@@ -666,50 +747,7 @@ Hub.weather = {
     `;
   },
 
-  /** Async: fetch Gemini weather bullet points and swap into impact card */
-  async _fetchImpactBullets(normalized, alerts) {
-    const bulletsEl = document.getElementById('impactAiBullets');
-    const badgeEl   = document.getElementById('impactAiBadge');
-    if (!bulletsEl) return;
-
-    try {
-      const base = Hub.utils.apiBase();
-      const resp = await fetch(`${base}/api/weather-ai-summary`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type:    'impact',
-          current: normalized.current,
-          today:   normalized.today,
-          hourly:  (normalized.hourly || []).slice(0, 12),
-          alerts:  (alerts || []).map(a => ({ event: a.event, severity: a.severity })),
-        })
-      });
-
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const { bullets } = await resp.json();
-
-      if (!document.getElementById('impactAiBullets')) return; // navigated away
-
-      if (bullets?.length) {
-        bulletsEl.innerHTML = bullets.map(b => `
-          <div class="flex items-start gap-3 px-4 py-3 rounded-lg border border-gray-700 bg-gray-800/60">
-            <span class="text-sm text-gray-200 leading-snug">${Hub.utils.esc(b)}</span>
-          </div>`).join('');
-        if (badgeEl) { badgeEl.textContent = '✦ AI'; badgeEl.className = 'text-xs text-blue-400'; }
-      } else {
-        // No bullets returned — hide the AI section header cleanly
-        if (badgeEl) badgeEl.textContent = '';
-      }
-    } catch (e) {
-      console.warn('[impact-bullets] AI fetch failed:', e.message);
-      if (document.getElementById('impactAiBadge')) {
-        document.getElementById('impactAiBadge').textContent = '';
-      }
-    }
-  },
-
-  /** Toggle full NWS text drawer for an alert row in the impact card */
+/** Toggle full NWS text drawer for an alert row in the impact card */
   _toggleFullAlert(idx) {
     const el  = document.getElementById(`impactAlertFull_${idx}`);
     const btn = document.getElementById(`alertToggleBtn_${idx}`);
@@ -816,9 +854,7 @@ Hub.weather = {
             ${top.area ? `<span class="text-xs ${t.muted} truncate max-w-xs">${Hub.utils.esc(top.area)}</span>` : ''}
           </div>
           <p id="alertSummaryText" class="${t.text} text-sm leading-snug">
-            <span class="inline-block bg-black/20 rounded animate-pulse px-3 py-1 text-xs opacity-60">
-              Getting summary…
-            </span>
+            ${Hub.utils.esc(Hub.ai.alertSummary(top))}
           </p>
           <div class="flex flex-wrap items-center gap-3 mt-1.5">
             ${extras.length ? `
@@ -869,7 +905,7 @@ Hub.weather = {
     }
 
     // ── Async: fetch Gemini summary ────────────────────────────
-    await this._fetchAndFillSummary(top, 'alertSummaryText', t);
+    // NWS text summary is built synchronously by Hub.ai.alertSummary()
   },
 
   /** Dismiss the alert banner and reset the content spacer */
@@ -892,52 +928,7 @@ Hub.weather = {
     if (btn) btn.textContent = open ? 'View full →' : 'Hide ↑';
   },
 
-  /** Shared helper: POST to Gemini endpoint, fill target element */
-  async _fetchAndFillSummary(alert, targetId, theme) {
-    const el = document.getElementById(targetId);
-    if (!el) return;
 
-    try {
-      const base = Hub.utils.apiBase();
-      const resp = await fetch(`${base}/api/weather-ai-summary`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type:        'alert',
-          event:       alert.event,
-          severity:    alert.severity,
-          urgency:     alert.urgency,
-          area:        alert.area,
-          description: alert.description,
-          instruction: alert.instruction,
-          expires:     alert.expires,
-        })
-      });
-
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const { summary } = await resp.json();
-
-      if (!document.getElementById(targetId)) return; // dismissed while loading
-
-      if (summary) {
-        // Split into two visual sentences
-        const sentences = summary
-          .split(/(?<=[.!?])\s+/)
-          .map(s => s.trim())
-          .filter(Boolean);
-
-        document.getElementById(targetId).innerHTML = sentences.length > 1
-          ? `<span>${Hub.utils.esc(sentences[0])}</span> <span class="${theme.muted}">${Hub.utils.esc(sentences[1])}</span>`
-          : Hub.utils.esc(summary);
-      } else {
-        document.getElementById(targetId).textContent = alert.headline || alert.event || '';
-      }
-    } catch (e) {
-      console.warn('[alert-banner] summary fetch failed:', e.message);
-      const el2 = document.getElementById(targetId);
-      if (el2) el2.textContent = alert.headline || alert.event || '';
-    }
-  },
 
   // ── RainViewer radar ──────────────────────────────────────────
 

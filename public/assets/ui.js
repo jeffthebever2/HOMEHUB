@@ -139,35 +139,14 @@ Hub.ui = {
     // Show modal
     Hub.utils.$('alertPopup')?.classList.remove('hidden');
 
-    // ── Async: Gemini summary ────────────────────────────────────────────
+    // ── Synchronous NWS text summary (no AI call) ───────────────────────
     const aiText = $('alertPopupAiText');
     if (aiText) {
-      try {
-        const base = Hub.utils.apiBase();
-        const resp = await fetch(base + '/api/weather-ai-summary', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'alert',
-            event: top.event, severity: top.severity, urgency: top.urgency,
-            area: top.area, description: top.description,
-            instruction: top.instruction, expires: top.expires,
-          })
-        });
-        const { summary } = await resp.json();
-        if (!Hub.utils.$('alertPopup')?.classList.contains('hidden')) {
-          if (summary) {
-            const sents = summary.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
-            aiText.innerHTML = sents.length > 1
-              ? sents[0] + ' <span style="color:#9ca3af;">' + Hub.utils.esc(sents[1]) + '</span>'
-              : Hub.utils.esc(summary);
-          } else {
-            aiText.textContent = top.headline || top.event || '';
-          }
-        }
-      } catch (e) {
-        if (aiText) aiText.textContent = top.headline || top.event || '';
-      }
+      const summary = Hub.ai?.alertSummary?.(top) || top.headline || top.event || '';
+      const sents   = summary.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+      aiText.innerHTML = sents.length > 1
+        ? Hub.utils.esc(sents[0]) + ' <span style="color:#9ca3af;">' + Hub.utils.esc(sents[1]) + '</span>'
+        : Hub.utils.esc(summary);
     }
   },
 

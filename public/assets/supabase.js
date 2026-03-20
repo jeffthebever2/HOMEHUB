@@ -69,6 +69,7 @@ const SUPABASE_CONFIG = {
     // ── Periodic token watchdog (every 6 min) ──────────────────
     // Only refreshes the token. Never calls _onLogin if already logged in —
     // that would trigger a full page reload unnecessarily.
+    // ── Supabase JWT watchdog (every 4 min) ─────────────────
     setInterval(async () => {
       const session = await _refreshIfNeeded('watchdog');
 
@@ -86,6 +87,24 @@ const SUPABASE_CONFIG = {
         Hub.router?.showScreen?.('login');
       }
     }, SUPABASE_CONFIG.KEEPALIVE_MINUTES * 60 * 1000);
+
+    // ── Google access token proactive refresh (every 50 min) ─
+    // Google tokens expire after 1 hour. Pre-empt expiry so Calendar
+    // never gets a 401 during active use on the kiosk.
+    setInterval(async () => {
+      if (!Hub.app?._loggedIn) return;
+      try {
+        // Clear cached token to force a fresh fetch
+        localStorage.removeItem('hub_google_token');
+        localStorage.removeItem('hub_google_token_exp');
+        const token = await Hub.auth?.getGoogleAccessToken?.();
+        if (token) {
+          console.log('[Auth] Google token proactively refreshed ✓');
+        }
+      } catch (e) {
+        console.warn('[Auth] Proactive Google refresh failed:', e.message);
+      }
+    }, 50 * 60 * 1000); // 50 minutes
 
     // ── Wake / visibility restore ────────────────────────────
     // When the Pi screen wakes up or the tab regains focus:
@@ -124,6 +143,13 @@ const SUPABASE_CONFIG = {
         setTimeout(() => rej(new Error(`DB timeout (${SUPABASE_CONFIG.DB_QUERY_TIMEOUT_MS}ms)`)),
                    SUPABASE_CONFIG.DB_QUERY_TIMEOUT_MS))
     ]);
+  }
+
+  function _cacheGoogleToken(token, ttlSeconds = 3300) {
+    try {
+      localStorage.setItem('hub_google_token', token);
+      localStorage.setItem('hub_google_token_exp', String(Date.now() + ttlSeconds * 1000));
+    } catch (_) {}
   }
 
   // ── Auth API ───────────────────────────────────────────────
@@ -244,7 +270,104 @@ const SUPABASE_CONFIG = {
     },
 
     onAuthChange(cb) {
-      sb.auth.onAuthStateChange((event, session) => cb(event, session));
+      sb.auth.onAuthStateChange((event, session) => {
+        // On sign-in, capture the Google refresh token and persist it server-side
+        // so the server can mint new access tokens indefinitely (kiosk 24/7 operation)
+        if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.provider_refresh_token && session?.user?.id) {
+          Hub.auth._saveGoogleRefreshToken(session.user.id, session.provider_refresh_token).catch(() => {});
+        }
+        cb(event, session);
+      });
+    },
+
+    /** Persist Google refresh token to user_settings for server-side use */
+    async _saveGoogleRefreshToken(userId, refreshToken) {
+      if (!refreshToken || !userId) return;
+      try {
+        // Upsert — only update if we have a (new) refresh token
+        await fetch(`${SB_URL}/rest/v1/user_settings?user_id=eq.${userId}`, {
+          method:  'PATCH',
+          headers: {
+            apikey:          SB_KEY,
+            Authorization:   `Bearer ${(await sb.auth.getSession()).data.session?.access_token || ''}`,
+            'Content-Type':  'application/json',
+          },
+          body: JSON.stringify({
+            google_refresh_token:    refreshToken,
+            google_token_updated_at: new Date().toISOString(),
+          }),
+        });
+        console.log('[Auth] Google refresh token persisted ✓');
+      } catch (e) {
+        console.warn('[Auth] Failed to persist refresh token:', e.message);
+      }
+    },
+
+    /**
+     * Get a valid Google access token, refreshing via server if needed.
+     * Tries: session.provider_token → refreshSession → /api/token-refresh
+     * Caches in localStorage with 55-minute TTL.
+     */
+    async getGoogleAccessToken() {
+      const CACHE_KEY = 'hub_google_token';
+      const CACHE_EXP = 'hub_google_token_exp';
+
+      // 1. Check localStorage cache (valid for 55 min to avoid 1hr edge)
+      try {
+        const cached  = localStorage.getItem(CACHE_KEY);
+        const expiry  = parseInt(localStorage.getItem(CACHE_EXP) || '0', 10);
+        if (cached && expiry > Date.now()) {
+          return cached;
+        }
+      } catch (_) {}
+
+      // 2. Try the current session's provider_token
+      try {
+        const { data: { session } } = await sb.auth.getSession();
+        if (session?.provider_token) {
+          _cacheGoogleToken(session.provider_token);
+          return session.provider_token;
+        }
+      } catch (_) {}
+
+      // 3. Force-refresh the Supabase session — often gets a fresh provider_token
+      try {
+        const { data, error } = await sb.auth.refreshSession();
+        if (!error && data?.session?.provider_token) {
+          _cacheGoogleToken(data.session.provider_token);
+          return data.session.provider_token;
+        }
+      } catch (_) {}
+
+      // 4. Server-side exchange: use the stored Google refresh token
+      try {
+        const { data: { session } } = await sb.auth.getSession();
+        const accessToken = session?.access_token;
+        if (!accessToken) return null;
+
+        const base = Hub.utils?.apiBase?.() || '';
+        const resp = await fetch(`${base}/api/token-refresh`, {
+          method:  'POST',
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          if (err.action === 'reauth_required') {
+            console.warn('[Auth] Google refresh token invalid — user must re-authenticate');
+            Hub.state._googleAuthExpired = true;
+          }
+          return null;
+        }
+        const { access_token } = await resp.json();
+        if (access_token) {
+          _cacheGoogleToken(access_token);
+          return access_token;
+        }
+      } catch (e) {
+        console.warn('[Auth] Server token refresh failed:', e.message);
+      }
+
+      return null;
     }
   };
 
