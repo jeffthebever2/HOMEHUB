@@ -40,8 +40,8 @@ window.HOME_HUB_CONFIG = {
   // Set workerUrl to your deployed Worker URL (e.g. https://homehub-media.your-subdomain.workers.dev)
   // Leave empty if you are not using Cloudflare services.
   cloudflare: {
-    workerUrl:      '',        // https://homehub-media.<account>.workers.dev
-    photoAlbum:     'default', // R2 album/prefix to use for standby slideshow
+    workerUrl:      'https://a0c01e7692d33cb4602f72fd4f974c5a.r2.cloudflarestorage.com',        // https://homehub-media.<account>.workers.dev
+    photoAlbum:     'homehub', // R2 album/prefix to use for standby slideshow
   },
 
   // === MUSIC (Spotify) ===
