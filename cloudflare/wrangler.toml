@@ -18,7 +18,7 @@ bucket_name = "homehub-media"   # Change to your R2 bucket name
 # ── Environment Variables ────────────────────────────────────
 [vars]
 ENVIRONMENT    = "production"
-ALLOWED_ORIGIN = "https://homehub.jeffthebever2.com"  # Your Vercel domain
+ALLOWED_ORIGIN = "https://homehub-mu.vercel.app/"  # Your Vercel domain
 MAX_UPLOAD_MB  = "25"
 
 # ── Dev overrides ─────────────────────────────────────────────
