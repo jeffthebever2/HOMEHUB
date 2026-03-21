@@ -3,11 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev":     "wrangler dev --local",
-    "deploy":  "wrangler deploy",
-    "migrate": "wrangler d1 migrations apply homehub",
-    "tail":    "wrangler tail",
-    "secrets": "echo 'Run: npx wrangler secret put UPLOAD_TOKEN && npx wrangler secret put TURNSTILE_SECRET'"
+    "dev": "wrangler dev --local",
+    "deploy": "wrangler deploy",
+    "secret": "echo 'Run: npx wrangler secret put UPLOAD_TOKEN'"
   },
   "devDependencies": {
     "wrangler": "^3.0.0"

@@ -42,7 +42,6 @@ window.HOME_HUB_CONFIG = {
   cloudflare: {
     workerUrl:      '',        // https://homehub-media.<account>.workers.dev
     photoAlbum:     'default', // R2 album/prefix to use for standby slideshow
-    turnstileSiteKey: '',      // Cloudflare Turnstile site key (for upload form protection)
   },
 
   // === MUSIC (Spotify) ===
