@@ -1,61 +1,83 @@
 // ============================================================
-// assets/standby.js — Standby / Ambient Mode
+// assets/standby.js — Standby / Ambient Mode  (v2 — stabilized)
+//
+// v2 fixes:
+//   - _mode reset in stop() — prevents quiet-hours dim failure on re-entry
+//   - Now-Playing widget updated on enter + every data refresh
+//   - _loadCalendar catch shows "Calendar unavailable" (not "Loading…")
+//   - _loadChores guards null household_id
+//   - Data refreshes skipped during dim/deep quiet mode (saves Pi bandwidth)
+//   - Weather card shows current temp prominently, not just high/low
+//   - Tap handler uses touchstart + click for responsive Pi kiosk wake
+//   - _loadWeather guards null aggregate before spawning sub-fetches
 //
 // Brightness modes:
 //   bright  — normal photo-frame mode (outside quiet hours)
-//   dim     — quiet hours ambient (5% brightness, just the clock)
+//   dim     — quiet hours ambient (6% brightness, just the clock)
 //   deep    — quiet hours after 30s no tap (near-black, 2% brightness)
 //   peek    — tap during dim/deep temporarily brightens for 30s
-//
-// Quiet hours: read from Hub.state.settings.quiet_hours_start / _end
-// The _checkDim() function runs every 60s and transitions modes cleanly.
 // ============================================================
 window.Hub = window.Hub || {};
 
 Hub.standby = {
   _clockInterval:  null,
   _dataInterval:   null,
-  _dimInterval:    null,   // checks brightness mode every 60s
-  _peekTimer:      null,   // re-dims after tap during quiet hours
-  _wake:           null,
-  _mode:           'bright',  // 'bright' | 'dim' | 'deep' | 'peek'
+  _dimInterval:    null,
+  _peekTimer:      null,
+  _wakeClick:      null,
+  _wakeTouch:      null,
+  _mode:           'bright',
 
-  // Brightness values per mode (CSS filter on standbyPage)
   _BRIGHTNESS: {
     bright: 1.0,
-    dim:    0.06,   // quiet hours ambient — just enough to see clock
-    deep:   0.02,   // deep sleep after 30s idle during quiet hours
-    peek:   1.0,    // full brightness briefly after tap during quiet hours
+    dim:    0.06,
+    deep:   0.02,
+    peek:   1.0,
   },
 
   // ── Lifecycle ─────────────────────────────────────────────
 
   start() {
     console.log('[Standby] start()');
-    this.stop();
+    this.stop(); // idempotent cleanup
 
+    // Clock
     this._updateClock();
     this._clockInterval = setInterval(() => this._updateClock(), 1000);
 
-    this._loadWeather();
-    this._loadCalendar();
-    this._loadChores();
+    // Data: load immediately, then refresh every 5 min
+    this._loadAllData();
     this._dataInterval = setInterval(() => {
-      this._loadWeather();
-      this._loadCalendar();
-      this._loadChores();
+      // Skip data refresh during dim/deep — screen is off, save bandwidth
+      if (this._mode === 'dim' || this._mode === 'deep') return;
+      this._loadAllData();
     }, 5 * 60 * 1000);
 
-    // Check and apply correct brightness immediately, then every 60s
+    // Brightness: check immediately + every 60s
     this._checkDim();
     this._dimInterval = setInterval(() => this._checkDim(), 60 * 1000);
 
+    // Slideshow
     Hub.photos.startStandbySlideshow();
 
-    // Wake on tap
-    this._wake = (e) => this._handleTap(e);
+    // Wake on tap — use BOTH touchstart (instant on Pi) and click (desktop/mouse)
+    // Guard prevents double-fire: touchstart handler sets a flag, click handler checks it
+    this._tapGuard = false;
+    this._wakeTouch = (e) => {
+      this._tapGuard = true;
+      this._handleTap(e);
+      setTimeout(() => { this._tapGuard = false; }, 400);
+    };
+    this._wakeClick = (e) => {
+      if (this._tapGuard) return; // already handled by touchstart
+      this._handleTap(e);
+    };
+
     const content = Hub.utils.$('standbyContent');
-    if (content) content.addEventListener('click', this._wake);
+    if (content) {
+      content.addEventListener('touchstart', this._wakeTouch, { passive: true });
+      content.addEventListener('click', this._wakeClick);
+    }
   },
 
   stop() {
@@ -70,12 +92,19 @@ Hub.standby = {
     this._dimInterval   = null;
     this._peekTimer     = null;
 
-    // Remove tap listener
+    // Remove tap listeners
     const content = Hub.utils.$('standbyContent');
-    if (content && this._wake) content.removeEventListener('click', this._wake);
-    this._wake = null;
+    if (content) {
+      if (this._wakeTouch) content.removeEventListener('touchstart', this._wakeTouch);
+      if (this._wakeClick) content.removeEventListener('click', this._wakeClick);
+    }
+    this._wakeTouch = null;
+    this._wakeClick = null;
 
-    // Restore brightness before leaving so dashboard doesn't inherit dim state
+    // Reset mode so next start() + _checkDim() works from clean state
+    this._mode = 'bright';
+
+    // Restore brightness before leaving so dashboard doesn't inherit dim
     this._applyBrightness('bright', 0);
 
     Hub.photos.stopStandbySlideshow();
@@ -83,9 +112,16 @@ Hub.standby = {
 
   onLeave() { this.stop(); },
 
+  /** Load all standby data cards (weather, calendar, chores, now-playing) */
+  _loadAllData() {
+    this._loadWeather();
+    this._loadCalendar();
+    this._loadChores();
+    Hub.player?.updateUI?.();
+  },
+
   // ── Brightness / quiet hours ───────────────────────────────
 
-  /** Returns true if current time is within quiet hours */
   _isQuietHours() {
     const s = Hub.state?.settings || {};
     const start = s.quiet_hours_start || '22:00';
@@ -100,19 +136,16 @@ Hub.standby = {
     const startMin = hhmm(sh, sm);
     const endMin   = hhmm(eh, em);
 
-    // Handles overnight ranges (e.g. 22:00 → 07:00)
     if (startMin > endMin) {
       return cur >= startMin || cur < endMin;
     }
     return cur >= startMin && cur < endMin;
   },
 
-  /** Called every 60s — transitions to correct mode */
   _checkDim() {
     const quiet = this._isQuietHours();
 
     if (!quiet) {
-      // Daytime — always bright
       if (this._mode !== 'bright') {
         this._clearPeekTimer();
         this._setMode('bright');
@@ -120,17 +153,13 @@ Hub.standby = {
       return;
     }
 
-    // Quiet hours — transition to dim if we're currently bright
+    // Quiet hours — dim if currently bright
     if (this._mode === 'bright') {
       this._setMode('dim');
-      // Schedule deep-sleep after 30s of no tap
       this._schedulePeekToDeep(30 * 1000);
     }
-
-    // Already in dim/deep/peek — let _schedulePeekToDeep handle progression
   },
 
-  /** Set brightness mode with smooth CSS transition */
   _setMode(mode) {
     this._mode = mode;
     this._applyBrightness(mode);
@@ -145,47 +174,41 @@ Hub.standby = {
     page.style.filter = `brightness(${brightness})`;
   },
 
-  /** During dim/deep: hide info cards, only show clock. During bright/peek: show everything */
   _updateContentVisibility(mode) {
     const cards  = Hub.utils.$('standbyInfoCards');
     const hint   = Hub.utils.$('standbyWakeHint');
-    const quiet  = this._isQuietHours();
 
     if (!cards) return;
 
     if (mode === 'dim' || mode === 'deep') {
-      // Just the clock, maximally large, centered
-      cards.style.opacity  = '0';
+      cards.style.opacity    = '0';
       cards.style.transition = 'opacity 1.5s ease';
       if (hint) { hint.textContent = 'Tap to wake'; hint.style.opacity = '0.3'; }
-      // Move clock to center of screen during deep quiet mode
       const clockBlock = Hub.utils.$('standbyClockBlock');
       if (clockBlock) {
-        clockBlock.style.transition = 'all 2s ease';
-        clockBlock.style.position   = 'absolute';
-        clockBlock.style.top        = '50%';
-        clockBlock.style.left       = '50%';
-        clockBlock.style.transform  = 'translate(-50%, -50%)';
+        clockBlock.style.transition   = 'all 2s ease';
+        clockBlock.style.position     = 'absolute';
+        clockBlock.style.top          = '50%';
+        clockBlock.style.left         = '50%';
+        clockBlock.style.transform    = 'translate(-50%, -50%)';
         clockBlock.style.marginBottom = '0';
       }
     } else {
-      // bright / peek — full content
-      cards.style.opacity = '1';
+      cards.style.opacity    = '1';
       cards.style.transition = 'opacity 1.5s ease';
       if (hint) { hint.textContent = 'Tap anywhere to wake'; hint.style.opacity = '1'; }
       const clockBlock = Hub.utils.$('standbyClockBlock');
       if (clockBlock) {
-        clockBlock.style.transition = 'all 1.5s ease';
-        clockBlock.style.position   = '';
-        clockBlock.style.top        = '';
-        clockBlock.style.left       = '';
-        clockBlock.style.transform  = '';
+        clockBlock.style.transition   = 'all 1.5s ease';
+        clockBlock.style.position     = '';
+        clockBlock.style.top          = '';
+        clockBlock.style.left         = '';
+        clockBlock.style.transform    = '';
         clockBlock.style.marginBottom = '';
       }
     }
   },
 
-  /** Schedule transition from dim/peek → deep after a delay */
   _schedulePeekToDeep(delayMs = 30000) {
     clearTimeout(this._peekTimer);
     this._peekTimer = setTimeout(() => {
@@ -206,10 +229,10 @@ Hub.standby = {
     const quiet = this._isQuietHours();
 
     if (quiet && (this._mode === 'dim' || this._mode === 'deep')) {
-      // First tap during quiet hours: peek for 30s, then re-dim
+      // First tap during quiet: peek for 30s, then re-dim
       this._setMode('peek');
       this._schedulePeekToDeep(30 * 1000);
-      return; // don't wake dashboard
+      return;
     }
 
     // Not quiet, or already peeking → wake the dashboard
@@ -252,18 +275,38 @@ Hub.standby = {
 
     try {
       const agg = await Hub.weather.fetchAggregate();
+
+      // Guard: if aggregate fetch failed entirely, show unavailable and skip sub-fetches
+      if (!agg) {
+        el.innerHTML = '<p class="text-gray-500 text-sm">Weather unavailable</p>';
+        if (tomorrowEl) tomorrowEl.classList.add('hidden');
+        if (alertEl) alertEl.classList.add('hidden');
+        return;
+      }
+
       const [ai, liveAlerts] = await Promise.all([
         Hub.ai.getSummary(agg),
         Hub.weather.fetchAlerts()
       ]);
 
       if (ai && ai.today) {
+        // Show current temp prominently if available, fall back to high/low
+        const normalized = Hub.weather?.normalize?.(agg);
+        const currentTemp = normalized?.current?.temp_f;
+        const tempDisplay = currentTemp != null
+          ? `<span class="text-lg font-bold">${Math.round(currentTemp)}°</span>`
+          : '';
+        const hiLo = `${ai.today.high_f ?? '--'}° / ${ai.today.low_f ?? '--'}°`;
+
         el.innerHTML =
           '<div class="flex items-center gap-2">' +
             '<span class="text-2xl">' + this._getWeatherIcon(ai.headline) + '</span>' +
             '<div>' +
-              '<p class="font-semibold">' + (ai.today.high_f ?? '--') + '° / ' + (ai.today.low_f ?? '--') + '°</p>' +
-              '<p class="text-xs text-gray-400">' + Hub.utils.esc(ai.headline) + '</p>' +
+              (currentTemp != null
+                ? '<p class="font-bold text-base">' + Math.round(currentTemp) + '°F</p>' +
+                  '<p class="text-xs text-gray-400">' + hiLo + '</p>'
+                : '<p class="font-semibold">' + hiLo + '</p>') +
+              '<p class="text-xs text-gray-500 truncate" style="max-width:140px;">' + Hub.utils.esc(ai.headline) + '</p>' +
             '</div>' +
           '</div>';
 
@@ -277,7 +320,7 @@ Hub.standby = {
 
       // Alert strip
       if (alertEl) {
-        if (liveAlerts.length > 0) {
+        if (liveAlerts && liveAlerts.length > 0) {
           const sevOrder = { extreme: 0, severe: 1, moderate: 2, minor: 3, unknown: 4 };
           const sorted = [...liveAlerts].sort((a, b) =>
             (sevOrder[(a.severity||'').toLowerCase()] ?? 4) -
@@ -322,12 +365,21 @@ Hub.standby = {
     if (!el) return;
     try {
       const events = await Hub.calendar.getUpcomingEvents(5);
-      if (events.error || !events?.length) {
+
+      if (events?.error) {
+        // Calendar returned an error object (auth expired, API error, etc.)
+        el.innerHTML = '<p class="text-gray-500">Calendar unavailable</p>';
+        return;
+      }
+
+      if (!events?.length) {
         el.innerHTML = '<p class="text-gray-500">No upcoming events</p>';
         return;
       }
+
       el.innerHTML = events.slice(0, 3).map(event => {
-        const start     = event.start.dateTime || event.start.date;
+        const start     = event.start?.dateTime || event.start?.date;
+        if (!start) return '';
         const startDate = new Date(start);
         const isToday   = Hub.calendar._isToday(startDate);
         const isTomorrow = Hub.calendar._isTomorrow(startDate);
@@ -343,15 +395,23 @@ Hub.standby = {
             <p class="text-xs text-gray-500">${Hub.utils.esc(dateLabel)}</p>
           </div>
         </div>`;
-      }).join('');
+      }).filter(Boolean).join('');
     } catch (e) {
-      el.innerHTML = '<p class="text-gray-500">Loading…</p>';
+      console.warn('[Standby] Calendar error:', e.message);
+      el.innerHTML = '<p class="text-gray-500">Calendar unavailable</p>';
     }
   },
 
   async _loadChores() {
     const el = Hub.utils.$('standbyChores');
     if (!el) return;
+
+    // Guard: no household_id → can't query chores
+    if (!Hub.state?.household_id) {
+      el.innerHTML = '<p class="text-gray-500">Not signed in</p>';
+      return;
+    }
+
     try {
       const chores  = await Hub.db.loadChoresWithCompleters(Hub.state.household_id);
       const today   = new Date().getDay();
@@ -381,7 +441,7 @@ Hub.standby = {
       }
     } catch (e) {
       console.warn('[Standby] Chores error:', e.message);
-      el.innerHTML = '<p class="text-gray-500">Loading…</p>';
+      el.innerHTML = '<p class="text-gray-500">Chores unavailable</p>';
     }
   },
 

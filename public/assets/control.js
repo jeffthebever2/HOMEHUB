@@ -344,7 +344,7 @@ Hub.control = {
         <div class="bg-gray-900 rounded p-2"><span class="text-gray-500">Source</span><br><span class="text-blue-400">${Hub.player?.state?.currentSource || '—'}</span></div>
         <div class="bg-gray-900 rounded p-2"><span class="text-gray-500">Status</span><br><span class="text-green-400">${Hub.player?.state?.radioStatus || '—'}</span></div>
         <div class="bg-gray-900 rounded p-2"><span class="text-gray-500">Playing</span><br><span class="${Hub.player?.state?.isPlaying ? 'text-green-400' : 'text-red-400'}">${Hub.player?.state?.isPlaying ? 'yes' : 'no'}</span></div>
-        <div class="bg-gray-900 rounded p-2"><span class="text-gray-500">Ready</span><br><span class="text-yellow-400">${Hub.player?.radioAudio?.readyState ?? '—'}</span></div>
+        <div class="bg-gray-900 rounded p-2"><span class="text-gray-500">Ready</span><br><span class="text-yellow-400">${Hub.player?._audio?.readyState ?? '—'}</span></div>
       </div>
     </div>
   `; },
@@ -571,7 +571,7 @@ Hub.control = {
   },
   reloadStream() {
     if (Hub.player?.state?.currentSource === 'radio') {
-      const src = Hub.player.radioAudio?.src;
+      const src = Hub.player._audio?.src;
       if (src) { Hub.player.playRadio(Hub.player.state.title, src); Hub.ui?.toast?.('Stream reloading','info'); }
     } else Hub.ui?.toast?.('No radio stream active','error');
   },

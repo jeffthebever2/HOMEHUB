@@ -1,144 +1,264 @@
 // ============================================================
-// public/assets/player.js — Unified Player State + Audio
-// Fixed:
-//  - Proper radio flow: src → load() → canplay → play()
-//  - Stall retry once after 6s
-//  - Autoplay restriction overlay
-//  - Status labels: Connecting / Buffering / Playing / Failed
-//  - Now Playing updates in-place (no DOM duplication)
+// public/assets/player.js — Unified Audio Engine (v3 — kiosk-stable)
+//
+// ARCHITECTURE:
+//   Hub.player owns the SINGLE Audio element for the entire app.
+//   radio.js is purely UI — it calls Hub.player.playRadio() and reads
+//   Hub.player.state for display. No other module creates Audio objects.
+//
+// KIOSK RESILIENCE:
+//   - Exponential backoff retry (1s → 2s → 4s → 8s → 16s, max 5 attempts)
+//   - Cache-bust on reconnect (appends ?_t= to URL)
+//   - Stall detection with separate timer from error retry
+//   - Retries reset on every successful 'playing' event
+//   - crossOrigin = "anonymous" for CORS-safe streams
+//   - Audio persists across page navigation (only stop() kills it)
+//
+// STATUS FLOW:
+//   idle → connecting → buffering → playing ← (stays here)
+//                         ↓                      ↓ (stream drops)
+//                       failed ← (max retries) ← reconnecting
 // ============================================================
 window.Hub = window.Hub || {};
 
 Hub.player = {
+  // ── Public state (read by radio.js, standby.js, dashboard) ──
   state: {
-    currentSource: null,   // 'radio' | 'youtube' | null
+    currentSource: null,   // 'radio' | null
     title:         '',
+    streamUrl:     '',
     isPlaying:     false,
     startedAt:     null,
-    volume:        0.7,
-    radioStatus:   ''      // 'connecting' | 'buffering' | 'playing' | 'failed' | ''
+    volume:        0.8,
+    radioStatus:   '',     // '' | 'connecting' | 'buffering' | 'playing' | 'reconnecting' | 'failed'
+    retryCount:    0,
   },
 
-  radioAudio:      null,
-  _radioListeners: [],
+  // ── Private ────────────────────────────────────────────────
+  _audio:          null,
+  _listeners:      [],    // [[event, handler], ...] for clean removal
   _stallTimer:     null,
-  _retryCount:     0,
+  _retryTimer:     null,
+  _progressTick:   null,
 
+  _MAX_RETRIES:    5,
+  _BASE_RETRY_MS:  1500,  // first retry after 1.5s, then 3s, 6s, 12s, 24s
+  _STALL_TIMEOUT:  8000,  // 8s with no 'playing' event → stalled
+
+  // ── Init (called once from app.js) ──────────────────────────
   init() {
-    console.log('[Player] Initializing...');
-    this.radioAudio        = new Audio();
-    this.radioAudio.preload = 'none';
-    this.radioAudio.volume  = this.state.volume;
-    this.setupMediaSession();
-    console.log('[Player] Ready');
+    this._audio          = new Audio();
+    this._audio.preload   = 'none';
+    this._audio.crossOrigin = 'anonymous';
+    this._audio.volume    = this.state.volume;
+    this._setupMediaSession();
+    console.log('[Player] Initialized (single audio instance)');
   },
 
-  // ── Radio ─────────────────────────────────────────────────
-
+  // ── Play a radio stream ─────────────────────────────────────
   playRadio(stationName, streamUrl) {
     console.log('[Player] playRadio:', stationName);
-    this._stopRadioHard();
+    this._stopHard();
 
     this.state.currentSource = 'radio';
     this.state.title         = stationName;
+    this.state.streamUrl     = streamUrl;
     this.state.startedAt     = Date.now();
     this.state.isPlaying     = false;
     this.state.radioStatus   = 'connecting';
-    this._retryCount         = 0;
-    this.updateUI();
+    this.state.retryCount    = 0;
 
     this._startStream(streamUrl);
+    this._updateMediaSession();
+    this.updateUI();
   },
 
-  _startStream(streamUrl) {
-    const audio = this.radioAudio;
-    this._removeRadioListeners();
+  // ── Core stream lifecycle ───────────────────────────────────
+  _startStream(url) {
+    const audio = this._audio;
+    this._removeListeners();
+    this._clearTimers();
 
-    const on = (evt, fn) => { audio.addEventListener(evt, fn); this._radioListeners.push([evt, fn]); };
+    const on = (evt, fn) => {
+      audio.addEventListener(evt, fn);
+      this._listeners.push([evt, fn]);
+    };
 
-    on('loadstart', ()  => this._setStatus('connecting'));
-    on('canplay',   ()  => {
+    on('loadstart', () => {
+      if (this.state.radioStatus !== 'reconnecting') {
+        this._setStatus('connecting');
+      }
+    });
+
+    on('canplay', () => {
       this._clearStallTimer();
       this._setStatus('buffering');
-      audio.play().catch(err => this._handlePlayError(err, streamUrl));
+      audio.play().catch(err => this._onPlayError(err));
     });
-    on('playing',   ()  => { this._clearStallTimer(); this._setStatus('playing'); });
-    on('waiting',   ()  => { this._setStatus('buffering'); this._startStallTimer(streamUrl); });
-    on('stalled',   ()  => { this._setStatus('buffering'); this._startStallTimer(streamUrl); });
-    on('pause',     ()  => { if (this.state.currentSource === 'radio') this.updateUI(); });
-    on('error',     ()  => this._handleStreamError(streamUrl));
 
-    audio.src = streamUrl;
+    on('playing', () => {
+      this._clearTimers();
+      // Reset retry counter on every successful play — stream is alive
+      this.state.retryCount = 0;
+      this._setStatus('playing');
+    });
+
+    on('waiting', () => {
+      if (this.state.radioStatus === 'playing') {
+        this._setStatus('buffering');
+      }
+      this._startStallTimer();
+    });
+
+    on('stalled', () => {
+      this._startStallTimer();
+    });
+
+    on('pause', () => {
+      // Only update UI if WE paused it (not browser garbage collection)
+      if (this.state.currentSource === 'radio') this.updateUI();
+    });
+
+    on('error', () => this._onStreamError());
+
+    audio.src = url;
     audio.load();
+    this._startStallTimer();
   },
 
-  _handlePlayError(err, streamUrl) {
-    console.warn('[Player] play() rejected:', err.name, err.message);
+  // ── Error handling ──────────────────────────────────────────
+  _onPlayError(err) {
+    console.warn('[Player] play() rejected:', err.name);
     if (err.name === 'NotAllowedError') {
       this._setStatus('failed');
       this._showAutoplayOverlay();
     } else {
-      this._setStatus('failed');
-      Hub.ui?.toast?.('Playback failed — check station URL', 'error');
+      this._attemptRetry();
     }
   },
 
-  _handleStreamError(streamUrl) {
-    const code = this.radioAudio.error?.code ?? '?';
-    console.error('[Player] Audio error code:', code);
-
-    if (this._retryCount < 1) {
-      this._retryCount++;
-      console.log('[Player] Retrying stream (attempt', this._retryCount, ')');
-      this._setStatus('connecting');
-      setTimeout(() => {
-        if (this.state.currentSource === 'radio') {
-          this.radioAudio.load();
-          this.radioAudio.play().catch(err => this._handlePlayError(err, streamUrl));
-        }
-      }, 1500);
-    } else {
-      this._setStatus('failed');
-      Hub.ui?.toast?.('Station offline or blocked', 'error');
-    }
+  _onStreamError() {
+    const code = this._audio?.error?.code ?? '?';
+    console.warn('[Player] Stream error, code:', code);
+    this._attemptRetry();
   },
 
-  _startStallTimer(streamUrl) {
+  // ── Retry with exponential backoff ──────────────────────────
+  _attemptRetry() {
+    this._clearTimers();
+
+    if (this.state.retryCount >= this._MAX_RETRIES) {
+      console.warn('[Player] Max retries reached — giving up');
+      this._setStatus('failed');
+      Hub.ui?.toast?.('Station offline — max retries reached', 'error');
+      return;
+    }
+
+    this.state.retryCount++;
+    const delay = this._BASE_RETRY_MS * Math.pow(2, this.state.retryCount - 1);
+    console.log(`[Player] Retry ${this.state.retryCount}/${this._MAX_RETRIES} in ${delay}ms`);
+    this._setStatus('reconnecting');
+
+    this._retryTimer = setTimeout(() => {
+      if (this.state.currentSource !== 'radio') return; // stopped while waiting
+
+      // Cache-bust: append timestamp to URL to bypass browser cache
+      const base = this.state.streamUrl.split('?')[0];
+      const bustUrl = `${base}?_t=${Date.now()}`;
+
+      this._audio.src = bustUrl;
+      this._audio.load();
+      this._startStallTimer();
+    }, delay);
+  },
+
+  // ── Stall detection ─────────────────────────────────────────
+  _startStallTimer() {
     this._clearStallTimer();
     this._stallTimer = setTimeout(() => {
-      if (this.state.radioStatus !== 'playing' && this._retryCount < 1) {
-        console.log('[Player] Stall timeout — retrying');
-        this._retryCount++;
-        this._setStatus('connecting');
-        this.radioAudio.load();
-        this.radioAudio.play().catch(err => this._handlePlayError(err, streamUrl));
+      // If we're not playing after STALL_TIMEOUT, try reconnecting
+      if (this.state.currentSource === 'radio' && this.state.radioStatus !== 'playing') {
+        console.warn('[Player] Stall timeout — attempting reconnect');
+        this._attemptRetry();
       }
-    }, 6000);
+    }, this._STALL_TIMEOUT);
   },
 
   _clearStallTimer() {
     if (this._stallTimer) { clearTimeout(this._stallTimer); this._stallTimer = null; }
   },
 
+  _clearTimers() {
+    this._clearStallTimer();
+    if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
+  },
+
+  // ── Status management ──────────────────────────────────────
   _setStatus(status) {
     this.state.radioStatus = status;
-    this.state.isPlaying   = status === 'playing';
+    this.state.isPlaying   = (status === 'playing');
     this.updateUI();
   },
 
-  _removeRadioListeners() {
-    this._radioListeners.forEach(([e, fn]) => this.radioAudio.removeEventListener(e, fn));
-    this._radioListeners = [];
+  // ── Listener cleanup ───────────────────────────────────────
+  _removeListeners() {
+    if (!this._audio) return;
+    this._listeners.forEach(([evt, fn]) => this._audio.removeEventListener(evt, fn));
+    this._listeners = [];
   },
 
-  _stopRadioHard() {
-    this._clearStallTimer();
-    this._removeRadioListeners();
-    this.radioAudio.pause();
-    this.radioAudio.src = '';
-    try { this.radioAudio.load(); } catch (_) {}
+  // ── Hard stop (kills audio completely) ──────────────────────
+  _stopHard() {
+    this._clearTimers();
+    this._removeListeners();
+    if (this._audio) {
+      this._audio.pause();
+      this._audio.removeAttribute('src');
+      try { this._audio.load(); } catch (_) {}
+    }
   },
 
+  // ── Public stop ────────────────────────────────────────────
+  stop() {
+    console.log('[Player] stop()');
+    this._stopHard();
+    this.state.currentSource = null;
+    this.state.title         = '';
+    this.state.streamUrl     = '';
+    this.state.isPlaying     = false;
+    this.state.startedAt     = null;
+    this.state.radioStatus   = '';
+    this.state.retryCount    = 0;
+    this._updateMediaSession();
+    this.updateUI();
+  },
+
+  // ── Pause / Resume ─────────────────────────────────────────
+  pause() {
+    if (this._audio && this.state.currentSource === 'radio') {
+      this._audio.pause();
+      this._clearTimers(); // don't retry while intentionally paused
+    }
+    this.state.isPlaying = false;
+    this.updateUI();
+  },
+
+  resume() {
+    if (this._audio && this.state.currentSource === 'radio') {
+      this._audio.play().catch(() => this._showAutoplayOverlay());
+      this._startStallTimer();
+    }
+    this.state.isPlaying = true;
+    this.updateUI();
+  },
+
+  // ── Volume ─────────────────────────────────────────────────
+  setVolume(level) {
+    this.state.volume = Math.max(0, Math.min(1, level));
+    if (this._audio) this._audio.volume = this.state.volume;
+  },
+
+  // ── Autoplay overlay ───────────────────────────────────────
   _showAutoplayOverlay() {
     document.getElementById('autoplayOverlay')?.remove();
     const overlay = document.createElement('div');
@@ -159,144 +279,133 @@ Hub.player = {
     document.body.appendChild(overlay);
     document.getElementById('autoplayTapBtn').onclick = () => {
       overlay.remove();
-      this.radioAudio.play()
+      this._audio.play()
         .then(() => this._setStatus('playing'))
         .catch(() => { this._setStatus('failed'); Hub.ui?.toast?.('Audio failed', 'error'); });
     };
   },
 
-  // ── YouTube / Spotify ──────────────────────────────────────
-
-  playYouTube(title = 'YouTube Music') {
-    if (this.state.currentSource === 'radio') this._stopRadioHard();
-    this.state.currentSource = 'youtube';
-    this.state.title         = title;
-    this.state.isPlaying     = true;
-    this.state.startedAt     = Date.now();
-    this.state.radioStatus   = '';
-    this.updateMediaSession();
-    this.updateUI();
-  },
-
-  pause() {
-    if (this.state.currentSource === 'radio')   this.radioAudio.pause();
-    if (this.state.currentSource === 'youtube') window.dispatchEvent(new CustomEvent('player:pause-youtube'));
-    this.state.isPlaying = false;
-    this.updateUI();
-  },
-
-  resume() {
-    if (this.state.currentSource === 'radio')
-      this.radioAudio.play().catch(() => this._showAutoplayOverlay());
-    if (this.state.currentSource === 'youtube')
-      window.dispatchEvent(new CustomEvent('player:resume-youtube'));
-    this.state.isPlaying = true;
-    this.updateUI();
-  },
-
-  stop() {
-    this._stopRadioHard();
-    if (this.state.currentSource === 'youtube')
-      window.dispatchEvent(new CustomEvent('player:stop-youtube'));
-    this.state.currentSource = null;
-    this.state.title         = '';
-    this.state.isPlaying     = false;
-    this.state.startedAt     = null;
-    this.state.radioStatus   = '';
-    this.updateMediaSession();
-    this.updateUI();
-  },
-
-  setVolume(level) {
-    this.state.volume = Math.max(0, Math.min(1, level));
-    if (this.radioAudio) this.radioAudio.volume = this.state.volume;
-  },
-
-  // ── Media Session ──────────────────────────────────────────
-
-  setupMediaSession() {
+  // ── Media Session API ──────────────────────────────────────
+  _setupMediaSession() {
     if (!('mediaSession' in navigator)) return;
     navigator.mediaSession.setActionHandler('play',  () => this.resume());
     navigator.mediaSession.setActionHandler('pause', () => this.pause());
     navigator.mediaSession.setActionHandler('stop',  () => this.stop());
   },
 
-  updateMediaSession() {
+  _updateMediaSession() {
     if (!('mediaSession' in navigator)) return;
     navigator.mediaSession.metadata = this.state.currentSource
       ? new MediaMetadata({
           title:   this.state.title,
-          artist:  this.state.currentSource === 'radio' ? 'Live Radio' : 'Music',
+          artist:  'Live Radio',
           artwork: [{ src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' }]
         })
       : null;
   },
 
-  // ── UI ─────────────────────────────────────────────────────
-
+  // ── UI update (renders into dashboard + standby) ───────────
   updateUI() {
-    this._renderInPlace('nowPlayingWidget');
-    this._renderInPlace('standbyNowPlaying');
+    this._renderWidget('nowPlayingWidget', false);
+    this._renderWidget('standbyNowPlaying', true);
+    // Also sync radio page if it's visible
+    this._syncRadioPageStatus();
     this._tickProgress();
   },
 
-  // Live progress ticker for the scrubber
-  _tickProgress() {
-    clearInterval(this._progressTick);
-    if (!this.state.isPlaying || this.state.currentSource === 'radio') return;
-    this._progressTick = setInterval(() => {
-      const bar = document.getElementById('playerScrubber');
-      const cur = document.getElementById('playerCurrentTime');
-      if (!bar || !this.state.startedAt) return;
-      const elapsed = (Date.now() - this.state.startedAt) / 1000;
-      bar.value = Math.min(elapsed, bar.max || elapsed);
-      if (cur) cur.textContent = this._fmtTime(elapsed);
-    }, 500);
+  /** Sync the radio page's now-playing bar (if visible) with player state */
+  _syncRadioPageStatus() {
+    const nameEl   = document.getElementById('radioStationName');
+    const statusEl = document.getElementById('radioStatus');
+    const stopBtn  = document.getElementById('radioStopBtn');
+
+    if (nameEl) {
+      nameEl.textContent = this.state.title || 'No station selected';
+      nameEl.className   = this.state.currentSource
+        ? 'font-semibold truncate text-white'
+        : 'font-semibold truncate text-gray-400';
+    }
+    if (statusEl) {
+      statusEl.textContent = this._statusLabel();
+      const cls = this.state.isPlaying ? 'text-green-400'
+                : this.state.radioStatus === 'failed' ? 'text-red-400'
+                : this.state.radioStatus === 'reconnecting' ? 'text-yellow-400'
+                : this.state.radioStatus ? 'text-yellow-400'
+                : 'text-gray-500';
+      statusEl.className = `text-xs mt-0.5 ${cls}`;
+    }
+    if (stopBtn) {
+      stopBtn.style.display = this.state.currentSource ? '' : 'none';
+    }
+
+    // Visualizer bars
+    const isPlaying = this.state.isPlaying;
+    document.querySelectorAll('.radio-viz-bar').forEach((b, i) => {
+      b.style.opacity   = isPlaying ? '1'   : '0.3';
+      b.style.animation = isPlaying
+        ? `vizBar .${4+(i+1)}s ${i*.1}s ease-in-out infinite alternate`
+        : 'none';
+      b.style.height    = isPlaying ? '' : '6px';
+    });
+
+    // Highlight active station row
+    document.querySelectorAll('[data-station-url]').forEach(row => {
+      const active = row.dataset.stationUrl === this.state.streamUrl;
+      row.classList.toggle('bg-blue-900/40', active);
+      row.classList.toggle('border', active);
+      row.classList.toggle('border-blue-700/50', active);
+    });
   },
 
-  _renderInPlace(containerId) {
+  _statusLabel() {
+    const s = this.state.radioStatus;
+    if (s === 'connecting')    return '⏳ Connecting…';
+    if (s === 'buffering')     return '⏳ Buffering…';
+    if (s === 'reconnecting')  return `🔄 Reconnecting (${this.state.retryCount}/${this._MAX_RETRIES})…`;
+    if (s === 'failed')        return '❌ Failed';
+    if (this.state.isPlaying)  return '▶ Playing';
+    if (this.state.currentSource) return '⏸ Paused';
+    return 'Tap a station to play';
+  },
+
+  _tickProgress() {
+    clearInterval(this._progressTick);
+    if (!this.state.isPlaying || this.state.currentSource !== 'radio') return;
+    // No-op for radio — there's no progress bar. Kept for future non-radio sources.
+  },
+
+  _renderWidget(containerId, isStandby) {
     const container = document.getElementById(containerId);
     if (!container) return;
 
-    const isStandby = containerId === 'standbyNowPlaying';
+    if (!this.state.currentSource) {
+      container.innerHTML = isStandby
+        ? '<p class="text-gray-400">Nothing playing</p>'
+        : `<div class="player-idle flex flex-col items-center justify-center gap-3 py-6 text-gray-500">
+             <div style="width:64px;height:64px;border-radius:50%;background:#1e2d3d;display:flex;align-items:center;justify-content:center;font-size:1.8rem;">🎵</div>
+             <p class="text-sm">Nothing playing</p>
+             <p class="text-xs text-gray-600">Use the Radio page to start playback</p>
+           </div>`;
+      return;
+    }
 
-    // ── Standby: single compact row ───────────────────────────
+    const sc = this.state.isPlaying ? 'text-green-400'
+             : this.state.radioStatus === 'failed' ? 'text-red-400'
+             : 'text-yellow-400';
+
     if (isStandby) {
-      if (!this.state.currentSource) {
-        container.innerHTML = '<p class="text-gray-400">Nothing playing</p>';
-        return;
-      }
-      const icon = this.state.currentSource === 'radio' ? '📻' : '🎵';
-      const sc   = this.state.isPlaying ? 'text-green-400' : this.state.radioStatus === 'failed' ? 'text-red-400' : 'text-yellow-400';
       container.innerHTML = `
         <div class="flex items-center gap-2 leading-tight overflow-hidden">
-          <span class="flex-shrink-0">${icon}</span>
+          <span class="flex-shrink-0">📻</span>
           <span class="font-semibold truncate flex-1">${Hub.utils.esc(this.state.title)}</span>
           <span class="${sc} text-xs flex-shrink-0">${this._statusLabel()}</span>
         </div>`;
       return;
     }
 
-    // ── Full mini-player ──────────────────────────────────────
-    if (!this.state.currentSource) {
-      container.innerHTML = `
-        <div class="player-idle flex flex-col items-center justify-center gap-3 py-6 text-gray-500">
-          <div style="width:64px;height:64px;border-radius:50%;background:#1e2d3d;display:flex;align-items:center;justify-content:center;font-size:1.8rem;">🎵</div>
-          <p class="text-sm">Nothing playing</p>
-          <p class="text-xs text-gray-600">Use the Radio page to start playback</p>
-        </div>`;
-      return;
-    }
-
-    const isPlaying  = this.state.isPlaying;
-    const isRadio    = this.state.currentSource === 'radio';
-    const sc         = isPlaying ? 'text-green-400' : this.state.radioStatus === 'failed' ? 'text-red-400' : 'text-yellow-400';
-    const artBg      = isRadio ? '#1a2535' : '#0f1b2d';
-    const artIcon    = isRadio ? '📻' : '🎵';
-    const volPct     = Math.round(this.state.volume * 100);
-
-    // Visualizer bars (only when playing)
-    const vizBars = isPlaying ? `
+    // ── Full dashboard mini-player ──────────────────────────────
+    const volPct = Math.round(this.state.volume * 100);
+    const vizBars = this.state.isPlaying ? `
       <div class="player-viz flex items-end gap-0.5" style="height:18px;">
         ${[1,2,3,4,5].map((_, i) => `
           <div style="width:3px;border-radius:2px;background:#3b82f6;
@@ -304,113 +413,51 @@ Hub.player = {
             animation-delay:${i*0.08}s;"></div>`).join('')}
       </div>` : '';
 
+    const duration = this.state.startedAt
+      ? this._fmtTime((Date.now() - this.state.startedAt) / 1000)
+      : '0:00';
+
     container.innerHTML = `
       <div class="player-widget" style="user-select:none;">
-
-        <!-- Art + Info row -->
         <div class="flex items-center gap-4 mb-4">
-          <!-- Album art / station art -->
-          <div style="width:60px;height:60px;border-radius:.75rem;background:${artBg};
+          <div style="width:60px;height:60px;border-radius:.75rem;background:#1a2535;
             display:flex;align-items:center;justify-content:center;font-size:1.8rem;
-            flex-shrink:0;box-shadow:0 4px 16px rgba(0,0,0,.4);">
-            ${artIcon}
-          </div>
-          <!-- Title + status -->
+            flex-shrink:0;box-shadow:0 4px 16px rgba(0,0,0,.4);">📻</div>
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2 mb-0.5">
-              <p class="p-source text-xs text-gray-500 uppercase tracking-wider">${isRadio ? 'Radio' : 'Music'}</p>
+              <p class="text-xs text-gray-500 uppercase tracking-wider">Radio</p>
               ${vizBars}
             </div>
-            <!-- Marquee for long titles -->
-            <div style="overflow:hidden;white-space:nowrap;position:relative;">
-              <p class="p-title font-bold text-base" style="${this.state.title.length > 28 ? 'display:inline-block;animation:marquee 10s linear infinite;padding-right:2rem;' : ''}">${Hub.utils.esc(this.state.title)}</p>
+            <div style="overflow:hidden;white-space:nowrap;">
+              <p class="font-bold text-base">${Hub.utils.esc(this.state.title)}</p>
             </div>
-            <p class="p-status ${sc} text-xs mt-0.5">${this._statusLabel()}</p>
+            <p class="${sc} text-xs mt-0.5">${this._statusLabel()}</p>
           </div>
         </div>
-
-        <!-- Progress scrubber (radio = fake, just shows time) -->
         <div class="flex items-center gap-2 mb-3 text-xs text-gray-500">
-          <span id="playerCurrentTime">${this.getPlaybackDuration()}</span>
-          <input id="playerScrubber" type="range" min="0" max="${isRadio ? 0 : 300}" value="0"
-            class="flex-1" style="accent-color:#3b82f6;height:4px;cursor:${isRadio ? 'default' : 'pointer'};"
-            ${isRadio ? 'disabled' : `oninput="Hub.player._seekTo(this.value)"`}>
-          <span>${isRadio ? 'LIVE' : '—:——'}</span>
+          <span>${duration}</span>
+          <div class="flex-1 h-1 rounded bg-gray-700"></div>
+          <span>LIVE</span>
         </div>
-
-        <!-- Transport controls -->
-        <div class="flex items-center justify-between gap-2">
-          <!-- Prev (stub) -->
-          <button onclick="Hub.player.prev?.()" title="Previous"
-            class="btn btn-secondary p-2.5 text-lg" style="border-radius:.6rem;">⏮</button>
-
-          <!-- Play / Pause morph button -->
-          <button id="playerPlayPause"
-            onclick="Hub.player.${isPlaying ? 'pause' : 'resume'}()"
+        <div class="flex items-center justify-center gap-3">
+          <button onclick="Hub.player.${this.state.isPlaying ? 'pause' : 'resume'}()"
             class="btn btn-primary flex items-center justify-center"
-            style="width:52px;height:52px;border-radius:50%;font-size:1.25rem;flex-shrink:0;
-              box-shadow:0 4px 16px rgba(59,130,246,.4);transition:transform .1s,box-shadow .2s;"
-            onmousedown="this.style.transform='scale(.92)'" onmouseup="this.style.transform=''">
-            ${isPlaying
-              ? `<svg width="18" height="18" viewBox="0 0 18 18"><rect x="2" y="2" width="5" height="14" rx="1.5" fill="white"/><rect x="11" y="2" width="5" height="14" rx="1.5" fill="white"/></svg>`
-              : `<svg width="18" height="18" viewBox="0 0 18 18"><polygon points="3,2 16,9 3,16" fill="white"/></svg>`}
+            style="width:48px;height:48px;border-radius:50%;font-size:1.2rem;">
+            ${this.state.isPlaying ? '⏸' : '▶'}
           </button>
-
-          <!-- Next (stub) -->
-          <button onclick="Hub.player.next?.()" title="Next"
-            class="btn btn-secondary p-2.5 text-lg" style="border-radius:.6rem;">⏭</button>
-
-          <!-- Stop -->
-          <button onclick="Hub.player.stop()" title="Stop"
-            class="btn btn-secondary p-2.5" style="border-radius:.6rem;font-size:.9rem;">⏹</button>
-
-          <!-- Volume -->
-          <div class="flex items-center gap-1.5 ml-1">
+          <button onclick="Hub.player.stop()" class="btn btn-secondary p-2.5" style="border-radius:.6rem;">⏹</button>
+          <div class="flex items-center gap-1.5 ml-2">
             <span class="text-gray-400" style="font-size:.9rem;">${volPct < 10 ? '🔇' : volPct < 50 ? '🔉' : '🔊'}</span>
             <input type="range" min="0" max="100" value="${volPct}"
-              style="width:64px;accent-color:#8b5cf6;height:4px;cursor:pointer;"
+              style="width:60px;accent-color:#8b5cf6;height:4px;"
               oninput="Hub.player.setVolume(this.value/100)">
           </div>
         </div>
-
       </div>`;
-  },
-
-  _statusLabel() {
-    const s = this.state.radioStatus;
-    if (s === 'connecting')    return '⏳ Connecting…';
-    if (s === 'buffering')     return '⏳ Buffering…';
-    if (s === 'failed')        return '❌ Failed — tap to retry';
-    if (this.state.isPlaying)  return '▶ Playing';
-    return '⏸ Paused';
-  },
-
-  setVolume(v) {
-    this.state.volume = Math.max(0, Math.min(1, v));
-    if (this.radioAudio) this.radioAudio.volume = this.state.volume;
-    // Update volume icon without full re-render
-    const pct = Math.round(this.state.volume * 100);
-    const icon = document.querySelector('#nowPlayingWidget .player-widget span[data-vol]');
-    if (icon) icon.textContent = pct < 10 ? '🔇' : pct < 50 ? '🔉' : '🔊';
-  },
-
-  _seekTo(seconds) {
-    // For browser audio sources; radio doesn't support seeking
-    if (this.radioAudio && this.state.currentSource !== 'radio') {
-      this.radioAudio.currentTime = seconds;
-    }
   },
 
   _fmtTime(seconds) {
     const s = Math.floor(seconds);
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   },
-
-  prev() { Hub.ui?.toast?.('Previous track — connect a music service for full control', 'info'); },
-  next() { Hub.ui?.toast?.('Next track — connect a music service for full control', 'info'); },
-
-  getPlaybackDuration() {
-    if (!this.state.startedAt) return '0:00';
-    return this._fmtTime((Date.now() - this.state.startedAt) / 1000);
-  }
 };

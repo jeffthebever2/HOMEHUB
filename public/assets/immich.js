@@ -68,8 +68,7 @@ Hub.immich = {
       this.activeLayer    = this.activeLayer === 'A' ? 'B' : 'A';
       this.isTransitioning = false;
       this.lastSwitchTime  = performance.now();
-
-      console.log('[Slideshow] Image', this.index + 1, '/', this.images.length);
+      // Note: per-image logging removed — 3/min × 24hr = 4320 logs/day fills kiosk memory
     },
 
     /** RAF tick — runs every frame */

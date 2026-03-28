@@ -90,9 +90,9 @@ Hub.ui = {
     // ── Populate modal ───────────────────────────────────────────────────
     const $ = id => document.getElementById(id);
 
-    // Store alert id for dismissal
-    const popupText = Hub.utils.$('alertPopupText');
-    if (popupText) popupText.dataset.alertId = alertId;
+    // Store alert id for dismissal (using alertPopupCard as data carrier)
+    const popupCard = Hub.utils.$('alertPopupCard');
+    if (popupCard) popupCard.dataset.alertId = alertId;
 
     // Colour bar + pill
     const bar = $('alertPopupBar');
@@ -160,8 +160,8 @@ Hub.ui = {
   },
   /** Dismiss alert popup and mark as seen */
   async dismissAlert() {
-    const popupText = Hub.utils.$('alertPopupText');
-    const alertId   = popupText?.dataset.alertId || popupText?.textContent || '';
+    const popupCard = Hub.utils.$('alertPopupCard');
+    const alertId   = popupCard?.dataset?.alertId || '';
     Hub.utils.$('alertPopup')?.classList.add('hidden');
     if (Hub.state.user && alertId) {
       try { await Hub.db.markAlertSeen(Hub.state.user.id, alertId, 'acknowledged'); } catch (e) {}

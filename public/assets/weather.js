@@ -900,8 +900,8 @@ Hub.weather = {
     }
 
     // Auto-navigate to weather page on Extreme alerts
-    if (top.severity === 'Extreme' && Hub.router?.navigate) {
-      Hub.router.navigate('weather');
+    if (top.severity === 'Extreme' && Hub.router?.go) {
+      Hub.router.go('weather');
     }
 
     // ── Async: fetch Gemini summary ────────────────────────────

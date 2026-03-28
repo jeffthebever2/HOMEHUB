@@ -130,12 +130,6 @@ Hub.chores = {
     var name = await this.askWhoDidIt();
     if (!name) return;
     await this.markDone(choreId, name);
-      // Trigger confetti
-      const el = event?.target?.closest('.chore-item');
-      if (el) {
-        const rect = el.getBoundingClientRect();
-        this._createConfetti(rect.left + rect.width/2, rect.top + rect.height/2);
-      }
     await this.renderDashboard();
     Hub.ui.toast('Chore completed by ' + name + '!', 'success');
   },

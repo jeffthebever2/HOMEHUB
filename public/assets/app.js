@@ -34,7 +34,7 @@ window.addEventListener('appinstalled', () => {
 });
 
 const APP_CONFIG = {
-  VERSION: '2.0.5',
+  VERSION: '2.1.0',
   SECRET_CLICK_COUNT: 7,
   SECRET_KEY_TIMEOUT_MS: 1500,
   IDLE_DEBOUNCE_MS: 100
@@ -68,6 +68,10 @@ Hub.app = {
     Hub.grocery?.init?.();
     Hub.ui?.loadTouchscreenMode?.();
     this._initAdminGesture();
+
+    // Start keepalive AFTER all modules are loaded (was incorrectly auto-started
+    // at supabase.js script load in v5, before Hub.app existed)
+    Hub._startKeepAlive?.();
 
     // ── DEV BYPASS ─────────────────────────────────────────
     if (window.location.hash === '#letmein') {
@@ -104,13 +108,20 @@ Hub.app = {
 
     // ── STEP 2: Immediately try existing session BEFORE any timers.
     //    This is the primary path for page refreshes + kiosk use.
+    //    IMPORTANT: Do NOT return here — auth listener + idle timer must still start.
+    let immediateLoginDone = false;
     if (!oauthInProgress) {
       try {
         const existingSession = await Hub.auth.getSession();
         if (existingSession?.user) {
           console.log('[Auth] ✓ Immediate session found:', existingSession.user.email);
+          // Capture provider_refresh_token if present on the existing session
+          if (existingSession.provider_refresh_token && existingSession.user?.id) {
+            Hub.auth._saveGoogleRefreshToken(existingSession.user.id, existingSession.provider_refresh_token).catch(() => {});
+          }
           await this._onLogin(existingSession.user);
-          return; // done — skip all listener + timer setup
+          immediateLoginDone = true;
+          // Fall through to register auth listener + idle timer
         }
       } catch (e) {
         console.warn('[Auth] Immediate session check error:', e.message);
@@ -118,10 +129,13 @@ Hub.app = {
     }
 
     // ── STEP 3: Auth state change listener (primary for OAuth return)
+    // ALWAYS registered — even after immediate login — so TOKEN_REFRESHED,
+    // SIGNED_OUT, and TOKEN_REFRESH_FAILED are handled during the session lifetime.
     Hub.auth.onAuthChange(async (event, session) => {
       console.log('[Auth] Event:', event, session?.user?.email || 'none', 'loggedIn:', this._loggedIn);
 
       if (this._loggedIn && event !== 'SIGNED_OUT') {
+        // Already logged in — suppress login screen flashing
         const loginScreen = document.getElementById('loginScreen');
         if (loginScreen?.classList.contains('active')) {
           loginScreen.classList.remove('active');
@@ -133,7 +147,7 @@ Hub.app = {
         if (this._loginInProgress) return;
         try {
           const s = await Hub.auth.getSession();
-          if (s?.user) return; // still have session — ignore
+          if (s?.user) return; // still have session — ignore spurious event
         } catch (e) {}
         this._loggedIn        = false;
         this._authHandled     = true;
@@ -163,12 +177,14 @@ Hub.app = {
 
       if (event === 'INITIAL_SESSION' && !session) {
         this._authHandled = true;
-        Hub.router.showScreen('login');
+        if (!immediateLoginDone) {
+          Hub.router.showScreen('login');
+        }
       }
     });
 
-    // ── STEP 4: Fallback timers — ONLY if not in OAuth flow
-    if (!oauthInProgress) {
+    // ── STEP 4: Fallback timers — ONLY if not already logged in and not in OAuth flow
+    if (!oauthInProgress && !immediateLoginDone) {
       // 4s fallback: try getSession one more time
       setTimeout(async () => {
         if (this._loggedIn || this._authHandled || this._loginInProgress) return;
@@ -194,7 +210,7 @@ Hub.app = {
           Hub.router.showScreen('login');
         }
       }, 10000);
-    } else {
+    } else if (oauthInProgress) {
       // OAuth in progress: 30s safety net only (enough for slow connections)
       setTimeout(() => {
         if (this._loggedIn) return;
@@ -316,6 +332,7 @@ Hub.app = {
       case 'radio':   Hub.radio?.onLeave?.();          break;
       case 'weather': Hub.weather?.onLeave?.();        break;
       case 'control': Hub.siteControl?.onLeave?.();    break;
+      case 'treats':  Hub.treats?.cleanup?.();          break;
     }
   },
 
@@ -448,7 +465,11 @@ Hub.app = {
     if (idleRange && idleVal) {
       idleRange.value    = s.standby_timeout_min || 10;
       idleVal.textContent = idleRange.value + 'm';
-      idleRange.addEventListener('input', () => { idleVal.textContent = idleRange.value + 'm'; });
+      // Guard: only bind once (prevents listener stacking on repeated page visits)
+      if (!idleRange._hubBound) {
+        idleRange._hubBound = true;
+        idleRange.addEventListener('input', () => { idleVal.textContent = idleRange.value + 'm'; });
+      }
     }
 
     // Refresh push notification status display
@@ -763,7 +784,7 @@ async _loadCalendarSelection() {
         const bar   = i === 0 ? 'bg-yellow-500' : i === 1 ? 'bg-gray-400' : i === 2 ? 'bg-orange-400' : 'bg-blue-600';
         return `
           <div class="flex items-center gap-3 mb-3 last:mb-0">
-            <span class="text-lg w-6 text-center flex-shrink-0">${medal || '<span class="text-gray-600 text-sm font-bold">${i+1}</span>'}</span>
+            <span class="text-lg w-6 text-center flex-shrink-0">${medal || `<span class="text-gray-600 text-sm font-bold">${i+1}</span>`}</span>
             <div class="flex-1 min-w-0">
               <div class="flex items-center justify-between mb-0.5">
                 <span class="text-sm font-semibold">${Hub.utils.esc(entry.name)}</span>

@@ -6,8 +6,8 @@
 //   - Images: cache-first with 7-day TTL
 // ============================================================
 
-const CACHE_NAME  = 'homehub-v6';
-const CACHE_SHELL = 'homehub-shell-v6';
+const CACHE_NAME  = 'homehub-v7';
+const CACHE_SHELL = 'homehub-shell-v7';
 
 // Static app-shell assets to pre-cache on install
 const SHELL_URLS = [
@@ -77,9 +77,10 @@ self.addEventListener('fetch', (evt) => {
   const isApi = url.pathname.startsWith('/api/')
              || url.hostname.includes('supabase.co')
              || url.hostname.includes('googleapis.com')
-             || url.hostname.includes('photoslibrary')
-             || url.hostname.includes('openmeteo')
-             || url.hostname.includes('weather.gov');
+             || url.hostname.includes('open-meteo')
+             || url.hostname.includes('weather.gov')
+             || url.hostname.includes('rainviewer')
+             || url.hostname.includes('api.imgur.com');
 
   if (isApi) {
     // Let the network handle it — don't cache

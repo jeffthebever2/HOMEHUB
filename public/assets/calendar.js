@@ -47,7 +47,12 @@ Hub.calendar = {
       // Clear the cached token so getGoogleAccessToken skips the cache
       try { localStorage.removeItem('hub_google_token'); localStorage.removeItem('hub_google_token_exp'); } catch (_) {}
       token = await this._getProviderToken();
-      if (!token) return response;
+      if (!token) {
+        return { error: Hub.state?._googleAuthExpired
+          ? 'Google Calendar access expired. Please sign out and sign in again.'
+          : 'Could not refresh Google token. Please sign out and sign in again.'
+        };
+      }
       const headers2 = Object.assign({}, headers, { 'Authorization': `Bearer ${token}` });
       response = await fetch(url, Object.assign({}, init, { headers: headers2 }));
     }
@@ -135,11 +140,7 @@ Hub.calendar = {
         calendarIds = ['primary'];
       }
 
-      console.log('[Calendar] ===== FETCHING EVENTS =====');
-      console.log('[Calendar] Settings object:', settings);
-      console.log('[Calendar] Selected calendars from settings:', calendarIds);
-      console.log('[Calendar] Will fetch from', calendarIds.length, 'calendar(s)');
-      calendarIds.forEach((id, i) => console.log(`[Calendar]   ${i + 1}. ${id}`));
+      console.log('[Calendar] Fetching events from', calendarIds.length, 'calendar(s)');
 
       // Fetch events from each selected calendar
       const timeMin = new Date().toISOString();
@@ -196,15 +197,7 @@ Hub.calendar = {
       this._cache = limitedEvents;
       this._cacheTime = now;
 
-      console.log('[Calendar] ===== FETCH COMPLETE =====');
-      console.log(`[Calendar] Total events fetched: ${limitedEvents.length}`);
-      const calendarCounts = {};
-      limitedEvents.forEach(e => {
-        const cal = e.calendarId || 'unknown';
-        calendarCounts[cal] = (calendarCounts[cal] || 0) + 1;
-      });
-      console.log('[Calendar] Events by calendar:', calendarCounts);
-      console.log('[Calendar] ==========================');
+      console.log(`[Calendar] Fetched ${limitedEvents.length} events from ${calendarIds.length} calendar(s)`);
 
       return this._cache;
 
