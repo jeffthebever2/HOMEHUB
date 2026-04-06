@@ -64,6 +64,7 @@ Hub.app = {
     Hub.treats.init();
     Hub.player?.init?.();
     Hub.radio?.init?.();
+    Hub.music?.init?.();
     Hub.control?.init?.();
     Hub.grocery?.init?.();
     Hub.ui?.loadTouchscreenMode?.();
@@ -145,10 +146,29 @@ Hub.app = {
 
       if (event === 'SIGNED_OUT') {
         if (this._loginInProgress) return;
+        // First check: session might still exist despite SIGNED_OUT event
         try {
           const s = await Hub.auth.getSession();
           if (s?.user) return; // still have session — ignore spurious event
-        } catch (e) {}
+        } catch (e) {
+          // Error checking session = transient issue, don't logout
+          console.warn('[Auth] SIGNED_OUT recheck error — ignoring:', e.message);
+          return;
+        }
+        // Grace period: wait and recheck to avoid race conditions
+        // (background→foreground transitions, token refresh timing)
+        await new Promise(r => setTimeout(r, 3000));
+        try {
+          const s2 = await Hub.auth.getSession();
+          if (s2?.user) {
+            console.log('[Auth] SIGNED_OUT: session restored after grace period — ignoring');
+            return;
+          }
+        } catch (e) {
+          console.warn('[Auth] SIGNED_OUT grace recheck error — keeping session:', e.message);
+          return;
+        }
+        // Confirmed: truly signed out
         this._loggedIn        = false;
         this._authHandled     = true;
         this._loginInProgress = false;
@@ -330,6 +350,7 @@ Hub.app = {
       case 'standby': Hub.standby?.onLeave?.();        break;
       case 'grocery': Hub.grocery?.onLeave?.();        break;
       case 'radio':   Hub.radio?.onLeave?.();          break;
+      case 'music':   Hub.music?.onLeave?.();          break;
       case 'weather': Hub.weather?.onLeave?.();        break;
       case 'control': Hub.siteControl?.onLeave?.();    break;
       case 'treats':  Hub.treats?.cleanup?.();          break;
@@ -363,6 +384,7 @@ Hub.app = {
       case 'treats':    Hub.treats.loadDogs(); break;
       case 'standby':   Hub.standby.start(); break;
       case 'radio':     Hub.radio?.onEnter?.(); break;
+      case 'music':     Hub.music?.onEnter?.(); break;
       case 'settings':  this._loadSettingsForm(); break;
       case 'status':    this._loadStatusPage(); break;
       case 'control':   Hub.siteControl?.load?.(); break;

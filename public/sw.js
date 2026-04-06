@@ -6,8 +6,8 @@
 //   - Images: cache-first with 7-day TTL
 // ============================================================
 
-const CACHE_NAME  = 'homehub-v7';
-const CACHE_SHELL = 'homehub-shell-v7';
+const CACHE_NAME  = 'homehub-v8';
+const CACHE_SHELL = 'homehub-shell-v8';
 
 // Static app-shell assets to pre-cache on install
 const SHELL_URLS = [
@@ -33,6 +33,7 @@ const SHELL_URLS = [
   '/assets/photos.js',
   '/assets/player.js',
   '/assets/radio.js',
+  '/assets/music.js',
   '/assets/icons.js',
   '/assets/notifications.js',
   '/assets/siteControl.js',

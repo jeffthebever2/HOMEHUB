@@ -1,5 +1,16 @@
 // ============================================================
-// assets/supabase.js — Supabase auth + DB helpers  (v6 — stabilized)
+// assets/supabase.js — Supabase auth + DB helpers  (v7 — oauth-stable)
+//
+// v7 fixes (OAuth Logout Fix):
+//   - REFRESH_UNKNOWN sentinel: _refreshIfNeeded distinguishes transient
+//     errors (network, timing) from confirmed absent sessions
+//   - Watchdog: confirms session absence with recheck + grace period
+//     before logging out; ignores REFRESH_UNKNOWN
+//   - Wake handler: skips refresh when offline; ignores transient errors
+//   - _saveGoogleRefreshToken: resolves household_id from DB if Hub.state
+//     isn't ready yet (fixes upsert failures on first login)
+//   - ensureFreshSession: normalizes REFRESH_UNKNOWN → null for callers
+//   - Online handler: 1.5s delay to let network stabilize
 //
 // v6 fixes:
 //   - _startKeepAlive deferred to app.init() — no early listeners
@@ -15,8 +26,14 @@ const SUPABASE_CONFIG = {
   DB_QUERY_TIMEOUT_MS:             6000,
   KEEPALIVE_MINUTES:               4,
   REFRESH_IF_EXPIRES_IN_SECONDS:   30 * 60,
-  WAKE_DEBOUNCE_MS:                2000
+  WAKE_DEBOUNCE_MS:                2000,
+  SIGNED_OUT_RECHECK_MS:           3000,   // grace period before confirming logout
+  MAX_WATCHDOG_RETRIES:            2       // retries before treating null as real logout
 };
+
+// Sentinel: _refreshIfNeeded returns this instead of null when the failure
+// is transient (network error, timing gap) vs. a confirmed absent session.
+const REFRESH_UNKNOWN = Symbol('REFRESH_UNKNOWN');
 
 (function () {
   const CFG    = window.HOME_HUB_CONFIG || {};
@@ -38,10 +55,17 @@ const SUPABASE_CONFIG = {
   Hub.sb = sb;
 
   // ── Session refresh helper ──────────────────────────────────
+  // Returns: session object | null (confirmed no session) | REFRESH_UNKNOWN (transient error)
   async function _refreshIfNeeded(reason) {
     try {
-      const { data: { session } } = await sb.auth.getSession();
-      if (!session) return null;
+      const { data: { session }, error: getErr } = await sb.auth.getSession();
+
+      // Distinguish "no session" from "error getting session"
+      if (getErr) {
+        console.warn(`[Auth] getSession error (${reason}):`, getErr.message);
+        return REFRESH_UNKNOWN;     // transient — don't treat as logout
+      }
+      if (!session) return null;    // confirmed: no session exists
 
       const expiresAt   = session.expires_at ? session.expires_at * 1000 : null;
       const secondsLeft = expiresAt ? Math.floor((expiresAt - Date.now()) / 1000) : Infinity;
@@ -54,7 +78,8 @@ const SUPABASE_CONFIG = {
       return data?.session || session;
     } catch (e) {
       console.warn('[Auth] refreshIfNeeded exception:', e.message);
-      return null;
+      // Network error / offline — NOT a real logout
+      return REFRESH_UNKNOWN;
     }
   }
 
@@ -68,10 +93,15 @@ const SUPABASE_CONFIG = {
 
     try { sb.auth.startAutoRefresh?.(); } catch (e) {}
 
-    // ── Periodic token watchdog (every 4 min) ──────────────────
     // ── Supabase JWT watchdog (every 4 min) ─────────────────
     setInterval(async () => {
       const session = await _refreshIfNeeded('watchdog');
+
+      // Transient error — skip this cycle, don't touch login state
+      if (session === REFRESH_UNKNOWN) {
+        console.log('[Auth] Watchdog: transient error — skipping');
+        return;
+      }
 
       // App thinks it's logged out but session still exists → re-login ONCE
       if (session?.user && !Hub.app?._loggedIn) {
@@ -80,9 +110,23 @@ const SUPABASE_CONFIG = {
         return;
       }
 
-      // Session truly gone while logged in → show login
+      // Session appears gone while logged in → CONFIRM before logout
       if (!session && Hub.app?._loggedIn) {
-        console.warn('[Auth] Watchdog: session expired — showing login');
+        console.warn('[Auth] Watchdog: session appears gone — rechecking…');
+        // Wait a beat, then do a fresh getSession() to confirm
+        await new Promise(r => setTimeout(r, SUPABASE_CONFIG.SIGNED_OUT_RECHECK_MS));
+        try {
+          const { data: { session: recheck } } = await sb.auth.getSession();
+          if (recheck?.user) {
+            console.log('[Auth] Watchdog: recheck found session — false alarm');
+            return;
+          }
+        } catch (e) {
+          console.warn('[Auth] Watchdog: recheck failed — keeping session:', e.message);
+          return;  // error during recheck = transient, don't logout
+        }
+        // Confirmed: session truly gone
+        console.warn('[Auth] Watchdog: session confirmed expired — showing login');
         Hub.app._loggedIn = false;
         Hub.router?.showScreen?.('login');
       }
@@ -112,7 +156,20 @@ const SUPABASE_CONFIG = {
     const onWake = () => {
       clearTimeout(_wakeDebounceTimer);
       _wakeDebounceTimer = setTimeout(async () => {
+        // Skip wake refresh if offline — no point hitting the network
+        if (!navigator.onLine) {
+          console.log('[Auth] Wake: offline — skipping refresh');
+          return;
+        }
+
         const session = await _refreshIfNeeded('wake');
+
+        // Transient error — don't touch anything, watchdog will catch up
+        if (session === REFRESH_UNKNOWN) {
+          console.log('[Auth] Wake: transient error — skipping');
+          return;
+        }
+
         if (!session) return; // truly no session — watchdog will handle showing login
 
         // Capture provider_refresh_token on wake if available
@@ -133,7 +190,10 @@ const SUPABASE_CONFIG = {
     document.addEventListener('visibilitychange', () => { if (!document.hidden) onWake(); });
     window.addEventListener('focus',    onWake);
     window.addEventListener('pageshow', (e) => { if (e.persisted) onWake(); }); // bfcache restore only
-    window.addEventListener('online',   () => _refreshIfNeeded('online'));
+    window.addEventListener('online',   () => {
+      // Delay slightly — 'online' fires before network is truly ready
+      setTimeout(() => _refreshIfNeeded('online'), 1500);
+    });
   }
 
   // Exposed so app.init() can start keepalive AFTER DOM + modules are ready
@@ -239,7 +299,9 @@ const SUPABASE_CONFIG = {
     },
 
     async ensureFreshSession(reason = 'manual') {
-      return _refreshIfNeeded(reason);
+      const result = await _refreshIfNeeded(reason);
+      // Normalize: callers should never see the internal sentinel
+      return (result === REFRESH_UNKNOWN) ? null : result;
     },
 
     async checkAccess(user) {
@@ -291,35 +353,69 @@ const SUPABASE_CONFIG = {
 
     /** Persist Google refresh token to user_settings for server-side use.
      *  Uses Supabase client upsert (not raw PATCH) so it works even if no
-     *  user_settings row exists yet (first login). */
+     *  user_settings row exists yet (first login).
+     *  Resolves household_id from DB if Hub.state isn't ready yet.
+     *  Aborts gracefully if household_id can't be resolved (NOT NULL column). */
     async _saveGoogleRefreshToken(userId, refreshToken) {
       if (!refreshToken || !userId) return;
       try {
-        const { error } = await timed(
-          sb.from('user_settings').upsert({
-            user_id:                 userId,
-            google_refresh_token:    refreshToken,
-            google_token_updated_at: new Date().toISOString(),
-          }, { onConflict: 'user_id' })
-        );
-        if (error) {
-          // Fallback: columns might not exist — try raw PATCH
-          console.warn('[Auth] Upsert refresh token failed, trying PATCH:', error.message);
+        // Resolve household_id — required NOT NULL column on user_settings
+        let householdId = Hub.state?.household_id;
+        if (!householdId) {
+          try {
+            const { data } = await timed(
+              sb.from('household_members').select('household_id').eq('user_id', userId).limit(1).maybeSingle()
+            );
+            householdId = data?.household_id || null;
+          } catch (_) {}
+        }
+
+        // Attempt 1: Supabase upsert (preferred — works for new + existing rows)
+        if (householdId) {
+          const { error } = await timed(
+            sb.from('user_settings').upsert({
+              user_id:                 userId,
+              household_id:            householdId,
+              google_refresh_token:    refreshToken,
+              google_token_updated_at: new Date().toISOString(),
+            }, { onConflict: 'user_id' })
+          );
+          if (!error) {
+            console.log('[Auth] Google refresh token persisted ✓ (upsert)');
+            return;
+          }
+          console.warn('[Auth] Upsert refresh token failed:', error.message);
+        }
+
+        // Attempt 2: PATCH (only updates existing row — works without household_id)
+        try {
           const sess = (await sb.auth.getSession()).data.session;
-          await fetch(`${SB_URL}/rest/v1/user_settings?user_id=eq.${userId}`, {
+          if (!sess?.access_token) {
+            console.warn('[Auth] No session for PATCH fallback — skipping refresh token save');
+            return;
+          }
+          const patchResp = await fetch(`${SB_URL}/rest/v1/user_settings?user_id=eq.${userId}`, {
             method:  'PATCH',
             headers: {
               apikey:          SB_KEY,
-              Authorization:   `Bearer ${sess?.access_token || ''}`,
+              Authorization:   `Bearer ${sess.access_token}`,
               'Content-Type':  'application/json',
+              Prefer:          'return=minimal',
             },
             body: JSON.stringify({
               google_refresh_token:    refreshToken,
               google_token_updated_at: new Date().toISOString(),
             }),
           });
+          if (patchResp.ok) {
+            console.log('[Auth] Google refresh token persisted ✓ (PATCH)');
+          } else {
+            const detail = await patchResp.text().catch(() => '');
+            console.warn(`[Auth] PATCH refresh token failed: ${patchResp.status} ${detail}`);
+          }
+        } catch (e) {
+          console.warn('[Auth] PATCH fallback error:', e.message);
         }
-        console.log('[Auth] Google refresh token persisted ✓');
       } catch (e) {
         console.warn('[Auth] Failed to persist refresh token:', e.message);
       }
@@ -332,7 +428,12 @@ const SUPABASE_CONFIG = {
      *
      * NOTE: sb.auth.refreshSession() does NOT return a new Google provider_token,
      * only a refreshed Supabase JWT. Skipping it saves ~500ms of dead latency.
+     *
+     * Mutex: prevents duplicate /api/token-refresh calls when multiple callers
+     * (Calendar, proactive refresh) fire simultaneously.
      */
+    _googleRefreshInFlight: null,  // mutex promise
+
     async getGoogleAccessToken() {
       const CACHE_KEY = 'hub_google_token';
       const CACHE_EXP = 'hub_google_token_exp';
@@ -346,48 +447,96 @@ const SUPABASE_CONFIG = {
         }
       } catch (_) {}
 
-      // 2. Try the current session's provider_token (only present right after OAuth sign-in)
+      // 2. Single getSession() call — check provider_token first, then use
+      //    access_token for server-side refresh if needed.
+      let session = null;
       try {
-        const { data: { session } } = await sb.auth.getSession();
-        if (session?.provider_token) {
-          _cacheGoogleToken(session.provider_token);
-          Hub.state._googleAuthExpired = false;
-          return session.provider_token;
-        }
+        const { data } = await sb.auth.getSession();
+        session = data?.session;
       } catch (_) {}
+
+      // 2a. Session's provider_token (only present right after OAuth sign-in)
+      if (session?.provider_token) {
+        _cacheGoogleToken(session.provider_token);
+        Hub.state._googleAuthExpired = false;
+        return session.provider_token;
+      }
 
       // 3. Server-side exchange: use the stored Google refresh token.
       //    This is the PRIMARY long-term path for kiosk operation.
-      //    Supabase refreshSession() does NOT return new Google tokens.
-      try {
-        const { data: { session } } = await sb.auth.getSession();
-        const accessToken = session?.access_token;
-        if (!accessToken) return null;
+      const accessToken = session?.access_token;
+      if (!accessToken) return null;
 
-        const base = Hub.utils?.apiBase?.() || '';
-        const resp = await fetch(`${base}/api/token-refresh`, {
-          method:  'POST',
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
-        if (!resp.ok) {
-          const err = await resp.json().catch(() => ({}));
-          if (err.action === 'reauth_required') {
-            console.warn('[Auth] Google refresh token invalid — user must re-authenticate');
-            Hub.state._googleAuthExpired = true;
+      // Mutex: if another caller is already refreshing, wait for that result
+      if (this._googleRefreshInFlight) {
+        try { return await this._googleRefreshInFlight; }
+        catch (_) { return null; }
+      }
+
+      // Start the server-side refresh (with retry for transient failures)
+      this._googleRefreshInFlight = this._fetchGoogleTokenFromServer(accessToken);
+      try {
+        const token = await this._googleRefreshInFlight;
+        return token;
+      } finally {
+        this._googleRefreshInFlight = null;
+      }
+    },
+
+    /** Internal: fetch Google token from /api/token-refresh with 1 retry */
+    async _fetchGoogleTokenFromServer(supabaseAccessToken) {
+      const base = Hub.utils?.apiBase?.() || '';
+      const MAX_ATTEMPTS = 2;
+
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout
+
+          const resp = await fetch(`${base}/api/token-refresh`, {
+            method:  'POST',
+            headers: { Authorization: `Bearer ${supabaseAccessToken}` },
+            signal:  controller.signal,
+          });
+          clearTimeout(timeout);
+
+          if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            if (err.action === 'reauth_required') {
+              console.warn('[Auth] Google refresh token invalid — user must re-authenticate');
+              Hub.state._googleAuthExpired = true;
+              return null;  // no point retrying — token is permanently invalid
+            }
+            // Transient server error — retry if we have attempts left
+            if (attempt < MAX_ATTEMPTS && resp.status >= 500) {
+              console.warn(`[Auth] Server token refresh failed (${resp.status}), retrying…`);
+              await new Promise(r => setTimeout(r, 1000 * attempt));
+              continue;
+            }
+            console.warn(`[Auth] Server token refresh failed: ${resp.status}`, err);
+            return null;
+          }
+
+          const { access_token, expires_in } = await resp.json();
+          if (access_token) {
+            Hub.state._googleAuthExpired = false;
+            _cacheGoogleToken(access_token, (expires_in || 3600) - 300);
+            return access_token;
+          }
+          return null;
+        } catch (e) {
+          if (e.name === 'AbortError') {
+            console.warn(`[Auth] Token refresh timed out (attempt ${attempt})`);
+          } else {
+            console.warn(`[Auth] Token refresh error (attempt ${attempt}):`, e.message);
+          }
+          if (attempt < MAX_ATTEMPTS) {
+            await new Promise(r => setTimeout(r, 1000 * attempt));
+            continue;
           }
           return null;
         }
-        const { access_token, expires_in } = await resp.json();
-        if (access_token) {
-          // Clear the expired flag — we successfully got a token
-          Hub.state._googleAuthExpired = false;
-          _cacheGoogleToken(access_token, (expires_in || 3600) - 300);
-          return access_token;
-        }
-      } catch (e) {
-        console.warn('[Auth] Server token refresh failed:', e.message);
       }
-
       return null;
     }
   };

@@ -22,9 +22,9 @@
 window.Hub = window.Hub || {};
 
 Hub.player = {
-  // ── Public state (read by radio.js, standby.js, dashboard) ──
+  // ── Public state (read by radio.js, music.js, standby.js, dashboard) ──
   state: {
-    currentSource: null,   // 'radio' | null
+    currentSource: null,   // 'radio' | 'music' | null
     title:         '',
     streamUrl:     '',
     isPlaying:     false,
@@ -32,6 +32,11 @@ Hub.player = {
     volume:        0.8,
     radioStatus:   '',     // '' | 'connecting' | 'buffering' | 'playing' | 'reconnecting' | 'failed'
     retryCount:    0,
+    // Music-specific state
+    musicVideoId:   '',
+    musicArtist:    '',
+    musicThumbnail: '',
+    musicDuration:  0,
   },
 
   // ── Private ────────────────────────────────────────────────
@@ -40,6 +45,12 @@ Hub.player = {
   _stallTimer:     null,
   _retryTimer:     null,
   _progressTick:   null,
+
+  // YouTube IFrame player
+  _ytPlayer:       null,
+  _ytReady:        false,
+  _ytAPILoading:   false,
+  _ytPendingPlay:  null,  // {videoId, title, artist, thumbnail} — queued if API not ready
 
   _MAX_RETRIES:    5,
   _BASE_RETRY_MS:  1500,  // first retry after 1.5s, then 3s, 6s, 12s, 24s
@@ -52,7 +63,277 @@ Hub.player = {
     this._audio.crossOrigin = 'anonymous';
     this._audio.volume    = this.state.volume;
     this._setupMediaSession();
-    console.log('[Player] Initialized (single audio instance)');
+    this._ensureYTAPI();
+    console.log('[Player] Initialized (single audio instance + YouTube IFrame)');
+  },
+
+  // ── YouTube IFrame API loader ────────────────────────────────
+  _ensureYTAPI() {
+    if (this._ytReady || this._ytAPILoading) return;
+    if (window.YT?.Player) {
+      this._initYTPlayer();
+      return;
+    }
+    this._ytAPILoading = true;
+
+    // YouTube IFrame API callback
+    const prevCallback = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      if (prevCallback) prevCallback();
+      this._initYTPlayer();
+    };
+
+    // Load the API script
+    if (!document.getElementById('yt-iframe-api')) {
+      const tag    = document.createElement('script');
+      tag.id       = 'yt-iframe-api';
+      tag.src      = 'https://www.youtube.com/iframe_api';
+      tag.onerror  = () => {
+        console.warn('[Player] YouTube IFrame API failed to load');
+        this._ytAPILoading = false;
+      };
+      document.head.appendChild(tag);
+    }
+  },
+
+  _initYTPlayer() {
+    this._ytAPILoading = false;
+    if (this._ytPlayer) { this._ytReady = true; return; }
+
+    // Ensure container exists
+    let container = document.getElementById('ytPlayerContainer');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'ytPlayerContainer';
+      container.style.cssText = 'position:fixed;bottom:-9999px;left:-9999px;width:1px;height:1px;overflow:hidden;pointer-events:none;';
+      document.body.appendChild(container);
+    }
+
+    // Create the inner div for the player
+    let inner = document.getElementById('ytPlayerInner');
+    if (!inner) {
+      inner = document.createElement('div');
+      inner.id = 'ytPlayerInner';
+      container.appendChild(inner);
+    }
+
+    try {
+      this._ytPlayer = new YT.Player('ytPlayerInner', {
+        height: '1',
+        width:  '1',
+        playerVars: {
+          autoplay:       0,
+          controls:       0,
+          disablekb:      1,
+          fs:             0,
+          modestbranding: 1,
+          rel:            0,
+          playsinline:    1,
+          origin:         window.location.origin,
+        },
+        events: {
+          onReady:       () => this._onYTReady(),
+          onStateChange: (e) => this._onYTStateChange(e),
+          onError:       (e) => this._onYTError(e),
+        },
+      });
+    } catch (e) {
+      console.warn('[Player] YouTube player init error:', e.message);
+    }
+  },
+
+  _onYTReady() {
+    this._ytReady = true;
+    console.log('[Player] YouTube IFrame player ready');
+    // Play pending track if any
+    if (this._ytPendingPlay) {
+      const p = this._ytPendingPlay;
+      this._ytPendingPlay = null;
+      this.playMusic(p.videoId, p.title, p.artist, p.thumbnail);
+    }
+  },
+
+  _onYTStateChange(event) {
+    if (this.state.currentSource !== 'music') return;
+
+    const s = event.data;
+    if (s === YT.PlayerState.PLAYING) {
+      this.state.isPlaying = true;
+      this.state.radioStatus = 'playing';
+      this.updateUI();
+    } else if (s === YT.PlayerState.PAUSED) {
+      this.state.isPlaying = false;
+      this.updateUI();
+    } else if (s === YT.PlayerState.ENDED) {
+      this.state.isPlaying = false;
+      this.updateUI();
+      // Notify music module for auto-next
+      Hub.music?.onTrackEnd?.();
+    } else if (s === YT.PlayerState.BUFFERING) {
+      this.state.radioStatus = 'buffering';
+      this.updateUI();
+    }
+  },
+
+  _onYTError(event) {
+    console.warn('[Player] YouTube error code:', event.data);
+    // 2=invalid param, 5=HTML5 error, 100=not found, 101/150=not embeddable
+    const code = event.data;
+    if (code === 100 || code === 101 || code === 150) {
+      Hub.ui?.toast?.('This track is unavailable for playback', 'error');
+    } else {
+      Hub.ui?.toast?.('YouTube playback error', 'error');
+    }
+    this.state.isPlaying = false;
+    this.state.radioStatus = 'failed';
+    this.updateUI();
+    // Try next track
+    setTimeout(() => Hub.music?.onTrackEnd?.(), 1500);
+  },
+
+  // ── Play a direct audio stream (music) ───────────────────────
+  // Used by music.js when it fetches a direct audio URL from Piped/Invidious.
+  // Plays through the native <audio> element (same as radio) but with music
+  // metadata and an 'ended' handler for auto-next.
+  playMusicStream(streamUrl, title, artist, thumbnail, duration) {
+    console.log('[Player] playMusicStream:', title, streamUrl ? '(has URL)' : '(loading)');
+    this._stopHard();
+
+    // Stop YT IFrame if it was playing
+    if (this._ytPlayer && this._ytReady) {
+      try { this._ytPlayer.stopVideo(); } catch (_) {}
+    }
+
+    this.state.currentSource  = 'music';
+    this.state.title          = title || '';
+    this.state.streamUrl      = streamUrl || '';
+    this.state.startedAt      = Date.now();
+    this.state.isPlaying      = false;
+    this.state.radioStatus    = streamUrl ? 'connecting' : 'buffering';
+    this.state.retryCount     = 0;
+    this.state.musicVideoId   = '';
+    this.state.musicArtist    = artist || '';
+    this.state.musicThumbnail = thumbnail || '';
+    this.state.musicDuration  = duration || 0;
+
+    if (!streamUrl) {
+      // No URL yet — music.js is still fetching. Just show loading state.
+      this._updateMediaSession();
+      this.updateUI();
+      return;
+    }
+
+    // Play via native audio element
+    const audio = this._audio;
+    this._removeListeners();
+    this._clearTimers();
+
+    const on = (evt, fn) => {
+      audio.addEventListener(evt, fn);
+      this._listeners.push([evt, fn]);
+    };
+
+    on('canplay', () => {
+      this._setStatus('buffering');
+      audio.play().catch(err => {
+        if (err.name === 'NotAllowedError') {
+          this._setStatus('failed');
+          this._showAutoplayOverlay();
+        }
+      });
+    });
+
+    on('playing', () => {
+      this._clearTimers();
+      this._setStatus('playing');
+      this._startMusicProgress();
+    });
+
+    on('waiting', () => {
+      if (this.state.radioStatus === 'playing') this._setStatus('buffering');
+    });
+
+    on('ended', () => {
+      console.log('[Player] Music track ended');
+      this.state.isPlaying = false;
+      this.state.radioStatus = '';
+      this._clearTimers();
+      this.updateUI();
+      // Auto-next via music module
+      Hub.music?.onTrackEnd?.();
+    });
+
+    on('error', () => {
+      console.warn('[Player] Music stream error');
+      this.state.isPlaying = false;
+      this.state.radioStatus = 'failed';
+      this.updateUI();
+      // Try next track after a brief delay
+      setTimeout(() => Hub.music?.onTrackEnd?.(), 2000);
+    });
+
+    on('timeupdate', () => {
+      // Update music page progress if visible
+      Hub.music?._updateProgress?.(audio.currentTime, audio.duration);
+    });
+
+    audio.src = streamUrl;
+    audio.load();
+
+    this._updateMediaSession();
+    this.updateUI();
+  },
+
+  /** Start progress tick for music (updates dashboard widget) */
+  _startMusicProgress() {
+    clearInterval(this._progressTick);
+    if (this.state.currentSource !== 'music') return;
+    this._progressTick = setInterval(() => {
+      if (!this.state.isPlaying || this.state.currentSource !== 'music') {
+        clearInterval(this._progressTick);
+        return;
+      }
+      this.updateUI();
+    }, 5000); // update dashboard widget every 5s
+  },
+
+  // ── Play a YouTube Music track (IFrame fallback) ────────────
+  playMusic(videoId, title, artist, thumbnail) {
+    if (!videoId) return;
+    console.log('[Player] playMusic:', title, '—', artist);
+
+    // Stop any radio stream
+    this._stopHard();
+
+    this.state.currentSource  = 'music';
+    this.state.title          = title || 'Unknown';
+    this.state.streamUrl      = '';
+    this.state.startedAt      = Date.now();
+    this.state.isPlaying      = false;
+    this.state.radioStatus    = 'connecting';
+    this.state.retryCount     = 0;
+    this.state.musicVideoId   = videoId;
+    this.state.musicArtist    = artist || '';
+    this.state.musicThumbnail = thumbnail || '';
+
+    // Ensure YT API is loaded
+    if (!this._ytReady) {
+      console.log('[Player] YouTube API not ready — queuing track');
+      this._ytPendingPlay = { videoId, title, artist, thumbnail };
+      this._ensureYTAPI();
+      this.updateUI();
+      return;
+    }
+
+    try {
+      this._ytPlayer.loadVideoById({ videoId, suggestedQuality: 'small' });
+    } catch (e) {
+      console.warn('[Player] loadVideoById error:', e.message);
+      this.state.radioStatus = 'failed';
+    }
+
+    this._updateMediaSession();
+    this.updateUI();
   },
 
   // ── Play a radio stream ─────────────────────────────────────
@@ -222,31 +503,51 @@ Hub.player = {
   stop() {
     console.log('[Player] stop()');
     this._stopHard();
-    this.state.currentSource = null;
-    this.state.title         = '';
-    this.state.streamUrl     = '';
-    this.state.isPlaying     = false;
-    this.state.startedAt     = null;
-    this.state.radioStatus   = '';
-    this.state.retryCount    = 0;
+    // Stop YouTube player if active
+    if (this._ytPlayer && this._ytReady) {
+      try { this._ytPlayer.stopVideo(); } catch (_) {}
+    }
+    this.state.currentSource  = null;
+    this.state.title          = '';
+    this.state.streamUrl      = '';
+    this.state.isPlaying      = false;
+    this.state.startedAt      = null;
+    this.state.radioStatus    = '';
+    this.state.retryCount     = 0;
+    this.state.musicVideoId   = '';
+    this.state.musicArtist    = '';
+    this.state.musicThumbnail = '';
+    this.state.musicDuration  = 0;
     this._updateMediaSession();
     this.updateUI();
+    // Update music page if visible
+    Hub.music?._updateNowPlayingBar?.();
   },
 
   // ── Pause / Resume ─────────────────────────────────────────
   pause() {
-    if (this._audio && this.state.currentSource === 'radio') {
-      this._audio.pause();
-      this._clearTimers(); // don't retry while intentionally paused
+    if (this.state.currentSource === 'radio' || (this.state.currentSource === 'music' && this.state.streamUrl)) {
+      // Native audio element (radio or music stream)
+      if (this._audio) {
+        this._audio.pause();
+        if (this.state.currentSource === 'radio') this._clearTimers();
+      }
+    } else if (this.state.currentSource === 'music' && this._ytPlayer && this._ytReady) {
+      // YT IFrame fallback
+      try { this._ytPlayer.pauseVideo(); } catch (_) {}
     }
     this.state.isPlaying = false;
     this.updateUI();
   },
 
   resume() {
-    if (this._audio && this.state.currentSource === 'radio') {
-      this._audio.play().catch(() => this._showAutoplayOverlay());
-      this._startStallTimer();
+    if (this.state.currentSource === 'radio' || (this.state.currentSource === 'music' && this.state.streamUrl)) {
+      if (this._audio) {
+        this._audio.play().catch(() => this._showAutoplayOverlay());
+        if (this.state.currentSource === 'radio') this._startStallTimer();
+      }
+    } else if (this.state.currentSource === 'music' && this._ytPlayer && this._ytReady) {
+      try { this._ytPlayer.playVideo(); } catch (_) {}
     }
     this.state.isPlaying = true;
     this.updateUI();
@@ -288,20 +589,29 @@ Hub.player = {
   // ── Media Session API ──────────────────────────────────────
   _setupMediaSession() {
     if (!('mediaSession' in navigator)) return;
-    navigator.mediaSession.setActionHandler('play',  () => this.resume());
-    navigator.mediaSession.setActionHandler('pause', () => this.pause());
-    navigator.mediaSession.setActionHandler('stop',  () => this.stop());
+    navigator.mediaSession.setActionHandler('play',          () => this.resume());
+    navigator.mediaSession.setActionHandler('pause',         () => this.pause());
+    navigator.mediaSession.setActionHandler('stop',          () => this.stop());
+    navigator.mediaSession.setActionHandler('previoustrack', () => Hub.music?.playPrev?.());
+    navigator.mediaSession.setActionHandler('nexttrack',     () => Hub.music?.playNext?.());
   },
 
   _updateMediaSession() {
     if (!('mediaSession' in navigator)) return;
-    navigator.mediaSession.metadata = this.state.currentSource
-      ? new MediaMetadata({
-          title:   this.state.title,
-          artist:  'Live Radio',
-          artwork: [{ src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' }]
-        })
-      : null;
+    if (!this.state.currentSource) {
+      navigator.mediaSession.metadata = null;
+      return;
+    }
+    const isMusic = this.state.currentSource === 'music';
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title:   this.state.title,
+      artist:  isMusic ? this.state.musicArtist : 'Live Radio',
+      artwork: [{
+        src:   isMusic && this.state.musicThumbnail ? this.state.musicThumbnail : '/icons/icon-192.png',
+        sizes: isMusic ? '320x180' : '192x192',
+        type:  'image/png',
+      }],
+    });
   },
 
   // ── UI update (renders into dashboard + standby) ───────────
@@ -384,7 +694,7 @@ Hub.player = {
         : `<div class="player-idle flex flex-col items-center justify-center gap-3 py-6 text-gray-500">
              <div style="width:64px;height:64px;border-radius:50%;background:#1e2d3d;display:flex;align-items:center;justify-content:center;font-size:1.8rem;">🎵</div>
              <p class="text-sm">Nothing playing</p>
-             <p class="text-xs text-gray-600">Use the Radio page to start playback</p>
+             <p class="text-xs text-gray-600">Use the Radio or Music page to start playback</p>
            </div>`;
       return;
     }
@@ -394,21 +704,28 @@ Hub.player = {
              : 'text-yellow-400';
 
     if (isStandby) {
+      const icon = this.state.currentSource === 'music' ? '🎵' : '📻';
+      const sub  = this.state.currentSource === 'music' ? Hub.utils.esc(this.state.musicArtist) : '';
       container.innerHTML = `
         <div class="flex items-center gap-2 leading-tight overflow-hidden">
-          <span class="flex-shrink-0">📻</span>
-          <span class="font-semibold truncate flex-1">${Hub.utils.esc(this.state.title)}</span>
+          <span class="flex-shrink-0">${icon}</span>
+          <div class="flex-1 min-w-0">
+            <span class="font-semibold truncate block">${Hub.utils.esc(this.state.title)}</span>
+            ${sub ? `<span class="text-xs text-gray-400 truncate block">${sub}</span>` : ''}
+          </div>
           <span class="${sc} text-xs flex-shrink-0">${this._statusLabel()}</span>
         </div>`;
       return;
     }
 
     // ── Full dashboard mini-player ──────────────────────────────
+    const isMusic = this.state.currentSource === 'music';
     const volPct = Math.round(this.state.volume * 100);
+    const vizColor = isMusic ? '#8b5cf6' : '#3b82f6';
     const vizBars = this.state.isPlaying ? `
       <div class="player-viz flex items-end gap-0.5" style="height:18px;">
         ${[1,2,3,4,5].map((_, i) => `
-          <div style="width:3px;border-radius:2px;background:#3b82f6;
+          <div style="width:3px;border-radius:2px;background:${vizColor};
             animation:vizBar ${0.6 + i*0.1}s ease-in-out infinite alternate;
             animation-delay:${i*0.08}s;"></div>`).join('')}
       </div>` : '';
@@ -417,34 +734,55 @@ Hub.player = {
       ? this._fmtTime((Date.now() - this.state.startedAt) / 1000)
       : '0:00';
 
+    // Artwork: thumbnail for music, emoji for radio
+    const artwork = isMusic && this.state.musicThumbnail
+      ? `<img src="${Hub.utils.esc(this.state.musicThumbnail)}" alt=""
+           style="width:60px;height:60px;border-radius:.75rem;object-fit:cover;flex-shrink:0;box-shadow:0 4px 16px rgba(0,0,0,.4);"
+           onerror="this.style.display='none'">`
+      : `<div style="width:60px;height:60px;border-radius:.75rem;background:#1a2535;
+           display:flex;align-items:center;justify-content:center;font-size:1.8rem;
+           flex-shrink:0;box-shadow:0 4px 16px rgba(0,0,0,.4);">📻</div>`;
+
+    // Music-specific controls (prev/next)
+    const musicControls = isMusic ? `
+      <button onclick="Hub.music.playPrev()" class="btn btn-secondary p-2.5" style="border-radius:.6rem;">⏮</button>` : '';
+    const musicNext = isMusic ? `
+      <button onclick="Hub.music.playNext()" class="btn btn-secondary p-2.5" style="border-radius:.6rem;">⏭</button>` : '';
+
+    // Subtitle line
+    const subtitle = isMusic ? Hub.utils.esc(this.state.musicArtist) : '';
+    const sourceLabel = isMusic ? 'Music' : 'Radio';
+    const timeLabel = isMusic ? duration : 'LIVE';
+
     container.innerHTML = `
       <div class="player-widget" style="user-select:none;">
         <div class="flex items-center gap-4 mb-4">
-          <div style="width:60px;height:60px;border-radius:.75rem;background:#1a2535;
-            display:flex;align-items:center;justify-content:center;font-size:1.8rem;
-            flex-shrink:0;box-shadow:0 4px 16px rgba(0,0,0,.4);">📻</div>
+          ${artwork}
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2 mb-0.5">
-              <p class="text-xs text-gray-500 uppercase tracking-wider">Radio</p>
+              <p class="text-xs text-gray-500 uppercase tracking-wider">${sourceLabel}</p>
               ${vizBars}
             </div>
             <div style="overflow:hidden;white-space:nowrap;">
               <p class="font-bold text-base">${Hub.utils.esc(this.state.title)}</p>
             </div>
+            ${subtitle ? `<p class="text-xs text-gray-400 truncate">${subtitle}</p>` : ''}
             <p class="${sc} text-xs mt-0.5">${this._statusLabel()}</p>
           </div>
         </div>
         <div class="flex items-center gap-2 mb-3 text-xs text-gray-500">
           <span>${duration}</span>
           <div class="flex-1 h-1 rounded bg-gray-700"></div>
-          <span>LIVE</span>
+          <span>${timeLabel}</span>
         </div>
         <div class="flex items-center justify-center gap-3">
+          ${musicControls}
           <button onclick="Hub.player.${this.state.isPlaying ? 'pause' : 'resume'}()"
             class="btn btn-primary flex items-center justify-center"
             style="width:48px;height:48px;border-radius:50%;font-size:1.2rem;">
             ${this.state.isPlaying ? '⏸' : '▶'}
           </button>
+          ${musicNext}
           <button onclick="Hub.player.stop()" class="btn btn-secondary p-2.5" style="border-radius:.6rem;">⏹</button>
           <div class="flex items-center gap-1.5 ml-2">
             <span class="text-gray-400" style="font-size:.9rem;">${volPct < 10 ? '🔇' : volPct < 50 ? '🔉' : '🔊'}</span>
