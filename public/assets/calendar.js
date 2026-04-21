@@ -17,8 +17,9 @@ Hub.calendar = {
   },
 
   // --- Token helpers: keep Google Calendar auth alive ---
-  // Delegates to Hub.auth.getGoogleAccessToken() which has a 4-tier fallback:
-  //   localStorage cache → session.provider_token → refreshSession → /api/token-refresh
+  // Delegates to Hub.auth.getGoogleAccessToken() which has a 3-tier fallback:
+  //   localStorage cache → /api/token-refresh (stored refresh_token)
+  //   → session.provider_token (fallback — may be stale past 1hr)
   async _getProviderToken() {
     return Hub.auth?.getGoogleAccessToken?.() || null;
   },
