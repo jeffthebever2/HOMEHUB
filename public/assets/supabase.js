@@ -1,5 +1,16 @@
 // ============================================================
-// assets/supabase.js — Supabase auth + DB helpers  (v7 — oauth-stable)
+// assets/supabase.js — Supabase auth + DB helpers  (v8 — google-token-stale-fix)
+//
+// v8 fixes (Google Stay-Logged-In Fix):
+//   - onAuthChange: only cache provider_token on SIGNED_IN event.
+//     Previously cached on every event (INITIAL_SESSION, TOKEN_REFRESHED)
+//     which kept re-caching the ORIGINAL Google access token (stale past
+//     1 hour) with a fresh 55-min TTL, preventing /api/token-refresh from
+//     ever running.
+//   - getGoogleAccessToken: server-side /api/token-refresh is now the
+//     PRIMARY path. session.provider_token is only a fallback (with short
+//     5-min TTL) for cases where the server refresh is unavailable.
+//     This is what actually makes "stay logged in" work on the kiosk.
 //
 // v7 fixes (OAuth Logout Fix):
 //   - REFRESH_UNKNOWN sentinel: _refreshIfNeeded distinguishes transient
@@ -337,14 +348,22 @@ const REFRESH_UNKNOWN = Symbol('REFRESH_UNKNOWN');
 
     onAuthChange(cb) {
       sb.auth.onAuthStateChange((event, session) => {
-        // ALWAYS capture Google tokens when available — even if already logged in.
-        // TOKEN_REFRESHED fires periodically; the provider_refresh_token must be
-        // persisted to DB every time we see one, otherwise /api/token-refresh fails.
+        // ALWAYS persist provider_refresh_token to DB when present.
+        // It can appear on SIGNED_IN (fresh from OAuth) and sometimes
+        // TOKEN_REFRESHED. We need it in DB for /api/token-refresh to work.
         if (session?.provider_refresh_token && session?.user?.id) {
           Hub.auth._saveGoogleRefreshToken(session.user.id, session.provider_refresh_token).catch(() => {});
         }
-        // Cache provider_token whenever Supabase gives us one (right after OAuth)
-        if (session?.provider_token) {
+        // ⚠️ Only cache provider_token on SIGNED_IN — this is the ONLY event
+        // where Supabase guarantees a freshly-issued Google access token.
+        //
+        // On INITIAL_SESSION / TOKEN_REFRESHED events, session.provider_token
+        // is whatever was persisted in localStorage from the ORIGINAL OAuth
+        // exchange. Supabase does NOT refresh Google tokens — it only refreshes
+        // its own JWT. So that token is stale after 1 hour, and caching it
+        // with a fresh 55min TTL prevents /api/token-refresh from ever being
+        // called. That's what broke "stay logged in" on the kiosk.
+        if (event === 'SIGNED_IN' && session?.provider_token) {
           _cacheGoogleToken(session.provider_token);
         }
         cb(event, session);
@@ -423,11 +442,14 @@ const REFRESH_UNKNOWN = Symbol('REFRESH_UNKNOWN');
 
     /**
      * Get a valid Google access token, refreshing via server if needed.
-     * Tries: localStorage cache → session.provider_token → /api/token-refresh
-     * Caches in localStorage with 55-minute TTL.
+     * Tries: localStorage cache → /api/token-refresh (stored refresh_token)
+     *        → session.provider_token (fallback only — stale past 1hr)
+     * Caches in localStorage with 55-min TTL on server refresh, 5-min on fallback.
      *
-     * NOTE: sb.auth.refreshSession() does NOT return a new Google provider_token,
-     * only a refreshed Supabase JWT. Skipping it saves ~500ms of dead latency.
+     * NOTE: Supabase stores session.provider_token in localStorage indefinitely
+     * and NEVER refreshes it against Google. So it is only trustworthy right
+     * after SIGNED_IN. That's why the server-side refresh (which uses the
+     * stored refresh_token) is the primary path for long-running kiosk use.
      *
      * Mutex: prevents duplicate /api/token-refresh calls when multiple callers
      * (Calendar, proactive refresh) fire simultaneously.
@@ -438,7 +460,8 @@ const REFRESH_UNKNOWN = Symbol('REFRESH_UNKNOWN');
       const CACHE_KEY = 'hub_google_token';
       const CACHE_EXP = 'hub_google_token_exp';
 
-      // 1. Check localStorage cache (valid for 55 min to avoid 1hr edge)
+      // 1. Check localStorage cache (55-min TTL — Google tokens live 60min).
+      //    Populated by SIGNED_IN event and by successful /api/token-refresh.
       try {
         const cached  = localStorage.getItem(CACHE_KEY);
         const expiry  = parseInt(localStorage.getItem(CACHE_EXP) || '0', 10);
@@ -447,40 +470,51 @@ const REFRESH_UNKNOWN = Symbol('REFRESH_UNKNOWN');
         }
       } catch (_) {}
 
-      // 2. Single getSession() call — check provider_token first, then use
-      //    access_token for server-side refresh if needed.
+      // 2. Need the Supabase access_token to call /api/token-refresh.
       let session = null;
       try {
         const { data } = await sb.auth.getSession();
         session = data?.session;
       } catch (_) {}
 
-      // 2a. Session's provider_token (only present right after OAuth sign-in)
+      // 3. PRIMARY path: server-side exchange of stored Google refresh_token
+      //    for a fresh access_token. This is the only path that works
+      //    long-term on the kiosk, because session.provider_token goes stale
+      //    after 1 hour and Supabase never refreshes it.
+      const supabaseJwt = session?.access_token;
+      if (supabaseJwt) {
+        // Mutex so Calendar + proactive-refresh don't race
+        if (this._googleRefreshInFlight) {
+          try {
+            const t = await this._googleRefreshInFlight;
+            if (t) return t;
+          } catch (_) {}
+        } else {
+          this._googleRefreshInFlight = this._fetchGoogleTokenFromServer(supabaseJwt);
+          try {
+            const t = await this._googleRefreshInFlight;
+            if (t) return t;
+          } finally {
+            this._googleRefreshInFlight = null;
+          }
+        }
+      }
+
+      // 4. FALLBACK: session.provider_token.
+      //    Only used when server refresh failed AND we still have a session
+      //    with a provider_token (e.g. first-time user right after OAuth
+      //    whose refresh_token hasn't been persisted to DB yet, or
+      //    /api/token-refresh is temporarily unreachable). May be stale past
+      //    the first hour — callers (calendar.js) handle 401 by clearing
+      //    the cache and retrying, which will force another refresh attempt.
       if (session?.provider_token) {
-        _cacheGoogleToken(session.provider_token);
-        Hub.state._googleAuthExpired = false;
+        console.log('[Auth] Server refresh unavailable — falling back to session.provider_token');
+        // Short TTL (5 min) because we don't trust its freshness.
+        _cacheGoogleToken(session.provider_token, 5 * 60);
         return session.provider_token;
       }
 
-      // 3. Server-side exchange: use the stored Google refresh token.
-      //    This is the PRIMARY long-term path for kiosk operation.
-      const accessToken = session?.access_token;
-      if (!accessToken) return null;
-
-      // Mutex: if another caller is already refreshing, wait for that result
-      if (this._googleRefreshInFlight) {
-        try { return await this._googleRefreshInFlight; }
-        catch (_) { return null; }
-      }
-
-      // Start the server-side refresh (with retry for transient failures)
-      this._googleRefreshInFlight = this._fetchGoogleTokenFromServer(accessToken);
-      try {
-        const token = await this._googleRefreshInFlight;
-        return token;
-      } finally {
-        this._googleRefreshInFlight = null;
-      }
+      return null;
     },
 
     /** Internal: fetch Google token from /api/token-refresh with 1 retry */
