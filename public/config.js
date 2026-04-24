@@ -36,12 +36,12 @@ window.HOME_HUB_CONFIG = {
   // === API BASE (leave empty for same-origin) ===
   apiBase: '',
 
-  // === CLOUDFLARE (Optional — R2 photos, KV cache, WAF) ===
-  // Set workerUrl to your deployed Worker URL (e.g. https://homehub-media.your-subdomain.workers.dev)
-  // Leave empty if you are not using Cloudflare services.
+  // === CLOUDFLARE (R2 photos via Worker) ===
+  // Worker: homehub-media, account jeffthebever200, bucket "homehub"
+  // Photos served via /media/photos/<key> on the Worker (public read, auth only on upload/delete).
   cloudflare: {
-    workerUrl:      'https://a0c01e7692d33cb4602f72fd4f974c5a.r2.cloudflarestorage.com',        // https://homehub-media.<account>.workers.dev
-    photoAlbum:     'homehub', // R2 album/prefix to use for standby slideshow
+    workerUrl:      'https://homehub-media.jeffthebever200.workers.dev',
+    photoAlbum:     'homehub', // prefix "albums/homehub/" inside the bucket
   },
 
   // === MUSIC (Spotify) ===

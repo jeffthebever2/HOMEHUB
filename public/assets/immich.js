@@ -26,19 +26,33 @@ Hub.immich = {
     paused:          false,
     rafId:           null,
     displayMs:       20000,   // 20 seconds per image
-    fadeMs:          900,     // 900ms crossfade
+    fadeMs:          1200,    // 1.2s crossfade — matches CSS transition duration
     layerA:          null,
     layerB:          null,
     activeLayer:     'A',
 
-    /** Preload an image URL into the browser cache */
+    /** Preload + decode an image URL so the fade doesn't stutter on first paint */
     preload(url) {
       return new Promise(resolve => {
         const img = new Image();
-        img.onload  = () => resolve(url);
-        img.onerror = () => resolve(url); // resolve anyway — don't block
+        const done = () => resolve(url);
+        // decode() forces full decode off the main thread when supported.
+        // Falls back to onload for browsers without Image.decode().
+        img.onload  = () => {
+          if (img.decode) img.decode().then(done).catch(done);
+          else done();
+        };
+        img.onerror = done; // resolve anyway — don't block
         img.src = url;
       });
+    },
+
+    /** Set src on both the blurred backdrop and the sharp foreground img */
+    _applyImage(layer, url) {
+      const bg = layer.querySelector('.slideshow-bg');
+      const fg = layer.querySelector('.slideshow-fg');
+      if (bg) bg.src = url;
+      if (fg) fg.src = url;
     },
 
     /** Crossfade from active layer to the other layer */
@@ -46,24 +60,40 @@ Hub.immich = {
       if (this.isTransitioning) return;
       this.isTransitioning = true;
 
-      // Preload before starting fade — avoids decode stutter
+      // Preload + decode BEFORE touching the DOM — avoids first-paint jank
       await this.preload(nextUrl);
 
       const incoming = this.activeLayer === 'A' ? this.layerB : this.layerA;
-      const outgoing  = this.activeLayer === 'A' ? this.layerA : this.layerB;
+      const outgoing = this.activeLayer === 'A' ? this.layerA : this.layerB;
 
-      incoming.style.zIndex  = '1';
-      outgoing.style.zIndex  = '2';
+      // Put new image on the incoming layer while it's still invisible
+      this._applyImage(incoming, nextUrl);
       incoming.style.opacity = '0';
-      incoming.src = nextUrl;
 
-      // One frame pause so browser paints new src before fade
-      await new Promise(r => setTimeout(r, 30));
+      // Incoming ON TOP during fade (previous code had this backwards, which
+      // caused a dark-middle compound-opacity dip). Incoming 0→1 over a
+      // stable outgoing = clean reveal, no brightness dip.
+      incoming.style.zIndex = '2';
+      outgoing.style.zIndex = '1';
 
+      // Double rAF: wait for the browser to actually paint the new srcs
+      // before kicking off the CSS transition. setTimeout(30) that used to
+      // be here wasn't frame-synced and could fire mid-paint, causing the
+      // fade to occasionally start from a half-rendered image.
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+      // Start the fade
       incoming.style.opacity = '1';
-      outgoing.style.opacity  = '0';
 
-      await new Promise(r => setTimeout(r, this.fadeMs + 50));
+      // Wait for the CSS transition to actually finish. transitionend is
+      // the real signal; setTimeout is only a safety net for cases where
+      // the event gets swallowed (e.g. tab backgrounded mid-fade).
+      await new Promise(resolve => {
+        let done = false;
+        const finish = () => { if (done) return; done = true; resolve(); };
+        incoming.addEventListener('transitionend', finish, { once: true });
+        setTimeout(finish, this.fadeMs + 200);
+      });
 
       this.activeLayer    = this.activeLayer === 'A' ? 'B' : 'A';
       this.isTransitioning = false;
@@ -210,8 +240,8 @@ Hub.immich = {
     ss.layerB      = layerB;
     ss.activeLayer = 'A';
 
-    // Show first image immediately on layer A
-    layerA.src           = images[0];
+    // Show first image immediately on layer A (set both bg + fg children)
+    ss._applyImage(layerA, images[0]);
     layerA.style.opacity = '1';
     layerA.style.zIndex  = '2';
     layerB.style.opacity = '0';

@@ -183,8 +183,8 @@ Hub.photos = {
     ss.layerB      = layerB;
     ss.activeLayer = 'A';
 
-    // Show first image immediately
-    layerA.src           = images[0];
+    // Show first image immediately on layer A (set both bg + fg children)
+    ss._applyImage(layerA, images[0]);
     layerA.style.opacity = '1';
     layerA.style.zIndex  = '2';
     layerB.style.opacity = '0';
