@@ -957,44 +957,16 @@
         <div id="ssec-photos" class="settings-section hidden space-y-4">
           <div class="settings-section-header">
             <span class="text-2xl">📸</span>
-            <div><h2 class="text-lg font-bold">Standby Photos</h2><p class="text-gray-500 text-xs">Source for the full-screen photo slideshow</p></div>
+            <div><h2 class="text-lg font-bold">Standby Photos</h2><p class="text-gray-500 text-xs">Sources for the full-screen slideshow</p></div>
           </div>
-          <!-- Provider selector cards -->
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <button onclick="Hub.app._selectPhotoProvider('cloudflare')" id="pp-cloudflare" class="photo-provider-card">
-              <span class="text-2xl">☁️</span><span class="text-xs font-semibold mt-1">Cloudflare</span><span class="text-xs text-gray-500">R2 bucket</span>
-            </button>
-            <button onclick="Hub.app._selectPhotoProvider('imgur')"  id="pp-imgur"  class="photo-provider-card active-provider">
-              <span class="text-2xl">🖼</span><span class="text-xs font-semibold mt-1">Imgur</span><span class="text-xs text-gray-500">Public album</span>
-            </button>
-            <button onclick="Hub.app._selectPhotoProvider('immich')" id="pp-immich" class="photo-provider-card">
-              <span class="text-2xl">🗄</span><span class="text-xs font-semibold mt-1">Immich</span><span class="text-xs text-gray-500">Local NAS</span>
-            </button>
-            <button onclick="Hub.app._selectPhotoProvider('off')"    id="pp-off"    class="photo-provider-card">
-              <span class="text-2xl">🚫</span><span class="text-xs font-semibold mt-1">Off</span><span class="text-xs text-gray-500">Placeholders only</span>
-            </button>
-          </div>
-          <input id="settingPhotoProvider" type="hidden">
-          <!-- Provider-specific settings -->
-          <div id="photoSettingsCloudflare" style="display:none;" class="card space-y-3">
-            <p class="text-xs text-orange-400 font-semibold">Cloudflare R2 via Workers — set up Worker URL in config.js first</p>
-            <div><label class="settings-label">Worker URL</label><input id="settingCfWorkerUrl" type="url" class="input" placeholder="https://homehub-media.your-account.workers.dev"></div>
-            <div><label class="settings-label">Album / Prefix</label><input id="settingCfAlbum" type="text" class="input" placeholder="default"></div>
-          </div>
-          <div id="photoSettingsImgur" class="card space-y-3">
-            <p class="text-xs text-orange-400 font-semibold">Public Imgur album — no account needed</p>
-            <div>
-              <label class="settings-label">Imgur Album ID</label>
-              <input id="settingImgurAlbum" type="text" class="input" placeholder="kAG2MS3">
-            </div>
-            <button id="btnTestSlideshow2" onclick="Hub.app._testSlideshow()" class="btn btn-secondary text-sm">▶ Test Slideshow</button>
-          </div>
-
-          <div id="photoSettingsImmich" style="display:none;" class="card space-y-3">
-            <p class="text-xs text-purple-400 font-semibold">Local Immich server — must be on same network</p>
-            <div><label class="settings-label">Immich Base URL</label><input id="settingImmichUrl" type="url" class="input" placeholder="http://192.168.1.100:2283"></div>
-            <div><label class="settings-label">API Key / Shared Token</label><input id="settingImmichKey" type="password" class="input"></div>
-            <div><label class="settings-label">Album ID (optional)</label><input id="settingImmichAlbum" type="text" class="input" placeholder="Shared album ID or blank for library"></div>
+          <div class="card space-y-2">
+            <p class="text-sm text-gray-300">Photos are pulled from two sources in parallel and mixed together:</p>
+            <ul class="text-sm text-gray-400 space-y-1 ml-4">
+              <li>☁️ <span class="text-gray-200">Cloudflare R2</span> — upload to the <code class="text-blue-300">Photos/</code> folder in the <code class="text-blue-300">homehub</code> bucket</li>
+              <li>🖼 <span class="text-gray-200">Imgur</span> — add to the public album (edit the ID in <code class="text-blue-300">config.js</code>)</li>
+            </ul>
+            <p class="text-xs text-gray-500 mt-2">Both sources are configured in <code class="text-blue-300">config.js</code>. If both are empty, placeholder photos are shown so the slideshow is never blank.</p>
+            <button onclick="Hub.app._testSlideshow()" class="btn btn-secondary text-sm mt-2">▶ Test Slideshow</button>
           </div>
         </div>
 

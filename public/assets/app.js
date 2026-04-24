@@ -474,9 +474,8 @@ Hub.app = {
     Hub.utils.$('settingLocationName').value  = s.location_name     || cfg.defaultLocation?.name || '';
     Hub.utils.$('settingLat').value           = s.location_lat      || cfg.defaultLocation?.lat  || '';
     Hub.utils.$('settingLon').value           = s.location_lon      || cfg.defaultLocation?.lon  || '';
-    Hub.utils.$('settingImmichUrl').value     = s.immich_base_url   || cfg.immichBaseUrl          || '';
-    Hub.utils.$('settingImmichKey').value     = s.immich_api_key    || cfg.immichSharedAlbumKeyOrToken || '';
-    Hub.utils.$('settingImmichAlbum').value   = s.immich_album_id   || '';
+    // Immich fields were removed from the Photos settings section.
+    // Values are preserved in DB state untouched; no inputs to populate.
     Hub.utils.$('settingIdleTimeout').value   = s.standby_timeout_min || 10;
     Hub.utils.$('settingQuietStart').value    = s.quiet_hours_start || '22:00';
     Hub.utils.$('settingQuietEnd').value      = s.quiet_hours_end   || '07:00';
@@ -497,13 +496,8 @@ Hub.app = {
     // Refresh push notification status display
     Hub.notifications?.refreshSettingsUI?.().catch(() => {});
 
-    // Photo provider settings — drive the new card-based selector
-    const provider = s.photo_provider || localStorage.getItem('photo_provider') || 'imgur';
-    this._selectPhotoProvider(provider);
-    const imgurAlbumEl = document.getElementById('settingImgurAlbum');
-    if (imgurAlbumEl) {
-      imgurAlbumEl.value = s.imgur_album_id || localStorage.getItem('imgur_album_id') || 'kAG2MS3';
-    }
+    // Photo sources are hardcoded in config.js (Cloudflare R2 + Imgur) —
+    // no UI to load or sync here anymore.
 
 
     this._loadCalendarSelection();
@@ -522,16 +516,9 @@ Hub.app = {
     }
   },
 
-  _updatePhotoProviderUI(provider) {
-    const cfSection     = document.getElementById('photoSettingsCloudflare');
-    const imgurSection  = document.getElementById('photoSettingsImgur');
-    const immichSection = document.getElementById('photoSettingsImmich');
-    if (cfSection) cfSection.style.display = provider === 'cloudflare' ? '' : 'none';
-    if (imgurSection)  imgurSection.style.display  = provider === 'imgur'   ? '' : 'none';
-    if (immichSection) immichSection.style.display = provider === 'immich'  ? '' : 'none';
-  },
+  _updatePhotoProviderUI() { /* deprecated — photo sources are now hardcoded in config.js */ },
 
-async _loadCalendarSelection() {
+  async _loadCalendarSelection() {
     const container = Hub.utils.$('calendarCheckboxes');
     if (!container) return;
     container.innerHTML = '<p class="text-gray-400 text-sm">Click "Load My Calendars" to select which calendars to display</p>';
@@ -579,10 +566,10 @@ async _loadCalendarSelection() {
     const selectedCalendars = [];
     document.querySelectorAll('.calendar-checkbox:checked').forEach(cb => selectedCalendars.push(cb.dataset.calendarId));
 
-    // Photo provider
-    const photoProvider     = document.getElementById('settingPhotoProvider')?.value || 'imgur';
-    const imgurAlbumId      = document.getElementById('settingImgurAlbum')?.value.trim()    || '';
-
+    // Photo sources are hardcoded in config.js now — no settings to save.
+    // Legacy DB columns are preserved (set to whatever's already in state)
+    // so older rows don't get overwritten with null.
+    const legacy = Hub.state.settings || {};
 
     const payload = {
       location_name:              Hub.utils.$('settingLocationName').value.trim(),
@@ -591,19 +578,13 @@ async _loadCalendarSelection() {
       standby_timeout_min:        parseInt(Hub.utils.$('settingIdleTimeout').value) || 10,
       quiet_hours_start:          Hub.utils.$('settingQuietStart').value || '22:00',
       quiet_hours_end:            Hub.utils.$('settingQuietEnd').value   || '07:00',
-      immich_base_url:            Hub.utils.$('settingImmichUrl').value.trim(),
-      immich_api_key:             Hub.utils.$('settingImmichKey').value.trim(),
-      immich_album_id:            Hub.utils.$('settingImmichAlbum').value.trim(),
+      immich_base_url:            legacy.immich_base_url || '',
+      immich_api_key:             legacy.immich_api_key  || '',
+      immich_album_id:            legacy.immich_album_id || '',
       selected_calendars:         selectedCalendars.length > 0 ? selectedCalendars : ['primary'],
-      photo_provider:             photoProvider,
-
-      imgur_album_id:             imgurAlbumId
+      photo_provider:             legacy.photo_provider  || 'mixed',
+      imgur_album_id:             legacy.imgur_album_id  || ''
     };
-
-    // Always save photo settings to localStorage too (works without DB columns)
-    localStorage.setItem('photo_provider',               photoProvider);
-
-    localStorage.setItem('imgur_album_id',               imgurAlbumId);
 
     try {
       const saved = await Hub.db.saveSettings(Hub.state.user.id, Hub.state.household_id, payload);
@@ -941,19 +922,10 @@ async _loadCalendarSelection() {
     if (saveRow) saveRow.style.display = ['display','system'].includes(section) ? 'none' : '';
   },
 
-  /** Handle photo provider card selection */
-  _selectPhotoProvider(provider) {
-    // Update card visual states
-    ['cloudflare','imgur','immich','off'].forEach(p => {
-      const card = document.getElementById(`pp-${p}`);
-      if (card) card.classList.toggle('active-provider', p === provider);
-    });
-    // Update hidden input
-    const hidden = document.getElementById('settingPhotoProvider');
-    if (hidden) hidden.value = provider;
-    // Show/hide provider settings panels
-    this._updatePhotoProviderUI(provider);
-  },
+  _updatePhotoProviderUI() { /* deprecated — photo sources are now hardcoded in config.js */ },
+
+  /** deprecated — kept as a no-op so any stray reference doesn't crash */
+  _selectPhotoProvider() { /* no-op */ },
 };
 
 window.addEventListener('DOMContentLoaded', () => Hub.app.init());

@@ -636,15 +636,22 @@ Hub.music = {
     const isActive = Hub.player?.state?.currentSource === 'music' && Hub.player?.state?.musicVideoId === id;
     const dur = track.duration ? this._fmtDuration(track.duration) : '';
 
-    // Build escaped JSON for onclick — avoid nested quote issues
-    const playArgs = `'${v(id)}','${v(track.title).replace(/'/g, "\\'")}','${v(track.artist).replace(/'/g, "\\'")}','${v(track.thumbnail)}',${track.duration || 0}`;
-    const favArgs = playArgs;
+    // CodeQL-safe: track fields go in data-* attributes (properly HTML-escaped
+    // by esc()), then the delegated _actionFromDataset() helper reads them at
+    // click time. This eliminates the whole class of string-escaping bugs
+    // that came from building onclick="play('id','title'...)" by concatenation.
+    const dataAttrs =
+      `data-track-id="${v(id)}" ` +
+      `data-track-title="${v(track.title || '')}" ` +
+      `data-track-artist="${v(track.artist || '')}" ` +
+      `data-track-thumb="${v(track.thumbnail || '')}" ` +
+      `data-track-duration="${Number(track.duration) || 0}"`;
 
     return `
       <div class="flex items-center gap-2 p-2 rounded-lg transition-colors
            ${isActive ? 'bg-purple-900/40 border border-purple-700/50' : 'hover:bg-white/5'}"
-           data-music-id="${v(id)}" style="cursor:pointer;"
-           onclick="Hub.music.play(${playArgs})">
+           ${dataAttrs} style="cursor:pointer;"
+           onclick="Hub.music._actionFromDataset(this, 'play')">
         <img src="${v(track.thumbnail)}" alt="" loading="lazy"
           style="width:44px;height:44px;border-radius:.375rem;object-fit:cover;flex-shrink:0;background:#1a2535;"
           onerror="this.style.display='none'">
@@ -653,16 +660,38 @@ Hub.music = {
           <p class="text-xs text-gray-500 truncate">${v(track.artist)}${dur ? ' · ' + dur : ''}</p>
         </div>
         <div class="flex items-center gap-1 flex-shrink-0">
-          <button onclick="event.stopPropagation();Hub.music.toggleFavorite(${favArgs})"
+          <button onclick="event.stopPropagation();Hub.music._actionFromDataset(this, 'fav')"
             class="p-1.5 rounded-md hover:bg-white/10 transition-colors"
             style="background:none;border:none;cursor:pointer;font-size:1rem;line-height:1;"
             title="${isFav ? 'Remove from favorites' : 'Add to favorites'}">${isFav ? '❤️' : '🤍'}</button>
-          <button onclick="event.stopPropagation();Hub.music.addToQueue(${playArgs})"
+          <button onclick="event.stopPropagation();Hub.music._actionFromDataset(this, 'queue')"
             class="p-1.5 rounded-md hover:bg-white/10 transition-colors"
             style="background:none;border:none;cursor:pointer;font-size:.85rem;line-height:1;"
             title="Add to queue">➕</button>
         </div>
       </div>`;
+  },
+
+  /**
+   * Delegated action handler for track rows. Walks up from the clicked
+   * element to the nearest row carrying data-track-* attributes, then
+   * dispatches the named action. Safe against title/artist strings that
+   * contain quotes, backslashes, newlines, or HTML — because the track
+   * data travels as HTML-escaped attributes rather than interpolated
+   * into a JS string literal.
+   */
+  _actionFromDataset(el, action) {
+    let row = el;
+    while (row && !row.dataset?.trackId) row = row.parentElement;
+    if (!row) return;
+    const id       = row.dataset.trackId;
+    const title    = row.dataset.trackTitle    || '';
+    const artist   = row.dataset.trackArtist   || '';
+    const thumb    = row.dataset.trackThumb    || '';
+    const duration = parseInt(row.dataset.trackDuration, 10) || 0;
+    if (action === 'play')  return this.play(id, title, artist, thumb, duration);
+    if (action === 'fav')   return this.toggleFavorite(id, title, artist, thumb, duration);
+    if (action === 'queue') return this.addToQueue(id, title, artist, thumb, duration);
   },
 
   _nowPlayingHTML() {
@@ -738,8 +767,8 @@ Hub.music = {
 
   _highlightActive() {
     const activeId = Hub.player?.state?.musicVideoId;
-    document.querySelectorAll('[data-music-id]').forEach(row => {
-      const isActive = row.dataset.musicId === activeId;
+    document.querySelectorAll('[data-track-id]').forEach(row => {
+      const isActive = row.dataset.trackId === activeId;
       row.classList.toggle('bg-purple-900/40', isActive);
       row.classList.toggle('border', isActive);
       row.classList.toggle('border-purple-700/50', isActive);

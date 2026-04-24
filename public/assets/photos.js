@@ -1,11 +1,10 @@
 // ============================================================
-// assets/photos.js — Unified photo provider (UNBREAKABLE)
+// assets/photos.js — Mixed-pool photo slideshow
 //
-// Fallback chain: Google Photos → Immich → Imgur → Placeholders
-// The slideshow NEVER shows a blank screen.
-//
-// Each provider has a 5-second timeout. If one fails, the next
-// is tried automatically. Placeholders are the last resort.
+// Fetches Cloudflare R2 AND Imgur in parallel, merges both into
+// one shuffled pool. No provider selection, no settings UI —
+// sources are hardcoded in config.js. If both fail, falls back
+// to placeholders so the slideshow is NEVER blank.
 // ============================================================
 window.Hub = window.Hub || {};
 
@@ -13,25 +12,8 @@ Hub.photos = {
   _provider: 'loading',
   _images:   [],
   _lastFetchTime: 0,
-  _MIN_IMAGES: 3,        // minimum images to consider a provider "working"
-  _PROVIDER_TIMEOUT: 5000, // 5s per provider
-
-  // ── Read saved provider preference ───────────────────────
-  _loadProvider() {
-    const s = Hub.state?.settings || {};
-    return s.photo_provider
-      || localStorage.getItem('photo_provider')
-      || (Hub.immich?._imgurConfig?.useImgur ? 'imgur' : 'immich');
-  },
-
-  _getImgurAlbumId() {
-    return (Hub.state?.settings?.imgur_album_id)
-      || localStorage.getItem('imgur_album_id')
-      || Hub.immich?._imgurConfig?.albumId
-      || 'kAG2MS3';
-  },
-
-
+  _MIN_IMAGES: 1,        // any image is better than placeholders
+  _SOURCE_TIMEOUT: 6000, // 6s per source (parallel, so total ~6s)
 
   // ── Timeout wrapper ─────────────────────────────────────────
   _withTimeout(promise, ms) {
@@ -41,101 +23,79 @@ Hub.photos = {
     ]);
   },
 
-  // ── MASTER FETCH: tries providers in order ──────────────────
+  // ── MASTER FETCH: parallel Cloudflare + Imgur, merge, shuffle ──
   async getImages() {
-    const preferred = this._loadProvider();
-    console.log('[Photos] Preferred provider:', preferred);
+    // Fire both sources at the same time. Promise.allSettled means a
+    // failure in one never blocks the other — we just use whatever
+    // came back.
+    const results = await Promise.allSettled([
+      this._withTimeout(this._fetchCloudflare(), this._SOURCE_TIMEOUT),
+      this._withTimeout(this._fetchImgur(),      this._SOURCE_TIMEOUT),
+    ]);
 
-    // Build provider chain based on preference
-    const chain = this._buildChain(preferred);
+    const [cfRes, imgurRes] = results;
+    const pool = [];
+    const sources = [];
 
-    for (const { name, fetcher } of chain) {
-      try {
-        const images = await this._withTimeout(fetcher(), this._PROVIDER_TIMEOUT);
-        if (Array.isArray(images) && images.length >= this._MIN_IMAGES) {
-          this._provider = name;
-          this._images = images;
-          this._lastFetchTime = Date.now();
-          console.log(`[Photos] ✓ ${name}: ${images.length} images`);
-          return images;
-        }
-        console.log(`[Photos] ${name}: only ${images?.length || 0} images, trying next`);
-      } catch (e) {
-        console.warn(`[Photos] ${name} failed:`, e.message);
-      }
+    if (cfRes.status === 'fulfilled' && Array.isArray(cfRes.value) && cfRes.value.length) {
+      pool.push(...cfRes.value);
+      sources.push(`cloudflare(${cfRes.value.length})`);
+    } else if (cfRes.status === 'rejected') {
+      console.warn('[Photos] Cloudflare failed:', cfRes.reason?.message || cfRes.reason);
+    }
+
+    if (imgurRes.status === 'fulfilled' && Array.isArray(imgurRes.value) && imgurRes.value.length) {
+      pool.push(...imgurRes.value);
+      sources.push(`imgur(${imgurRes.value.length})`);
+    } else if (imgurRes.status === 'rejected') {
+      console.warn('[Photos] Imgur failed:', imgurRes.reason?.message || imgurRes.reason);
+    }
+
+    if (pool.length >= this._MIN_IMAGES) {
+      // Dedupe then shuffle so the mix is interleaved, not grouped by source
+      const merged = [...new Set(pool)].sort(() => Math.random() - 0.5);
+      this._provider = sources.join('+') || 'mixed';
+      this._images = merged;
+      this._lastFetchTime = Date.now();
+      console.log(`[Photos] ✓ mixed pool: ${merged.length} images from ${sources.join(' + ')}`);
+      return merged;
     }
 
     // Absolute last resort: placeholders (NEVER blank)
-    console.warn('[Photos] All providers failed — using placeholders');
+    console.warn('[Photos] All sources empty — using placeholders');
     this._provider = 'placeholders';
     this._images = this._placeholders();
     return this._images;
   },
 
-  _buildChain(preferred) {
-    const providers = {
-      cloudflare: { name: 'cloudflare_r2', fetcher: () => this._fetchCloudflare() },
-      imgur:      { name: 'imgur',          fetcher: () => this._fetchImgur() },
-      immich:     { name: 'immich',         fetcher: () => this._fetchImmich() },
-    };
-
-    if (preferred === 'off') return [];
-
-    const chain = [];
-    if (preferred && providers[preferred]) {
-      chain.push(providers[preferred]);
-    }
-    for (const [key, p] of Object.entries(providers)) {
-      if (key !== preferred) chain.push(p);
-    }
-    return chain;
-  },
-
-  // Google Photos removed — API shut down March 31, 2025. See README for details.
-
   // ── Cloudflare R2 (via Worker) ──────────────────────────────
   async _fetchCloudflare() {
-    const cfg = window.HOME_HUB_CONFIG?.cloudflare || {};
+    const cfg   = window.HOME_HUB_CONFIG?.cloudflare || {};
     const base  = cfg.workerUrl;
     const album = cfg.photoAlbum || 'default';
-    if (!base) throw new Error('Cloudflare Worker URL not configured');
+    if (!base) throw new Error('no workerUrl in config');
 
-    const resp = await fetch(`${base}/media/photos?album=${encodeURIComponent(album)}&limit=100`);
+    const resp = await fetch(`${base}/media/photos?album=${encodeURIComponent(album)}&limit=200`);
     if (!resp.ok) throw new Error('CF Worker HTTP ' + resp.status);
     const data = await resp.json();
 
-    if (!data.photos?.length) throw new Error('No photos in R2 album');
-    // Map to full URLs — Worker serves them at /media/photos/<key>
+    if (!data.photos?.length) throw new Error('R2 album empty');
     return data.photos.map(p => `${base}${p.url}`);
   },
 
   // ── Imgur ───────────────────────────────────────────────────
   async _fetchImgur() {
-    const albumId = this._getImgurAlbumId();
-    const res = await fetch(`https://api.imgur.com/3/album/${albumId}`, {
+    const cfg     = window.HOME_HUB_CONFIG?.imgur || {};
+    const albumId = cfg.albumId || 'kAG2MS3';
+    if (!albumId) throw new Error('no imgur albumId in config');
+
+    const res = await fetch(`https://api.imgur.com/3/album/${encodeURIComponent(albumId)}`, {
       headers: { Authorization: 'Client-ID 546c25a59c58ad7' }
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-    if (!data.data?.images?.length) throw new Error('No images');
+    if (!data.data?.images?.length) throw new Error('album empty');
     return data.data.images.map(img => img.link);
-  },
-
-  // ── Immich ─────────────────────────────────────────────────
-  async _fetchImmich() {
-    const s   = Hub.state?.settings || {};
-    const url = s.immich_base_url || '';
-    const key = s.immich_api_key  || '';
-    if (!url || !key) throw new Error('Not configured');
-
-    const res = await fetch(`${url}/api/assets`, {
-      headers: { 'x-api-key': key, Accept: 'application/json' }
-    });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const assets = await res.json();
-    const imgs = assets.filter(a => a.type === 'IMAGE' && !a.isTrashed);
-    if (!imgs.length) throw new Error('No images');
-    return imgs.map(a => `${url}/api/assets/${a.id}/thumbnail?size=preview`);
   },
 
   // ── Placeholders (always works, NEVER empty) ───────────────
@@ -266,37 +226,30 @@ Hub.photos = {
       </div>`;
   },
 
-  // ── Diagnostics (callable from console) ─────────────────────
+  // ── Diagnostics (callable from console: Hub.photos.diagnose()) ─
   async diagnose() {
-    const results = { timestamp: new Date().toISOString(), providers: {} };
-    const base = Hub.utils?.apiBase?.() || '';
+    const results = { timestamp: new Date().toISOString(), sources: {} };
 
-    // Google Photos — removed (API shut down March 2025)
-    results.providers.google_photos = {
-      status: 'removed',
-      error:  'Library API removed for normal user albums on March 31, 2025',
-    };
+    // Cloudflare R2
+    try {
+      const t0 = Date.now();
+      const imgs = await this._withTimeout(this._fetchCloudflare(), 5000);
+      results.sources.cloudflare = { status: 'ok', images: imgs.length, latencyMs: Date.now() - t0 };
+    } catch (e) {
+      results.sources.cloudflare = { status: 'error', error: e.message };
+    }
 
     // Imgur
     try {
       const t0 = Date.now();
       const imgs = await this._withTimeout(this._fetchImgur(), 5000);
-      results.providers.imgur = { status: 'ok', images: imgs.length, latencyMs: Date.now() - t0 };
+      results.sources.imgur = { status: 'ok', images: imgs.length, latencyMs: Date.now() - t0 };
     } catch (e) {
-      results.providers.imgur = { status: 'error', error: e.message };
+      results.sources.imgur = { status: 'error', error: e.message };
     }
 
-    // Immich
-    try {
-      const t0 = Date.now();
-      const imgs = await this._withTimeout(this._fetchImmich(), 5000);
-      results.providers.immich = { status: 'ok', images: imgs.length, latencyMs: Date.now() - t0 };
-    } catch (e) {
-      results.providers.immich = { status: 'error', error: e.message };
-    }
-
-    results.currentProvider = this._provider;
-    results.currentImages = this._images.length;
+    results.currentPool     = this._provider;
+    results.currentImages   = this._images.length;
 
     console.log('[Photos] Diagnostics:', JSON.stringify(results, null, 2));
     return results;

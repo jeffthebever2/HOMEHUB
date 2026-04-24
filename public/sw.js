@@ -6,8 +6,8 @@
 //   - Images: cache-first with 7-day TTL
 // ============================================================
 
-const CACHE_NAME  = 'homehub-v8';
-const CACHE_SHELL = 'homehub-shell-v8';
+const CACHE_NAME  = 'homehub-v10';
+const CACHE_SHELL = 'homehub-shell-v10';
 
 // Static app-shell assets to pre-cache on install
 const SHELL_URLS = [
@@ -66,6 +66,31 @@ self.addEventListener('activate', (evt) => {
   );
 });
 
+// ── Host matcher: exact hostname or proper subdomain only ─
+// hostname.includes('googleapis.com') would wrongly match 'googleapis.com.evil.com'
+// and 'fakegoogleapis.com'. This helper anchors to the hostname boundary.
+function hostMatches(hostname, domain) {
+  return hostname === domain || hostname.endsWith('.' + domain);
+}
+function hostMatchesAny(hostname, domains) {
+  return domains.some(d => hostMatches(hostname, d));
+}
+
+// Domain allowlists
+const API_DOMAINS = [
+  'supabase.co',
+  'googleapis.com',
+  'open-meteo.com',
+  'weather.gov',
+  'rainviewer.com',
+  'api.imgur.com',
+];
+const CDN_DOMAINS = [
+  'cdnjs.cloudflare.com',
+  'cdn.jsdelivr.net',
+  'unpkg.com',
+];
+
 // ── Fetch: route strategy ─────────────────────────────────
 self.addEventListener('fetch', (evt) => {
   const { request } = evt;
@@ -76,12 +101,7 @@ self.addEventListener('fetch', (evt) => {
 
   // Network-only: API calls, Supabase auth, external APIs
   const isApi = url.pathname.startsWith('/api/')
-             || url.hostname.includes('supabase.co')
-             || url.hostname.includes('googleapis.com')
-             || url.hostname.includes('open-meteo')
-             || url.hostname.includes('weather.gov')
-             || url.hostname.includes('rainviewer')
-             || url.hostname.includes('api.imgur.com');
+             || hostMatchesAny(url.hostname, API_DOMAINS);
 
   if (isApi) {
     // Let the network handle it — don't cache
@@ -107,7 +127,7 @@ self.addEventListener('fetch', (evt) => {
   }
 
   // CDN assets (Leaflet, etc.) — cache-first, no background update
-  const isCdn = url.hostname.includes('cdnjs') || url.hostname.includes('cdn.jsdelivr') || url.hostname.includes('unpkg.com');
+  const isCdn = hostMatchesAny(url.hostname, CDN_DOMAINS);
   if (isCdn) {
     evt.respondWith(
       caches.match(request).then(cached => cached || fetch(request).then(resp => {

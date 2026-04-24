@@ -37,11 +37,24 @@ async function listPhotos(url, env) {
   const album  = url.searchParams.get('album') || 'default';
   const limit  = Math.min(parseInt(url.searchParams.get('limit') || '100'), 500);
   const cursor = url.searchParams.get('cursor') || undefined;
-  const prefix = album === 'default' ? 'photos/' : `albums/${album}/`;
+  // Prefix resolution:
+  //   "default"       → "photos/"          (backward-compat)
+  //   ends with "/"   → used verbatim      (e.g. "Photos/" matches existing bucket layout)
+  //   anything else   → "albums/<name>/"   (legacy named-album convention)
+  let prefix;
+  if (album === 'default')       prefix = 'photos/';
+  else if (album.endsWith('/'))  prefix = album;
+  else                           prefix = `albums/${album}/`;
   const listed = await env.MEDIA.list({ prefix, limit, cursor });
 
+  // Filter out zero-byte folder placeholders (e.g. "Photos/" itself) and
+  // non-image files. Protects the frontend from trying to render a 0-byte
+  // entry as a photo.
+  const IMG_RE = /\.(jpe?g|png|gif|webp|avif|heic|heif|bmp)$/i;
+  const objects = listed.objects.filter(o => o.size > 0 && IMG_RE.test(o.key));
+
   return json({
-    photos: listed.objects.map(obj => ({
+    photos: objects.map(obj => ({
       key:      obj.key,
       url:      `/media/photos/${obj.key}`,
       size:     obj.size,
@@ -49,7 +62,7 @@ async function listPhotos(url, env) {
       etag:     obj.httpEtag,
       meta:     obj.customMetadata || {},
     })),
-    count:     listed.objects.length,
+    count:     objects.length,
     truncated: listed.truncated,
     cursor:    listed.cursor || null,
     album,

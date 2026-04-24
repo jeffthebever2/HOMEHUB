@@ -38,10 +38,17 @@ window.HOME_HUB_CONFIG = {
 
   // === CLOUDFLARE (R2 photos via Worker) ===
   // Worker: homehub-media, account jeffthebever200, bucket "homehub"
-  // Photos served via /media/photos/<key> on the Worker (public read, auth only on upload/delete).
+  // photoAlbum ending in "/" is used as a literal R2 key prefix,
+  // so "Photos/" matches objects like "Photos/IMG_0001.jpg" directly.
   cloudflare: {
-    workerUrl:      'https://homehub-media.jeffthebever200.workers.dev',
-    photoAlbum:     'homehub', // prefix "albums/homehub/" inside the bucket
+    workerUrl:  'https://homehub-media.jeffthebever200.workers.dev',
+    photoAlbum: 'Photos/',
+  },
+
+  // === IMGUR (second photo source, mixed with Cloudflare R2) ===
+  // Add/remove photos by editing the public Imgur album in your browser.
+  imgur: {
+    albumId: 'kAG2MS3',
   },
 
   // === MUSIC (Spotify) ===

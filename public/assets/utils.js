@@ -48,14 +48,27 @@ Hub.utils = {
     return hhmm >= s || hhmm < e;  // wraps midnight
   },
 
-  /** Deep merge objects */
+  /** Deep merge objects (safe from prototype pollution) */
   merge(target, ...sources) {
+    // Reject the three dangerous keys that allow escaping into Object.prototype
+    // (e.g. attacker JSON {"__proto__": {"isAdmin": true}}).
+    const BLOCKED = new Set(['__proto__', 'constructor', 'prototype']);
     for (const src of sources) {
-      for (const key of Object.keys(src || {})) {
-        if (src[key] && typeof src[key] === 'object' && !Array.isArray(src[key])) {
-          target[key] = Hub.utils.merge(target[key] || {}, src[key]);
+      if (!src || typeof src !== 'object') continue;
+      // Use hasOwnProperty-filtered keys so inherited props can't sneak in.
+      for (const key of Object.keys(src)) {
+        if (BLOCKED.has(key)) continue;
+        if (!Object.prototype.hasOwnProperty.call(src, key)) continue;
+        const val = src[key];
+        if (val && typeof val === 'object' && !Array.isArray(val)) {
+          target[key] = Hub.utils.merge(
+            (target[key] && typeof target[key] === 'object' && !Array.isArray(target[key]))
+              ? target[key]
+              : {},
+            val
+          );
         } else {
-          target[key] = src[key];
+          target[key] = val;
         }
       }
     }
