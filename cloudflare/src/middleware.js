@@ -10,12 +10,16 @@ export function cors(response, request, env) {
     const incomingOrigin = request.headers?.get?.('Origin');
     if (incomingOrigin) {
       const allowed = env?.ALLOWED_ORIGIN || '';
-      const isLocalhost = incomingOrigin.startsWith('http://localhost:') || incomingOrigin.startsWith('http://127.0.0.1:');
-      const isLocalIP = incomingOrigin.match(/^http:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$/);
-      const isVercel = incomingOrigin.includes('.vercel.app');
+      // Strip trailing slashes to prevent exact string-matching mismatch failures
+      const cleanIncoming = incomingOrigin.replace(/\/$/, '');
+      const cleanAllowed = allowed.replace(/\/$/, '');
       
-      if (incomingOrigin === allowed || isLocalhost || isLocalIP || isVercel || allowed === '*' || allowed === '') {
-        origin = incomingOrigin;
+      const isLocalhost = cleanIncoming.startsWith('http://localhost:') || cleanIncoming.startsWith('http://127.0.0.1:');
+      const isLocalIP = cleanIncoming.match(/^http:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$/);
+      const isVercel = cleanIncoming.includes('.vercel.app');
+      
+      if (cleanIncoming === cleanAllowed || isLocalhost || isLocalIP || isVercel || cleanAllowed === '*' || cleanAllowed === '') {
+        origin = incomingOrigin; // send back original exact header value
       }
     }
   }
