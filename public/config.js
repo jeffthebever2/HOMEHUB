@@ -40,8 +40,8 @@ window.HOME_HUB_CONFIG = {
   // To enable, go to your Cloudinary Console Settings -> Security -> Restricted media types,
   // and make sure "Resource list" is unchecked/enabled for public access.
   cloudinary: {
-    cloudName: 'jeffthebever200',  // Your Cloudinary Cloud Name
-    tagName: 'homehub',            // Tag applied to your family photos
+    cloudName: 'divxoofka',  // Your Cloudinary Cloud Name
+    tagName: 'homehub',      // Tag applied to your family photos
   },
 
   // === IMGUR (second photo source, mixed with Cloudflare R2) ===

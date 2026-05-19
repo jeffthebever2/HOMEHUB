@@ -6,12 +6,12 @@
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(204).end();
 
-  const cloudName = req.query.cloudName || process.env.CLOUDINARY_CLOUD_NAME || 'jeffthebever200';
-  const tagName = req.query.tagName || process.env.CLOUDINARY_TAG_NAME || 'homehub';
+  const cloudName = 'divxoofka';
+  const tagName = 'homehub';
   
-  // Credentials provided by user (hardcoded as serverless defaults, configurable via env vars)
-  const apiKey = process.env.CLOUDINARY_API_KEY || '556873985559518';
-  const apiSecret = process.env.CLOUDINARY_API_SECRET || 'KKEm8cLQFJLteHKko6VuN5H4Hic';
+  // Credentials strictly hardcoded
+  const apiKey = '556873985559518';
+  const apiSecret = 'KKEm8cLQFJLteHKko6VuN5H4Hic';
 
   try {
     // Cloudinary Admin API to list resources by tag name
