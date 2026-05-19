@@ -146,6 +146,13 @@ Hub.app = {
 
       if (event === 'SIGNED_OUT') {
         if (this._loginInProgress) return;
+
+        // ⚠️ NEVER automatically sign out unless explicitSignOut is true!
+        if (!Hub.auth?._explicitSignOut) {
+          console.log('[Auth] SIGNED_OUT event received but explicit sign out is false. Ignoring event to prevent automatic signout.');
+          return;
+        }
+
         // First check: session might still exist despite SIGNED_OUT event
         try {
           const s = await Hub.auth.getSession();
@@ -267,6 +274,9 @@ Hub.app = {
 
       this._loggedIn   = true;
       Hub.state.user   = user;
+
+      // Reset explicit signout flag upon successful login
+      if (Hub.auth) Hub.auth._explicitSignOut = false;
 
       try {
         const s = await Hub.db.loadSettings(user.id);
@@ -538,7 +548,7 @@ Hub.app = {
     btn.textContent = 'Reload Calendars';
 
     if (calendars.error) {
-      container.innerHTML = `<div class="text-red-400 text-sm"><p class="font-semibold">⚠️ Error: ${Hub.utils.esc(calendars.error)}</p><button onclick="Hub.auth.signOut()" class="btn btn-secondary mt-2 text-xs">Sign Out & Reconnect</button></div>`;
+      container.innerHTML = `<div class="text-red-400 text-sm"><p class="font-semibold">⚠️ Error: ${Hub.utils.esc(calendars.error)}</p><button onclick="Hub.auth.signInGoogle()" class="btn btn-secondary mt-2 text-xs">Reconnect Google</button></div>`;
       Hub.ui.toast('Failed to load calendars', 'error');
       return;
     }

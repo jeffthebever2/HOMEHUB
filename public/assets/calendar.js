@@ -30,8 +30,8 @@ Hub.calendar = {
     if (!token) {
       const expired = Hub.state?._googleAuthExpired;
       return { error: expired
-        ? 'Google Calendar access expired. Please sign out and sign in again to restore access.'
-        : 'Not authenticated with Google. Please sign out and sign in again to grant calendar access.'
+        ? 'Google Calendar access expired. Please reconnect Google to restore access.'
+        : 'Not authenticated with Google. Please reconnect Google to grant calendar access.'
       };
     }
 
@@ -50,8 +50,8 @@ Hub.calendar = {
       token = await this._getProviderToken();
       if (!token) {
         return { error: Hub.state?._googleAuthExpired
-          ? 'Google Calendar access expired. Please sign out and sign in again.'
-          : 'Could not refresh Google token. Please sign out and sign in again.'
+          ? 'Google Calendar access expired. Please reconnect Google.'
+          : 'Could not refresh Google token. Please reconnect Google.'
         };
       }
       const headers2 = Object.assign({}, headers, { 'Authorization': `Bearer ${token}` });
@@ -87,10 +87,10 @@ Hub.calendar = {
         console.error('[Calendar] Error response:', errorText);
 
         if (response.status === 401) {
-          return { error: 'Calendar token expired. Try again; if it keeps happening, sign out and sign in again.' };
+          return { error: 'Calendar token expired. Please reconnect Google.' };
         }
         if (response.status === 403) {
-          return { error: 'Calendar API access denied (403). Make sure Calendar API is enabled and you granted calendar scopes when signing in.' };
+          return { error: 'Calendar API access denied (403). Please reconnect Google and grant calendar scopes.' };
         }
         throw new Error(`Calendar list error: ${response.status} - ${errorText}`);
       }
@@ -103,6 +103,22 @@ Hub.calendar = {
       console.error('[Calendar] Error fetching calendar list:', error);
       return { error: `Failed to load calendars: ${error.message}` };
     }
+  },
+
+  _getLocalEventsCache() {
+    try {
+      const stored = localStorage.getItem('hub_cached_calendar_events');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && Array.isArray(parsed.events)) {
+          const events = parsed.events;
+          events.isOfflineCache = true;
+          events.cachedAt = parsed.timestamp;
+          return events;
+        }
+      }
+    } catch (_) {}
+    return null;
   },
 
   /**
@@ -156,15 +172,26 @@ Hub.calendar = {
             `timeMin=${timeMin}`;
 
           const response = await this._googleFetch(url);
-          if (response?.error) return response;
+          if (response?.error) {
+            const cached = this._getLocalEventsCache();
+            if (cached) {
+              console.log('[Calendar] Fetch error — falling back to offline cache');
+              return cached;
+            }
+            return response;
+          }
 
           if (!response.ok) {
+            const cached = this._getLocalEventsCache();
+            if (cached) {
+              console.log(`[Calendar] Response not OK (${response.status}) — falling back to offline cache`);
+              return cached;
+            }
             if (response.status === 401) {
-              // Usually recoverable; _googleFetch already retried once.
-              return { error: 'Calendar token expired. Try again; if it keeps happening, sign out and sign in again.' };
+              return { error: 'Calendar token expired. Please reconnect Google.' };
             }
             if (response.status === 403) {
-              return { error: 'Calendar API access denied (403). Make sure the Google Calendar API is enabled and the right scopes were granted.' };
+              return { error: 'Calendar API access denied (403). Please reconnect Google and grant calendar scopes.' };
             }
             console.warn(`[Calendar] Error fetching from ${calendarId}:`, response.status);
             continue; // Skip this calendar and try others
@@ -198,12 +225,25 @@ Hub.calendar = {
       this._cache = limitedEvents;
       this._cacheTime = now;
 
+      // 🛡️ Save to localStorage for permanent offline fallback
+      try {
+        localStorage.setItem('hub_cached_calendar_events', JSON.stringify({
+          timestamp: now,
+          events: limitedEvents
+        }));
+      } catch (_) {}
+
       console.log(`[Calendar] Fetched ${limitedEvents.length} events from ${calendarIds.length} calendar(s)`);
 
       return this._cache;
 
     } catch (error) {
       console.error('[Calendar] Error fetching events:', error);
+      const cached = this._getLocalEventsCache();
+      if (cached) {
+        console.log('[Calendar] Catch error — falling back to offline cache');
+        return cached;
+      }
       return { error: error.message };
     }
   },
@@ -320,7 +360,7 @@ Hub.calendar = {
 
     if (events.error) {
       // Check if it's a simple re-auth issue
-      const needsReauth = events.error.includes('sign out') || events.error.includes('sign in');
+      const needsReauth = events.error.includes('reconnect') || events.error.includes('sign out') || events.error.includes('sign in') || events.error.includes('expired');
       
       widget.innerHTML = `
         <div class="bg-blue-900 bg-opacity-30 rounded-lg p-4 text-center">
@@ -328,10 +368,10 @@ Hub.calendar = {
           <p class="text-sm font-medium mb-2">Calendar Not Connected</p>
           <p class="text-xs text-gray-400 mb-3">${Hub.utils.esc(events.error)}</p>
           ${needsReauth ? `
-            <button onclick="Hub.auth.signOut()" class="btn btn-primary text-xs">
-              Sign Out & Reconnect
+            <button onclick="Hub.auth.signInGoogle()" class="btn btn-primary text-xs">
+              Reconnect Google
             </button>
-            <p class="text-xs text-gray-500 mt-2">You'll need to grant calendar access when signing back in</p>
+            <p class="text-xs text-gray-500 mt-2">You'll need to grant calendar access when prompted</p>
           ` : `
             <button onclick="Hub.calendar.showSetupInstructions()" class="text-xs text-blue-400 hover:text-blue-300">
               How to connect
@@ -460,10 +500,14 @@ Hub.calendar = {
       ` + sectionsHtml;
     }
 
+    const offlineBadge = events.isOfflineCache 
+      ? `<span class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-900 bg-opacity-40 text-yellow-400 border border-yellow-800 font-normal ml-2">Offline Cache</span>`
+      : '';
+
     widget.innerHTML = `
       <div>
         <div class="flex items-center justify-between mb-4">
-          <h3 class="font-bold text-lg">📅 Calendar</h3>
+          <h3 class="font-bold text-lg flex items-center">📅 Calendar${offlineBadge}</h3>
           <div class="flex gap-2">
             <button onclick="Hub.calendar.createQuickEvent()" class="text-xs text-green-400 hover:text-green-300 font-medium">
               + Add

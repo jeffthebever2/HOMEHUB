@@ -123,6 +123,11 @@ const REFRESH_UNKNOWN = Symbol('REFRESH_UNKNOWN');
 
       // Session appears gone while logged in → CONFIRM before logout
       if (!session && Hub.app?._loggedIn) {
+        // ⚠️ NEVER automatically sign out unless explicitSignOut is true!
+        if (!Hub.auth?._explicitSignOut) {
+          console.log('[Auth] Watchdog: session appears gone but explicit sign out is false. Keeping user logged in.');
+          return;
+        }
         console.warn('[Auth] Watchdog: session appears gone — rechecking…');
         // Wait a beat, then do a fresh getSession() to confirm
         await new Promise(r => setTimeout(r, SUPABASE_CONFIG.SIGNED_OUT_RECHECK_MS));
@@ -229,6 +234,8 @@ const REFRESH_UNKNOWN = Symbol('REFRESH_UNKNOWN');
 
   // ── Auth API ───────────────────────────────────────────────
   Hub.auth = {
+    _explicitSignOut: false,
+
     async signInGoogle() {
       console.log('[Auth] signInGoogle (PKCE) — extended scopes + offline access');
       const { error } = await sb.auth.signInWithOAuth({
@@ -256,6 +263,7 @@ const REFRESH_UNKNOWN = Symbol('REFRESH_UNKNOWN');
 
     async signOut() {
       console.log('[Auth] signOut() — full provider logout');
+      Hub.auth._explicitSignOut = true;
       Hub.app._loggedIn      = false;
       Hub.app._loginInProgress = false;
       Hub.app._authHandled   = false;
@@ -377,6 +385,12 @@ const REFRESH_UNKNOWN = Symbol('REFRESH_UNKNOWN');
      *  Aborts gracefully if household_id can't be resolved (NOT NULL column). */
     async _saveGoogleRefreshToken(userId, refreshToken) {
       if (!refreshToken || !userId) return;
+
+      // 🛡️ Store a local backup of the refresh token in localStorage in case the DB gets cleared
+      try {
+        localStorage.setItem(`hub_google_refresh_token_${userId}`, refreshToken);
+      } catch (_) {}
+
       try {
         // Resolve household_id — required NOT NULL column on user_settings
         let householdId = Hub.state?.household_id;
@@ -537,7 +551,33 @@ const REFRESH_UNKNOWN = Symbol('REFRESH_UNKNOWN');
           if (!resp.ok) {
             const err = await resp.json().catch(() => ({}));
             if (err.action === 'reauth_required') {
-              console.warn('[Auth] Google refresh token invalid — user must re-authenticate');
+              console.warn('[Auth] Google refresh token invalid — checking for local backups...');
+              
+              // 🛡️ Self-healing backup restore mechanism!
+              // If the DB lost or cleared the refresh token (404), but we still have a local backup in
+              // localStorage, silently restore it to the DB and perform one automatic retry.
+              const userId = (await sb.auth.getSession()).data.session?.user?.id;
+              if (userId) {
+                try {
+                  const localBackup = localStorage.getItem(`hub_google_refresh_token_${userId}`);
+                  if (localBackup) {
+                    console.info('[Auth] Found local backup of Google refresh token — attempting self-healing DB restore...');
+                    
+                    // Temporarily remove to avoid any infinite loop if the token is truly revoked by Google
+                    localStorage.removeItem(`hub_google_refresh_token_${userId}`);
+                    
+                    await Hub.auth._saveGoogleRefreshToken(userId, localBackup);
+                    Hub.state._googleAuthExpired = false;
+                    
+                    // Silent retry
+                    return await this._fetchGoogleTokenFromServer(supabaseAccessToken);
+                  }
+                } catch (backupErr) {
+                  console.warn('[Auth] Self-healing restore failed:', backupErr.message);
+                }
+              }
+
+              console.warn('[Auth] No local backup found or restore failed — user must re-authenticate');
               Hub.state._googleAuthExpired = true;
               return null;  // no point retrying — token is permanently invalid
             }
