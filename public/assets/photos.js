@@ -23,25 +23,25 @@ Hub.photos = {
     ]);
   },
 
-  // ── MASTER FETCH: parallel Cloudflare + Imgur, merge, shuffle ──
+  // ── MASTER FETCH: parallel Cloudinary + Imgur, merge, shuffle ──
   async getImages() {
     // Fire both sources at the same time. Promise.allSettled means a
     // failure in one never blocks the other — we just use whatever
     // came back.
     const results = await Promise.allSettled([
-      this._withTimeout(this._fetchCloudflare(), this._SOURCE_TIMEOUT),
+      this._withTimeout(this._fetchCloudinary(), this._SOURCE_TIMEOUT),
       this._withTimeout(this._fetchImgur(),      this._SOURCE_TIMEOUT),
     ]);
 
-    const [cfRes, imgurRes] = results;
+    const [cldRes, imgurRes] = results;
     const pool = [];
     const sources = [];
 
-    if (cfRes.status === 'fulfilled' && Array.isArray(cfRes.value) && cfRes.value.length) {
-      pool.push(...cfRes.value);
-      sources.push(`cloudflare(${cfRes.value.length})`);
-    } else if (cfRes.status === 'rejected') {
-      console.warn('[Photos] Cloudflare failed:', cfRes.reason?.message || cfRes.reason);
+    if (cldRes.status === 'fulfilled' && Array.isArray(cldRes.value) && cldRes.value.length) {
+      pool.push(...cldRes.value);
+      sources.push(`cloudinary(${cldRes.value.length})`);
+    } else if (cldRes.status === 'rejected') {
+      console.warn('[Photos] Cloudinary failed:', cldRes.reason?.message || cldRes.reason);
     }
 
     if (imgurRes.status === 'fulfilled' && Array.isArray(imgurRes.value) && imgurRes.value.length) {
@@ -68,19 +68,23 @@ Hub.photos = {
     return this._images;
   },
 
-  // ── Cloudflare R2 (via Worker) ──────────────────────────────
-  async _fetchCloudflare() {
-    const cfg   = window.HOME_HUB_CONFIG?.cloudflare || {};
-    const base  = cfg.workerUrl;
-    const album = cfg.photoAlbum || 'default';
-    if (!base) throw new Error('no workerUrl in config');
+  // ── Cloudinary Delivery (via Vercel Serverless Proxy) ─────────
+  async _fetchCloudinary() {
+    const cfg = window.HOME_HUB_CONFIG?.cloudinary || {};
+    const cloudName = cfg.cloudName;
+    const tagName = cfg.tagName || 'homehub';
+    if (!cloudName) throw new Error('no cloudName in config');
 
-    const resp = await fetch(`${base}/media/photos?album=${encodeURIComponent(album)}&limit=200`);
-    if (!resp.ok) throw new Error('CF Worker HTTP ' + resp.status);
+    const apiBase = window.HOME_HUB_CONFIG?.apiBase || '';
+    const resp = await fetch(`${apiBase}/api/cloudinary-album?cloudName=${encodeURIComponent(cloudName)}&tagName=${encodeURIComponent(tagName)}`);
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      throw new Error(data.error || 'Serverless Proxy HTTP ' + resp.status);
+    }
     const data = await resp.json();
 
-    if (!data.photos?.length) throw new Error('R2 album empty');
-    return data.photos.map(p => `${base}${p.url}`);
+    if (!data.photos?.length) throw new Error('Cloudinary tag empty or failed to load photos');
+    return data.photos;
   },
 
   // ── Imgur ───────────────────────────────────────────────────
@@ -230,13 +234,13 @@ Hub.photos = {
   async diagnose() {
     const results = { timestamp: new Date().toISOString(), sources: {} };
 
-    // Cloudflare R2
+    // Cloudinary
     try {
       const t0 = Date.now();
-      const imgs = await this._withTimeout(this._fetchCloudflare(), 5000);
-      results.sources.cloudflare = { status: 'ok', images: imgs.length, latencyMs: Date.now() - t0 };
+      const imgs = await this._withTimeout(this._fetchCloudinary(), 5000);
+      results.sources.cloudinary = { status: 'ok', images: imgs.length, latencyMs: Date.now() - t0 };
     } catch (e) {
-      results.sources.cloudflare = { status: 'error', error: e.message };
+      results.sources.cloudinary = { status: 'error', error: e.message };
     }
 
     // Imgur
@@ -261,31 +265,35 @@ Hub.photos = {
     if (!el) return;
 
     el.classList.remove('hidden');
-    el.innerHTML = 'Testing Worker connection...';
+    el.innerHTML = 'Testing Cloudinary Connection...';
     btn.disabled = true;
 
     try {
-      const cfg = window.HOME_HUB_CONFIG?.cloudflare || {};
-      const base = cfg.workerUrl;
-      if (!base) {
-        el.innerHTML = '❌ Error: cloudflare.workerUrl is not defined in config.js.';
+      const cfg = window.HOME_HUB_CONFIG?.cloudinary || {};
+      const cloudName = cfg.cloudName;
+      const tagName = cfg.tagName || 'homehub';
+      if (!cloudName) {
+        el.innerHTML = '❌ Error: cloudinary.cloudName is not defined in config.js.';
         return;
       }
 
-      el.innerHTML = `📡 Querying health check:\nGET ${base}/health...`;
+      const apiBase = window.HOME_HUB_CONFIG?.apiBase || '';
+      el.innerHTML = `📡 Querying Secure Serverless Proxy:\nGET ${apiBase}/api/cloudinary-album?cloudName=${cloudName}&tagName=${tagName}...`;
+      
       const t0 = performance.now();
-      const resp = await fetch(`${base}/health`);
+      const resp = await fetch(`${apiBase}/api/cloudinary-album?cloudName=${encodeURIComponent(cloudName)}&tagName=${encodeURIComponent(tagName)}`);
       const latency = Math.round(performance.now() - t0);
       
       if (!resp.ok) {
-        el.innerHTML = `❌ Error: HTTP ${resp.status}\nResponse: ${await resp.text().catch(() => 'none')}\n\nHint: Verify your Worker is deployed and ALLOWED_ORIGIN in wrangler.toml accepts this page.`;
+        const data = await resp.json().catch(() => ({}));
+        el.innerHTML = `❌ Error: HTTP ${resp.status}\nResponse: ${data.error || 'unknown error'}\n\nHint: Verify your Cloudinary API Key and Secret are correct, and your internet is active.`;
         return;
       }
 
       const data = await resp.json();
-      el.innerHTML = `✅ Connection Successful! (${latency}ms)\n\nWorker Status: ${data.status}\nR2 Binding Status: ${data.r2}\nTimestamp: ${data.ts}`;
+      el.innerHTML = `✅ Connection Successful! (${latency}ms)\n\nPhotos Found: ${data.count || 0}\nCloud Name: ${cloudName}\nTag Name: ${tagName}`;
     } catch (e) {
-      el.innerHTML = `❌ Connection Failed!\n\nError: ${e.message}\n\nHint:\n1. Verify cloudflare.workerUrl matches your deployed Worker URL.\n2. Ensure UPLOAD_TOKEN secret is put in wrangler.\n3. Make sure the Worker is online and not blocked by CORS.`;
+      el.innerHTML = `❌ Connection Failed!\n\nError: ${e.message}\n\nHint:\n1. Verify your network connection.\n2. Ensure your serverless functions are deployed.`;
     } finally {
       btn.disabled = false;
     }
@@ -297,68 +305,63 @@ Hub.photos = {
     if (!el) return;
 
     el.classList.remove('hidden');
-    el.innerHTML = 'Initializing photo diagnostics...';
+    el.innerHTML = 'Initializing Secure Cloudinary Diagnostics...';
     btn.disabled = true;
 
     try {
-      const cfg = window.HOME_HUB_CONFIG?.cloudflare || {};
-      const base = cfg.workerUrl;
-      const album = cfg.photoAlbum || 'default';
+      const cfg = window.HOME_HUB_CONFIG?.cloudinary || {};
+      const cloudName = cfg.cloudName;
+      const tagName = cfg.tagName || 'homehub';
       
-      if (!base) {
-        el.innerHTML = '❌ Error: cloudflare.workerUrl is not defined in config.js.';
+      if (!cloudName) {
+        el.innerHTML = '❌ Error: cloudinary.cloudName is not defined in config.js.';
         return;
       }
 
-      el.innerHTML = `1. Testing health endpoint...\n`;
-      let health = null;
-      try {
-        const resp = await fetch(`${base}/health`);
-        health = resp.ok ? await resp.json() : { error: `HTTP ${resp.status}` };
-      } catch (err) {
-        health = { error: err.message };
-      }
+      el.innerHTML = `1. Resolving Cloudinary config...\n`;
+      el.innerHTML += `   Cloud Name: "${cloudName}"\n`;
+      el.innerHTML += `   Tag Name: "${tagName}"\n\n`;
 
-      el.innerHTML += `   Health: ${health.status || 'degraded'} (R2 binding: ${health.r2 || 'failed'})\n\n`;
-      el.innerHTML += `2. Fetching photos from album: "${album}"...\n`;
-      el.innerHTML += `   GET ${base}/media/photos?album=${encodeURIComponent(album)}&limit=10...\n`;
+      el.innerHTML += `2. Querying Secure Serverless Proxy...\n`;
+      const apiBase = window.HOME_HUB_CONFIG?.apiBase || '';
+      el.innerHTML += `   GET ${apiBase}/api/cloudinary-album?cloudName=${cloudName}&tagName=${tagName}...\n`;
 
       const t0 = performance.now();
-      const resp = await fetch(`${base}/media/photos?album=${encodeURIComponent(album)}&limit=10`);
+      const resp = await fetch(`${apiBase}/api/cloudinary-album?cloudName=${encodeURIComponent(cloudName)}&tagName=${encodeURIComponent(tagName)}`);
       const latency = Math.round(performance.now() - t0);
 
       if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
-        el.innerHTML += `\n❌ Photo Fetch Failed (HTTP ${resp.status})!\nResponse: ${text || 'none'}\n\nHint: Verify wrangler.toml bucket_name matches your R2 dashboard bucket name, and that your folders/files exist.`;
+        const data = await resp.json().catch(() => ({}));
+        el.innerHTML += `\n❌ Cloudinary Fetch Failed (HTTP ${resp.status})!\nError: ${data.error || 'unknown'}\n\nTroubleshooting Hint:\n- Check that the Cloudinary credentials (API Key & Secret) match your dashboard exactly.\n- Make sure you actually applied the tag "${tagName}" to at least one image in Cloudinary!`;
         return;
       }
 
       const data = await resp.json();
       el.innerHTML += `   Latency: ${latency}ms\n`;
       el.innerHTML += `   Status: ✅ Fetched successfully!\n`;
-      el.innerHTML += `   Photos Found: ${data.count} image(s) in prefix "${data.album}"\n\n`;
+      el.innerHTML += `   Photos Found: ${data.count || 0} images with tag "${tagName}"\n\n`;
 
-      if (data.count > 0 && Array.isArray(data.photos)) {
-        el.innerHTML += `3. Verifying photo reachability...\n`;
+      if (data.photos?.length > 0) {
+        el.innerHTML += `3. Verifying image delivery & reachability...\n`;
         const firstPhoto = data.photos[0];
-        el.innerHTML += `   First Photo Key: "${firstPhoto.key}"\n`;
-        el.innerHTML += `   Testing image fetch: ${base}${firstPhoto.url}...\n`;
+        el.innerHTML += `   First Image URL: ${firstPhoto}\n`;
+        el.innerHTML += `   Testing image reachability fetch...\n`;
 
         try {
-          const imgResp = await fetch(`${base}${firstPhoto.url}`, { method: 'HEAD' });
+          const imgResp = await fetch(firstPhoto, { method: 'HEAD' });
           if (imgResp.ok) {
-            el.innerHTML += `   ✅ Image reachable! Content-Type: ${imgResp.headers.get('Content-Type')}\n\n🎉 DIAGNOSTICS COMPLETE: Cloudflare photos are working perfectly!`;
+            el.innerHTML += `   ✅ Image reachable! Content-Type: ${imgResp.headers.get('Content-Type') || 'image'}\n\n🎉 DIAGNOSTICS COMPLETE: Cloudinary secure serverless integration is working perfectly!`;
           } else {
-            el.innerHTML += `   ❌ Image head check returned HTTP ${imgResp.status}.\n\n🎉 DIAGNOSTICS COMPLETE: Listing works but serving individual images is failing. Check R2 public/private access settings.`;
+            el.innerHTML += `   ❌ Image HEAD check returned HTTP ${imgResp.status}.\n\n🎉 DIAGNOSTICS COMPLETE: Listing works but image load returned an error. Check Cloudinary asset delivery settings.`;
           }
         } catch (imgErr) {
-          el.innerHTML += `   ❌ Image head fetch threw error: ${imgErr.message}\n\n🎉 DIAGNOSTICS COMPLETE: Listing works, but CORS blocks direct serving.`;
+          el.innerHTML += `   ❌ Image head fetch threw error: ${imgErr.message}\n\n🎉 DIAGNOSTICS COMPLETE: Listing works, but CORS blocks HEAD checks. The image should still render successfully in your slideshow!`;
         }
       } else {
-        el.innerHTML += `\n⚠️ Warning: No photos were found in album prefix "${album}".\n\nHint:\n- Check that the bucket contains files under the directory path (e.g. ${album}image.jpg).\n- Bucket paths are case-sensitive.`;
+        el.innerHTML += `\n⚠️ Warning: No photos have the tag "${tagName}".\n\nHint:\n- Log in to your Cloudinary Console.\n- Select your family photos and apply the tag "${tagName}" to them.`;
       }
     } catch (e) {
-      el.innerHTML += `\n❌ Diagnostic Error: ${e.message}\n\nHint:\n- Ensure the Worker is deployed.\n- Open browser console (F12) to see details of any blocked CORS requests.`;
+      el.innerHTML += `\n❌ Diagnostic Error: ${e.message}\n\nHint:\n- Double check your cloudName.\n- Make sure the client browser is online.`;
     } finally {
       btn.disabled = false;
     }

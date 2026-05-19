@@ -36,13 +36,12 @@ window.HOME_HUB_CONFIG = {
   // === API BASE (leave empty for same-origin) ===
   apiBase: '',
 
-  // === CLOUDFLARE (R2 photos via Worker) ===
-  // Worker: homehub-media, account jeffthebever200, bucket "homehub"
-  // photoAlbum ending in "/" is used as a literal R2 key prefix,
-  // so "Photos/" matches objects like "Photos/IMG_0001.jpg" directly.
-  cloudflare: {
-    workerUrl:  'https://homehub-media.jeffthebever200.workers.dev',
-    photoAlbum: 'albums/homehub/',
+  // === CLOUDINARY (Photos source, mixed with Imgur) ===
+  // To enable, go to your Cloudinary Console Settings -> Security -> Restricted media types,
+  // and make sure "Resource list" is unchecked/enabled for public access.
+  cloudinary: {
+    cloudName: 'jeffthebever200',  // Your Cloudinary Cloud Name
+    tagName: 'homehub',            // Tag applied to your family photos
   },
 
   // === IMGUR (second photo source, mixed with Cloudflare R2) ===
