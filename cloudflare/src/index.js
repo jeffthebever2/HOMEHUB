@@ -25,7 +25,7 @@ export default {
     const url    = new URL(request.url);
     const method = request.method;
 
-    if (method === 'OPTIONS') return cors(new Response(null, { status: 204 }), env);
+    if (method === 'OPTIONS') return cors(new Response(null, { status: 204 }), request, env);
 
     try {
       let response;
@@ -41,13 +41,14 @@ export default {
         );
       }
 
-      return cors(response, env);
+      return cors(response, request, env);
     } catch (e) {
       return cors(
         new Response(JSON.stringify({ error: e.message || 'Internal error' }), {
           status: e.status || 500,
           headers: { 'Content-Type': 'application/json' },
         }),
+        request,
         env
       );
     }

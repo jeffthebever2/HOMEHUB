@@ -962,11 +962,30 @@
           <div class="card space-y-2">
             <p class="text-sm text-gray-300">Photos are pulled from two sources in parallel and mixed together:</p>
             <ul class="text-sm text-gray-400 space-y-1 ml-4">
-              <li>☁️ <span class="text-gray-200">Cloudflare R2</span> — upload to the <code class="text-blue-300">Photos/</code> folder in the <code class="text-blue-300">homehub</code> bucket</li>
+              <li>☁️ <span class="text-gray-200">Cloudflare R2</span> — upload to the <code class="text-blue-300">albums/homehub/</code> folder in the <code class="text-blue-300">homehub</code> bucket</li>
               <li>🖼 <span class="text-gray-200">Imgur</span> — add to the public album (edit the ID in <code class="text-blue-300">config.js</code>)</li>
             </ul>
             <p class="text-xs text-gray-500 mt-2">Both sources are configured in <code class="text-blue-300">config.js</code>. If both are empty, placeholder photos are shown so the slideshow is never blank.</p>
             <button onclick="Hub.app._testSlideshow()" class="btn btn-secondary text-sm mt-2">▶ Test Slideshow</button>
+          </div>
+
+          <!-- CLOUDFLARE DIAGNOSTICS PANEL -->
+          <div class="card space-y-3 border border-gray-700">
+            <h3 class="text-sm font-semibold text-gray-200 flex items-center gap-2">
+              ☁️ Cloudflare Diagnostics
+            </h3>
+            <p class="text-xs text-gray-400">Verify connection to your R2 photo Worker and test image loading.</p>
+            
+            <div id="cfDiagStatus" class="text-xs font-mono p-2.5 rounded bg-gray-900 border border-gray-800 text-gray-400 hidden whitespace-pre-wrap max-h-48 overflow-y-auto"></div>
+
+            <div class="flex gap-2">
+              <button onclick="Hub.photos.runDiagnostics()" id="btnCfDiag" class="btn btn-secondary text-xs py-1.5 px-3">
+                🔍 Run Diagnostics
+              </button>
+              <button onclick="Hub.photos.testWorkerUrl()" id="btnCfTestUrl" class="btn btn-secondary text-xs py-1.5 px-3">
+                📡 Health Check
+              </button>
+            </div>
           </div>
         </div>
 

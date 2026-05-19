@@ -3,8 +3,23 @@
 // ============================================================
 
 /** Add CORS headers to any response */
-export function cors(response, env) {
-  const origin = env.ALLOWED_ORIGIN || '*';
+export function cors(response, request, env) {
+  let origin = env?.ALLOWED_ORIGIN || '*';
+  
+  if (request) {
+    const incomingOrigin = request.headers?.get?.('Origin');
+    if (incomingOrigin) {
+      const allowed = env?.ALLOWED_ORIGIN || '';
+      const isLocalhost = incomingOrigin.startsWith('http://localhost:') || incomingOrigin.startsWith('http://127.0.0.1:');
+      const isLocalIP = incomingOrigin.match(/^http:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$/);
+      const isVercel = incomingOrigin.includes('.vercel.app');
+      
+      if (incomingOrigin === allowed || isLocalhost || isLocalIP || isVercel || allowed === '*' || allowed === '') {
+        origin = incomingOrigin;
+      }
+    }
+  }
+
   const headers = new Headers(response.headers);
   headers.set('Access-Control-Allow-Origin', origin);
   headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');

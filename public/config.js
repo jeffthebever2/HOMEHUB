@@ -42,7 +42,7 @@ window.HOME_HUB_CONFIG = {
   // so "Photos/" matches objects like "Photos/IMG_0001.jpg" directly.
   cloudflare: {
     workerUrl:  'https://homehub-media.jeffthebever200.workers.dev',
-    photoAlbum: 'Photos/',
+    photoAlbum: 'albums/homehub/',
   },
 
   // === IMGUR (second photo source, mixed with Cloudflare R2) ===
